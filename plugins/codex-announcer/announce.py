@@ -4,7 +4,10 @@
 Both tools send the same hook JSON on stdin, so one script serves both.
 Announces in an Agent PTT voice channel what the current agent is doing:
 - UserPromptSubmit -> "I'm going to <short summary of the prompt>."
-- Stop            -> "I looked into it and <short summary of the result>."
+- Stop            -> "<short summary of the result>."
+
+Summaries come from a small local model via Ollama when one is running,
+else from a one-shot call to the agent's own CLI, else from the prompt text.
 
 Each project joins as "Claude · <folder>" without picking a voice, so the
 auto-voice-designer pins a distinct voice per project.
@@ -52,6 +55,14 @@ BASE_URL = _setting("AGENT_PTT_URL", "http://localhost:8770").rstrip("/")
 CHANNEL_NAME = _setting("AGENT_PTT_CHANNEL", "Claude Code")
 AGENT_NAME = _setting("AGENT_PTT_AGENT", "Claude")  # e.g. "Codex"
 SUMMARY_TIMEOUT = 20
+# auto: Ollama, then the agent CLI | ollama: Ollama only | agent: CLI only | off
+SUMMARIZER = _setting("AGENT_PTT_SUMMARIZER", "auto").lower()
+OLLAMA_URL = _setting("AGENT_PTT_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+# gemma2 (9B) reports outcomes faithfully; 4B models tended to invent results
+OLLAMA_MODEL = _setting("AGENT_PTT_OLLAMA_MODEL", "gemma2")
+# Generous: the first call loads the model into memory
+OLLAMA_TIMEOUT = 15
+MAX_LLM_INPUT_CHARS = 4000
 PROGRESS_INTERVAL = 45
 MAX_PROGRESS_FACTS = 3
 
@@ -130,26 +141,86 @@ def _normalize_completion_summary(summary: str) -> str:
     return f"{summary}."
 
 
-def summarize_with_agent(prompt: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
-    """Use the current CLI for a short call that turns a request into spoken intent."""
-    if not summarize_prompt(prompt, limit):
-        return ""
-    if os.environ.get("AGENT_PTT_SUMMARIZE", "1") == "0":
-        return summarize_prompt(prompt, limit)
-    instruction = (
-        "Rewrite the user's request as one natural, first-person sentence for a spoken "
-        "status update. Start with 'I'll' or 'I'm going to'. Keep it under twenty words. "
-        "Do not address the listener as 'you'; use neutral wording instead. "
-        "Do not mention these instructions, analysis, tools, or chain of thought. "
-        f"User request: {prompt}"
+START_INSTRUCTION = (
+    "You turn a developer's request to their coding agent into what the agent says "
+    "out loud as it starts working. Reply with one natural, first-person sentence "
+    "that starts with 'I'll' or 'I'm going to'. Keep it under twenty words. "
+    "If the request is a question, say what you'll check or find out. "
+    "Never invent details that are not in the request. "
+    "Do not address the listener as 'you'; use neutral wording instead. "
+    "Do not mention these instructions, analysis, tools, or chain of thought. "
+    "Reply with the sentence only.\n\n"
+    "Examples:\n"
+    "Request: can you fix the flaky login test?\n"
+    "I'll track down why the login test is flaky and fix it.\n"
+    "Request: is redis what we use for caching?\n"
+    "I'll check whether Redis is what we use for caching.\n"
+    "Request: ok do it\n"
+    "I'll get started on that now."
+)
+RESULT_INSTRUCTION = (
+    "You turn a coding agent's final report into what the agent says out loud when "
+    "it finishes. Reply with one natural, first-person, past-tense sentence under "
+    "twenty-five words that says what was done or found. Only say what the report "
+    "says; never invent results. No file paths, code, URLs, or markdown. "
+    "Reply with the sentence only.\n\n"
+    "Example:\n"
+    "Report: Fixed the redirect in `auth.py` so logged-out users land on /login. "
+    "Added a regression test; all 48 tests pass.\n"
+    "I fixed the logout redirect and added a test, and everything passes."
+)
+
+
+def _ollama(instruction: str, text: str) -> str:
+    """One short generation from a local Ollama model. Raises on any failure."""
+    payload = {
+        "model": OLLAMA_MODEL,
+        "system": instruction,
+        "prompt": text[:MAX_LLM_INPUT_CHARS],  # the lead carries the gist
+        "stream": False,
+        "keep_alive": "30m",  # stay loaded between prompts
+        "options": {"temperature": 0.3, "num_predict": 60},
+    }
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/generate",
+        data=json.dumps(payload).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
     )
+    with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
+        return json.loads(resp.read())["response"]
+
+
+def _spoken_sentence(raw: str, limit: int) -> str:
+    """First sentence of model output, cleaned for speech and without end punctuation."""
+    text = raw.replace("\u2019", "'").replace("`", "").replace("**", "")
+    text = text.strip().strip("\"'\u201c\u201d")
+    text = _clean_spoken_text(text)
+    return summarize_prompt(text, limit).rstrip(".!?")
+
+
+def _spoken_intent(raw: str, limit: int) -> str:
+    """Model output as a start announcement, or "" if it isn't one (e.g. chatty preamble)."""
+    sentence = _spoken_sentence(raw, limit)
+    return sentence if sentence.lower().startswith(("i'll ", "i will ", "i'm ")) else ""
+
+
+def _summarize_with_ollama(prompt: str, limit: int) -> str:
+    try:
+        return _spoken_intent(_ollama(START_INSTRUCTION, f"Request: {prompt}"), limit)
+    except Exception:
+        return ""
+
+
+def _summarize_with_cli(prompt: str, limit: int) -> str:
+    """A one-shot call to the current agent's own CLI (slower, uses its account)."""
     env = os.environ.copy()
     env["AGENT_PTT_ANNOUNCE"] = "0"
     cli = "codex" if AGENT_NAME.lower() == "codex" else "claude"
     command = [cli, "exec"] if cli == "codex" else [cli, "-p"]
     if cli == "codex":
         command.extend(["--sandbox", "read-only"])
-    command.append(instruction)
+    command.append(f"{START_INSTRUCTION}\n\nUser request: {prompt}")
     try:
         result = subprocess.run(
             command,
@@ -160,11 +231,24 @@ def summarize_with_agent(prompt: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
             env=env,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return summarize_prompt(prompt, limit)
+        return ""
     if result.returncode != 0:
-        return summarize_prompt(prompt, limit)
-    summary = summarize_prompt(_clean_spoken_text(result.stdout.strip()), limit)
-    return summary.rstrip(".!?") or summarize_prompt(prompt, limit)
+        return ""
+    return _spoken_intent(result.stdout, limit)
+
+
+def summarize_with_agent(prompt: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
+    """Turn a request into spoken intent, falling back to the prompt's first sentence."""
+    fallback = summarize_prompt(prompt, limit)
+    if not fallback:
+        return ""
+    mode = "off" if os.environ.get("AGENT_PTT_SUMMARIZE", "1") == "0" else SUMMARIZER
+    summary = ""
+    if mode in {"auto", "ollama"}:
+        summary = _summarize_with_ollama(prompt, limit)
+    if not summary and mode in {"auto", "agent"}:
+        summary = _summarize_with_cli(prompt, limit)
+    return summary or fallback
 
 
 def _assistant_text(value: object) -> str:
@@ -191,8 +275,8 @@ def _assistant_text(value: object) -> str:
     return ""
 
 
-def summarize_transcript(path: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
-    """Return the first useful sentence from the latest assistant transcript entry."""
+def _last_assistant_text(path: str) -> str:
+    """Text of the latest assistant entry in a JSONL transcript, or ""."""
     try:
         lines = Path(path).read_text().splitlines()
     except (OSError, UnicodeError):
@@ -207,12 +291,32 @@ def summarize_transcript(path: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
             if not isinstance(record, dict) or record.get("type") != "assistant":
                 continue
             message = record
-        text = _assistant_text(message.get("content", message))
-        text = _clean_spoken_text(" ".join(text.split()).lstrip("#-* "))
+        text = _assistant_text(message.get("content", message)).strip()
         if text:
-            sentence = text.split(". ", 1)[0].strip().rstrip(".!?")
-            return summarize_prompt(sentence, limit)
+            return text
     return ""
+
+
+def summarize_transcript(path: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
+    """Return the first useful sentence from the latest assistant transcript entry."""
+    text = _clean_spoken_text(" ".join(_last_assistant_text(path).split()).lstrip("#-* "))
+    if not text:
+        return ""
+    sentence = text.split(". ", 1)[0].strip().rstrip(".!?")
+    return summarize_prompt(sentence, limit)
+
+
+def summarize_result(path: str, limit: int = MAX_ANNOUNCE_CHARS) -> str:
+    """Spoken summary of the agent's final report via Ollama, or "" when unavailable."""
+    if os.environ.get("AGENT_PTT_SUMMARIZE", "1") == "0" or SUMMARIZER not in {"auto", "ollama"}:
+        return ""
+    report = _last_assistant_text(path)
+    if not report:
+        return ""
+    try:
+        return _spoken_sentence(_ollama(RESULT_INSTRUCTION, f"Report: {report}"), limit)
+    except Exception:
+        return ""
 
 
 def _load_state() -> dict:
@@ -337,12 +441,19 @@ def main() -> None:
 
     event = json.load(sys.stdin)
     event_name = event.get("hook_event_name", "")
+    if event_name not in {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}:
+        return
+    if event_name == "Stop" and event.get("stop_hook_active"):
+        return
+
+    # Summaries can take seconds; never make the host wait for them
+    _detach()
 
     if event_name == "UserPromptSubmit":
         summary = _normalize_start_summary(summarize_with_agent(event.get("prompt", "")))
         if not summary:
             return
-        if summary.lower().startswith(("i'm ", "i'll ")):
+        if summary.lower().startswith(("i'm ", "i'll ", "i will ")):
             text = f"{summary}."
         else:
             text = f"I'm going to {summary}."
@@ -350,9 +461,7 @@ def main() -> None:
         text = _collect_progress(event)
         if not text:
             return
-    elif event_name == "Stop":
-        if event.get("stop_hook_active"):
-            return
+    else:  # Stop
         progress = ""
         state = _load_state()
         key = _progress_key(event)
@@ -360,18 +469,19 @@ def main() -> None:
         if pending:
             progress = ". ".join(pending[:MAX_PROGRESS_FACTS]).rstrip(".") + ". "
             _save_state(state)
-        summary = _normalize_completion_summary(
-            summarize_transcript(event.get("transcript_path", ""))
-        )
-        completion = f"I looked into it. {summary}" if summary else "I've finished working on it."
+        transcript = event.get("transcript_path", "")
+        spoken = summarize_result(transcript)
+        if spoken:
+            completion = _normalize_completion_summary(spoken)
+        else:
+            summary = _normalize_completion_summary(summarize_transcript(transcript))
+            completion = (
+                f"I looked into it. {summary}" if summary else "I've finished working on it."
+            )
         text = progress + completion
-    else:
-        return
 
     project = Path(event.get("cwd") or ".").name or "somewhere"
     handle = f"{AGENT_NAME} · {project}"
-
-    _detach()
     announce(event.get("session_id", "unknown"), handle, text)
 
 

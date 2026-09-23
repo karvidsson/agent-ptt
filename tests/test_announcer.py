@@ -13,12 +13,25 @@ import time
 import urllib.error
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 ANNOUNCE_PY = REPO_ROOT / "plugins" / "announcer" / "hooks" / "announce.py"
 
 spec = importlib.util.spec_from_file_location("announce", ANNOUNCE_PY)
 announce = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(announce)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ollama_or_fork(monkeypatch):
+    """Tests never reach a real local model and never fork the test runner."""
+
+    def unavailable(instruction, text):
+        raise urllib.error.URLError("ollama not running")
+
+    monkeypatch.setattr(announce, "_ollama", unavailable)
+    monkeypatch.setenv("AGENT_PTT_FORK", "0")
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +181,90 @@ def test_summarize_with_agent_falls_back_on_failure(monkeypatch):
     assert announce.summarize_with_agent("inspect the app") == "inspect the app"
 
 
+def test_summarize_with_agent_prefers_local_ollama(monkeypatch):
+    calls = []
+
+    def fake_ollama(instruction, text):
+        calls.append((instruction, text))
+        return '"I\'m going to find out why the API tests fail and fix them."\n'
+
+    def no_cli(*args, **kwargs):
+        raise AssertionError("agent CLI must not run when Ollama answers")
+
+    monkeypatch.setattr(announce, "_ollama", fake_ollama)
+    monkeypatch.setattr(announce.subprocess, "run", no_cli)
+    result = announce.summarize_with_agent("can you check why test_api fails and fix it")
+    assert result == "I'm going to find out why the API tests fail and fix them"
+    assert calls[0][1] == "Request: can you check why test_api fails and fix it"
+    assert "Do not address the listener as 'you'" in calls[0][0]
+
+
+def test_summarize_with_agent_rejects_chatty_model_output(monkeypatch):
+    monkeypatch.setattr(announce, "_ollama", lambda i, t: "Sure! Here is a status update.")
+    monkeypatch.setattr(announce, "SUMMARIZER", "ollama")
+    assert announce.summarize_with_agent("inspect the app") == "inspect the app"
+
+
+def test_summarize_with_agent_falls_back_to_cli_when_ollama_is_down(monkeypatch):
+    class Result:
+        returncode = 0
+        stdout = "I'll inspect the app."
+
+    monkeypatch.setattr(announce.subprocess, "run", lambda *a, **k: Result())
+    assert announce.summarize_with_agent("inspect the app") == "I'll inspect the app"
+
+
+def test_summarizer_ollama_mode_never_runs_the_cli(monkeypatch):
+    def no_cli(*args, **kwargs):
+        raise AssertionError("agent CLI must not run in ollama mode")
+
+    monkeypatch.setattr(announce.subprocess, "run", no_cli)
+    monkeypatch.setattr(announce, "SUMMARIZER", "ollama")
+    assert announce.summarize_with_agent("inspect the app") == "inspect the app"
+
+
+def test_summarizer_off_uses_the_prompt_text(monkeypatch):
+    def no_llm(*args, **kwargs):
+        raise AssertionError("no model call when summarizing is off")
+
+    monkeypatch.setattr(announce, "_ollama", no_llm)
+    monkeypatch.setattr(announce.subprocess, "run", no_llm)
+    monkeypatch.setattr(announce, "SUMMARIZER", "off")
+    assert announce.summarize_with_agent("can you inspect the app?") == "inspect the app"
+
+
+def test_ollama_request_shape(monkeypatch):
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"response": "I'll do it."}).encode()
+
+    def fake_urlopen(req, timeout):
+        requests.append((req, timeout))
+        return Response()
+
+    monkeypatch.undo()  # drop the autouse fake to test the real _ollama
+    monkeypatch.setattr(announce.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(announce, "OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setattr(announce, "OLLAMA_MODEL", "gemma3:4b")
+    assert announce._ollama("be brief", "x" * 10_000) == "I'll do it."
+    req, timeout = requests[0]
+    body = json.loads(req.data)
+    assert req.full_url == "http://localhost:11434/api/generate"
+    assert body["model"] == "gemma3:4b"
+    assert body["system"] == "be brief"
+    assert len(body["prompt"]) == announce.MAX_LLM_INPUT_CHARS
+    assert body["stream"] is False
+    assert timeout == announce.OLLAMA_TIMEOUT
+
+
 def test_summarize_drops_request_prefixes():
     assert announce.summarize_prompt("can you fix the login redirect?") == "fix the login redirect"
     assert (
@@ -214,7 +311,12 @@ def _run_hook(event: dict, url: str) -> tuple[subprocess.CompletedProcess, float
         capture_output=True,
         text=True,
         timeout=15,
-        env={"PATH": "/usr/bin:/bin", "AGENT_PTT_URL": url, "HOME": "/tmp"},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "AGENT_PTT_URL": url,
+            "AGENT_PTT_OLLAMA_URL": "http://localhost:19998",
+            "HOME": "/tmp",
+        },
     )
     return proc, time.monotonic() - start
 
@@ -504,6 +606,44 @@ def test_stop_announces_transcript_summary(monkeypatch, tmp_path):
     )
     announce.main()
     assert calls == [("s1", "Claude · my-project", "I looked into it. I fixed the login flow.")]
+
+
+def test_stop_speaks_ollama_summary_of_the_report(monkeypatch, tmp_path):
+    transcript = tmp_path / "transcript.jsonl"
+    report = "## Summary\n\n- Fixed `announce.py` so the hook forks first.\n- 64 tests pass."
+    transcript.write_text(
+        json.dumps(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": report}]}}
+        )
+    )
+    seen = []
+
+    def fake_ollama(instruction, text):
+        seen.append(text)
+        return "I made the `hook` fork first, and **all** the tests pass."
+
+    calls = []
+    monkeypatch.setattr(announce, "_ollama", fake_ollama)
+    monkeypatch.setattr(announce, "announce", lambda *a: calls.append(a))
+    monkeypatch.setattr(
+        announce.sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "hook_event_name": "Stop",
+                    "cwd": "/tmp/my-project",
+                    "session_id": "s1",
+                    "transcript_path": str(transcript),
+                }
+            )
+        ),
+    )
+    announce.main()
+    assert seen == [f"Report: {report}"]
+    assert calls == [
+        ("s1", "Claude · my-project", "I made the hook fork first, and all the tests pass.")
+    ]
 
 
 def test_ignores_unknown_events(monkeypatch):
