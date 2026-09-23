@@ -138,7 +138,9 @@ async def test_synthesize_instruct_mode():
 
     wav_bytes = await backend.synthesize("hello", _profile(instruct="[gender:female]"))
 
-    assert model.calls == [{"text": "hello", "instruct": "[gender:female]"}]
+    assert model.calls == [
+        {"text": "hello", "instruct": "[gender:female]", "position_temperature": 0.0}
+    ]
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
         assert wf.getframerate() == 24000
 
@@ -153,7 +155,12 @@ async def test_synthesize_clone_mode():
     )
 
     assert model.calls == [
-        {"text": "hello", "ref_audio": "/tmp/ref.wav", "ref_text": "reference transcript"}
+        {
+            "text": "hello",
+            "ref_audio": "/tmp/ref.wav",
+            "ref_text": "reference transcript",
+            "position_temperature": 0.0,
+        }
     ]
 
 
@@ -163,7 +170,7 @@ async def test_synthesize_ref_text_ignored_without_ref_audio():
 
     await backend.synthesize("hello", _profile(ref_text="orphan transcript"))
 
-    assert model.calls == [{"text": "hello"}]
+    assert model.calls == [{"text": "hello", "position_temperature": 0.0}]
 
 
 async def test_synthesize_language_and_speed():
@@ -172,7 +179,15 @@ async def test_synthesize_language_and_speed():
 
     await backend.synthesize("hello", _profile(instruct="[x]", language="en", speed="1.2"))
 
-    assert model.calls == [{"text": "hello", "instruct": "[x]", "language": "en", "speed": 1.2}]
+    assert model.calls == [
+        {
+            "text": "hello",
+            "instruct": "[x]",
+            "language": "en",
+            "speed": 1.2,
+            "position_temperature": 0.0,
+        }
+    ]
 
 
 async def test_model_loads_once():

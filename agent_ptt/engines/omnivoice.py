@@ -136,6 +136,9 @@ class OmniVoiceTTSBackend(TTSBackend):
             kwargs["language"] = language
         if speed := settings.get("speed"):
             kwargs["speed"] = float(speed)
+        # Avoid stochastic position sampling so one pinned profile keeps the
+        # same voice character across separate announcements.
+        kwargs["position_temperature"] = 0.0
 
         logger.info(f"omnivoice: generating {len(text)} chars (instruct={instruct!r})")
         audios = await asyncio.to_thread(model.generate, **kwargs)
