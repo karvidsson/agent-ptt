@@ -11,8 +11,11 @@ All commands are run with `uv run agent-ptt` (or just `agent-ptt` if installed g
 Start the Agent PTT server.
 
 ```bash
-agent-ptt server start [--host HOST] [--port PORT]
+agent-ptt server start [--host HOST] [--port PORT] [--mute]
 ```
+
+Pass `--mute` to disable playback through the server machine's speakers while
+still synthesizing and streaming audio to WebSocket spectators and the web UI.
 
 | Option | Default | Description |
 |--------|---------|-------------|

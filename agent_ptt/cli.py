@@ -59,12 +59,20 @@ app.add_typer(server_app, name="server")
 def server_start(
     host: str = typer.Option("0.0.0.0", help="Bind host"),
     port: int = typer.Option(8770, help="Bind port"),
+    mute: bool = typer.Option(
+        False,
+        "--mute",
+        help="Disable local speaker playback while keeping streamed audio available",
+    ),
 ):
     """Start the Agent PTT server."""
     import logging
+    import os
 
     import uvicorn
 
+    if mute:
+        os.environ["AGENT_PTT_MUTE"] = "1"
     # Make app loggers (TTS pipeline, audio mixer) visible alongside uvicorn's
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 

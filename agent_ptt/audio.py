@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import io
 import logging
+import os
 
 import numpy as np
 
@@ -19,9 +20,10 @@ logger = logging.getLogger(__name__)
 class AudioMixer:
     """Per-channel audio playback queue with speaker output + WS streaming."""
 
-    def __init__(self, sample_rate: int = 24000, channels: int = 1) -> None:
+    def __init__(self, sample_rate: int = 24000, channels: int = 1, muted: bool = False) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
+        self.muted = muted
         self._queue: asyncio.Queue[tuple[bytes, str]] = asyncio.Queue()
         self._stream_listeners: list[asyncio.Queue[bytes]] = []
         self._running = False
@@ -71,11 +73,15 @@ class AudioMixer:
 
     async def _playback_loop(self) -> None:
         """Background loop: dequeue audio and play through speakers."""
-        try:
-            import sounddevice as sd
-        except Exception as e:
-            logger.warning(f"sounddevice unavailable, speaker output disabled: {e}")
+        if self.muted:
             sd = None
+            logger.info("Speaker playback muted; audio remains available to stream listeners")
+        else:
+            try:
+                import sounddevice as sd
+            except Exception as e:
+                logger.warning(f"sounddevice unavailable, speaker output disabled: {e}")
+                sd = None
 
         # Small silence gap between speakers (200ms)
         gap = np.zeros(int(self.sample_rate * 0.2), dtype=np.float32)
@@ -178,7 +184,7 @@ _mixers: dict[str, AudioMixer] = {}
 def get_mixer(channel_id: str) -> AudioMixer:
     """Get or create an AudioMixer for a channel."""
     if channel_id not in _mixers:
-        _mixers[channel_id] = AudioMixer()
+        _mixers[channel_id] = AudioMixer(muted=os.environ.get("AGENT_PTT_MUTE") == "1")
         _mixers[channel_id].start()
     return _mixers[channel_id]
 
