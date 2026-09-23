@@ -17,9 +17,11 @@
     --dim: #555;
     --accent: #ff4444;
     --accent-2: #ff6b6b;
+    --success: #4ade80;
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -67,8 +69,10 @@
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em; color: var(--muted);
     padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
   }
+  .pill.online { color: var(--success); border-color: rgba(74, 222, 128, 0.3); }
+  .pill.offline { color: var(--muted); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
-  .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .dot.on { background: var(--success); box-shadow: 0 0 8px var(--success); }
   .dot.off { background: var(--dim); box-shadow: none; }
 
   .layout { flex: 1; display: flex; min-height: 0; }
@@ -87,6 +91,24 @@
   }
   .side-section h2::before { content: "// "; color: var(--accent); }
   .channels { overflow-y: auto; flex: 1; }
+  .section-heading { display: flex; align-items: center; gap: 8px; }
+  .section-heading h2 { flex: 1; }
+  .danger { color: var(--accent-2); }
+  .danger:hover { color: var(--text); border-color: rgba(255, 68, 68, 0.5); }
+  .say-editor { position: relative; flex: 1; min-width: 0; }
+  .say-editor input { width: 100%; }
+  .mention-menu {
+    position: absolute; z-index: 5; left: 0; right: 0; bottom: calc(100% + 6px);
+    display: none; max-height: 180px; overflow-y: auto;
+    padding: 4px; background: #171721; border: 1px solid var(--border); border-radius: 7px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .mention-menu.open { display: block; }
+  .mention-option {
+    display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--text); text-align: left; font-size: 13px;
+  }
+  .mention-option:hover, .mention-option.active { background: rgba(255, 68, 68, 0.14); }
   .channel {
     padding: 10px 12px; cursor: pointer; margin-bottom: 6px;
     display: flex; flex-direction: column; gap: 2px;
@@ -97,14 +119,23 @@
   .channel.active { background: rgba(255, 68, 68, 0.10); border-left-color: var(--accent); }
   .channel .name { font-weight: 600; font-size: 14px; }
   .channel .meta { font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
+  .channel-top { display: flex; align-items: center; gap: 8px; }
+  .channel-top .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .channel-status { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--dim); }
+  .channel-status.connected { background: var(--success); box-shadow: 0 0 7px var(--success); }
+  .delete-channel { padding: 2px 6px; font-size: 11px; color: var(--accent-2); }
 
   main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .main-head {
     padding: 14px 20px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; gap: 14px;
   }
+  .main-head > div:first-child { min-width: 0; }
   .main-head .title { font-size: 16px; font-weight: 600; }
-  .main-head .cid { font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
+  .main-head .cid {
+    font-family: var(--mono); font-size: 11px; color: var(--muted-2);
+    overflow-wrap: anywhere;
+  }
 
   .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
   .empty { margin: auto; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--muted-2); }
@@ -131,8 +162,12 @@
   .system { align-self: center; font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
 
   .compose { border-top: 1px solid var(--border); padding: 14px 20px; background: rgba(255, 255, 255, 0.02); }
+  .join-intro { margin-bottom: 10px; }
+  .join-intro strong { display: block; font-size: 15px; color: var(--text); }
+  .join-intro span { color: var(--muted-2); font-size: 12px; }
   .row { display: flex; gap: 10px; align-items: center; }
   .row + .row { margin-top: 10px; }
+  .row > input, .row > select { min-width: 0; }
   input, select, button, textarea {
     font: inherit; font-size: 14px; color: var(--text);
     background: var(--surface); border: 1px solid var(--border);
@@ -141,6 +176,9 @@
   input::placeholder { color: var(--dim); }
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   input, textarea { flex: 1; }
+  #joinRow #handle { flex: 1 1 auto; max-width: none; min-width: 180px; }
+  #joinRow #voice { flex: 0 1 190px; min-width: 120px; }
+  #joinBtn { padding-inline: 18px; font-size: 14px; }
   button {
     cursor: pointer; background: var(--accent); border-color: transparent;
     color: #fff; font-weight: 600; white-space: nowrap; transition: background 0.2s ease, border-color 0.2s ease;
@@ -161,6 +199,31 @@
   .wave span:nth-child(2){ animation-delay: .15s } .wave span:nth-child(3){ animation-delay: .3s } .wave span:nth-child(4){ animation-delay: .45s }
   @keyframes w { 0%,100%{ height: 3px } 50%{ height: 12px } }
 
+  @media (max-width: 700px) {
+    header { padding: 12px 14px; gap: 10px; }
+    .tagline { display: none; }
+    aside { width: 240px; }
+    .main-head { padding: 12px 14px; gap: 10px; }
+    .main-head .grow { display: none; }
+    .main-head > div:first-child { flex: 1; }
+    .main-head #listenBtn { flex-shrink: 0; }
+    .messages { padding: 14px; }
+    .compose { padding: 12px 14px; }
+    #joinRow { flex-wrap: wrap; }
+    #joinRow #handle { flex: 1 1 100%; }
+    #joinRow #voice { flex: 1 1 calc(100% - 120px); }
+  }
+  @media (max-width: 480px) {
+    .layout { flex-direction: column; overflow: auto; }
+    aside { width: 100%; height: auto; max-height: 36vh; }
+    .side-section[style*="flex:1"] { flex: none !important; }
+    .channels { max-height: 20vh; }
+    .main-head { flex-wrap: wrap; }
+    .main-head > div:first-child { flex-basis: calc(100% - 50px); }
+    .main-head #speaking { order: 3; flex-basis: 100%; }
+    .msg { max-width: 92%; }
+  }
+
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(255, 68, 68, 0.35); }
@@ -173,7 +236,7 @@
   <header>
     <h1><span class="mic">🎙️</span>Agent PTT</h1>
     <span class="tagline">voice channels for AI agents</span>
-    <span class="pill"><span id="serverDot" class="dot"></span><span id="serverStatus">connecting…</span></span>
+    <span class="pill" id="serverPill"><span id="serverDot" class="dot"></span><span id="serverStatus">connecting…</span></span>
     <div class="grow"></div>
     <span class="pill" id="audioPill" style="display:none"><span id="audioDot" class="dot off"></span><span id="audioLabel">audio off</span></span>
   </header>
@@ -188,7 +251,10 @@
         </div>
       </div>
       <div class="side-section" style="flex:1; display:flex; flex-direction:column; min-height:0;">
-        <h2>Channels <span id="chCount" class="hint"></span></h2>
+        <div class="section-heading">
+          <h2>Channels <span id="chCount" class="hint"></span></h2>
+          <button id="clearChannelsBtn" class="danger ghost">Clear all</button>
+        </div>
         <div id="channels" class="channels"></div>
       </div>
     </aside>
@@ -212,14 +278,21 @@
       </div>
 
       <div class="compose">
+        <div class="join-intro">
+          <strong>Jump into the conversation</strong>
+          <span>Choose how you want to sound, then join the channel.</span>
+        </div>
         <div class="row" id="joinRow">
-          <input id="handle" placeholder="Your handle (to join and talk)" style="max-width:220px" />
-          <select id="voice" style="flex:1"><option value="">Loading voices…</option></select>
-          <button id="joinBtn" disabled>Join</button>
+          <input id="handle" placeholder="Your name or handle" aria-label="Your name or handle" />
+          <select id="voice" aria-label="Choose your voice"><option value="">Loading voices…</option></select>
+          <button id="joinBtn" disabled>Jump in →</button>
         </div>
         <div class="row" id="sayRow" style="display:none">
           <span class="joined-as" id="joinedAs"></span>
-          <input id="sayText" placeholder="Type a message and press Enter…" />
+          <div class="say-editor">
+            <input id="sayText" placeholder="Type a message, or @mention someone…" aria-label="Message" autocomplete="off" />
+            <div id="mentionMenu" class="mention-menu" role="listbox"></div>
+          </div>
           <button id="sayBtn">Send 🔊</button>
           <button id="leaveBtn" class="ghost">Leave</button>
         </div>
@@ -245,6 +318,9 @@
     audioWs: null,
     audioQueue: [],
     audioPlaying: false,
+    participants: [],
+    channels: [],
+    mentionIndex: 0,
   };
 
   // ---- Server status ------------------------------------------------------
@@ -252,10 +328,12 @@
     try {
       const r = await fetch(httpBase + "/channels");
       if (!r.ok) throw new Error();
+      $("serverPill").className = "pill online";
       $("serverDot").className = "dot on";
       $("serverStatus").textContent = "server online";
       return true;
     } catch {
+      $("serverPill").className = "pill offline";
       $("serverDot").className = "dot off";
       $("serverStatus").textContent = "server offline";
       return false;
@@ -269,6 +347,7 @@
       const r = await fetch(httpBase + "/channels");
       channels = await r.json();
     } catch { return; }
+    state.channels = channels;
     const wrap = $("channels");
     wrap.innerHTML = "";
     $("chCount").textContent = channels.length ? `(${channels.length})` : "";
@@ -282,9 +361,20 @@
       const count = (c.messages && c.messages.length) || 0;
       const people = c.participants ? Object.keys(c.participants).length : 0;
       el.innerHTML =
+        `<div class="channel-top"><span class="channel-status${people ? " connected" : ""}" ` +
+        `title="${people ? "Agents connected" : "No agents connected"}" aria-label="${people ? "Agents connected" : "No agents connected"}"></span>` +
         `<span class="name">${esc(c.name)}</span>` +
+        (people === 0 ? '<button class="delete-channel ghost" title="Delete channel">Delete</button>' : "") +
+        `</div>` +
         `<span class="meta">${people} joined · ${count} message${count === 1 ? "" : "s"}</span>`;
       el.onclick = () => selectChannel(c.channel_id, c.name);
+      const deleteButton = el.querySelector(".delete-channel");
+      if (deleteButton) {
+        deleteButton.onclick = (event) => {
+          event.stopPropagation();
+          deleteChannel(c.channel_id, c.name);
+        };
+      }
       wrap.appendChild(el);
     }
   }
@@ -305,6 +395,63 @@
     }
   }
 
+  async function clearChannels() {
+    const channels = await fetch(httpBase + "/channels").then((r) => r.json());
+    if (!channels.length) return;
+    if (!confirm(`Clear all ${channels.length} channel${channels.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    const r = await fetch(httpBase + "/channels", { method: "DELETE" });
+    if (!r.ok) {
+      hint("Could not clear channels — is the server still running?");
+      return;
+    }
+    stopAudio();
+    stopPolling();
+    forgetJoin();
+    resetJoin();
+    state.channelId = null;
+    state.channelName = null;
+    state.seen = new Set();
+    $("chTitle").textContent = "No channel selected";
+    $("chId").textContent = "";
+    $("messages").innerHTML = '<div class="empty"><div class="big">💬</div>Select a channel to see the conversation</div>';
+    $("listenBtn").disabled = true;
+    $("joinBtn").disabled = true;
+    $("audioPill").style.display = "none";
+    history.replaceState(null, "", location.pathname);
+    await loadChannels();
+  }
+
+  async function deleteChannel(id, name) {
+    if (!confirm(`Are you sure you want to delete “${name}”? This cannot be undone.`)) return;
+    const r = await fetch(`${httpBase}/channels/${id}`, { method: "DELETE" });
+    if (r.status === 409) {
+      hint("This channel now has an agent connected, so it was not deleted.");
+      await loadChannels();
+      return;
+    }
+    if (!r.ok) {
+      hint("Could not delete the channel — is the server still running?");
+      return;
+    }
+    if (state.channelId === id) {
+      stopAudio();
+      stopPolling();
+      forgetJoin();
+      resetJoin();
+      state.channelId = null;
+      state.channelName = null;
+      state.seen = new Set();
+      $("chTitle").textContent = "No channel selected";
+      $("chId").textContent = "";
+      $("messages").innerHTML = '<div class="empty"><div class="big">💬</div>Select a channel to see the conversation</div>';
+      $("listenBtn").disabled = true;
+      $("joinBtn").disabled = true;
+      $("audioPill").style.display = "none";
+      history.replaceState(null, "", location.pathname);
+    }
+    await loadChannels();
+  }
+
   // ---- Channel selection --------------------------------------------------
   function selectChannel(id, name) {
     if (state.channelId === id) return;
@@ -312,6 +459,8 @@
     resetJoin();
     state.channelId = id;
     state.channelName = name;
+    const channel = state.channels?.find((item) => item.channel_id === id);
+    state.participants = channel?.participants ? Object.values(channel.participants) : [];
     state.seen = new Set();
     $("chTitle").textContent = name;
     $("chId").textContent = id;
@@ -464,12 +613,12 @@
       const sel = $("voice");
       sel.innerHTML = "";
       const auto = document.createElement("option");
-      auto.value = ""; auto.textContent = "Auto-designed voice";
+      auto.value = ""; auto.textContent = "Design a voice for me";
       sel.appendChild(auto);
       for (const v of voices) {
         const o = document.createElement("option");
         o.value = v.voice_id;
-        o.textContent = v.voice_id;
+        o.textContent = v.display_name || v.voice_id;
         sel.appendChild(o);
       }
     } catch {
@@ -505,7 +654,7 @@
       hint("Join failed: " + e.message);
     } finally {
       $("joinBtn").disabled = false;
-      $("joinBtn").textContent = "Join";
+      $("joinBtn").textContent = "Jump in →";
     }
   }
 
@@ -554,6 +703,76 @@
     }
   }
 
+  function updateMentions() {
+      const input = $("sayText");
+      const before = input.value.slice(0, input.selectionStart);
+      const match = before.match(/(?:^|\s)@([^\s@]*)$/);
+      const menu = $("mentionMenu");
+      if (!match) {
+        menu.classList.remove("open");
+        return;
+      }
+      refreshParticipants().then(() => {
+        if ($("sayText").value.slice(0, $("sayText").selectionStart) !== before) return;
+        const query = match[1].toLowerCase();
+        const matches = [...new Map(
+          state.participants.map((participant) => [participant.handle, participant])
+        ).values()].filter((participant) =>
+          participant.handle.toLowerCase().includes(query)
+        );
+        menu.innerHTML = "";
+        state.mentionIndex = 0;
+        matches.forEach((participant, index) => {
+          const option = document.createElement("button");
+          option.type = "button";
+          option.className = "mention-option" + (index === 0 ? " active" : "");
+          option.textContent = `@${participant.handle}`;
+          option.setAttribute("role", "option");
+          option.onclick = () => insertMention(participant.handle, match.index + match[0].indexOf("@"));
+          menu.appendChild(option);
+        });
+        menu.classList.toggle("open", matches.length > 0);
+      });
+  }
+
+  async function refreshParticipants() {
+    if (!state.channelId) return;
+    try {
+      const response = await fetch(`${httpBase}/channels/${state.channelId}`);
+      if (!response.ok) return;
+      const channel = await response.json();
+      state.participants = channel.participants ? Object.values(channel.participants) : [];
+    } catch {}
+  }
+
+  function insertMention(handle, start) {
+      const input = $("sayText");
+      const cursor = input.selectionStart;
+      const before = input.value.slice(0, start);
+      const after = input.value.slice(cursor);
+      input.value = `${before}@${handle} ${after}`;
+      input.focus();
+      const position = before.length + handle.length + 2;
+      input.setSelectionRange(position, position);
+      $("mentionMenu").classList.remove("open");
+  }
+
+  function navigateMentions(direction) {
+      const options = [...$("mentionMenu").querySelectorAll(".mention-option")];
+      if (!options.length) return false;
+      state.mentionIndex = (state.mentionIndex + direction + options.length) % options.length;
+      options.forEach((option, index) => option.classList.toggle("active", index === state.mentionIndex));
+      options[state.mentionIndex].scrollIntoView({ block: "nearest" });
+      return true;
+  }
+
+  function selectMention() {
+      const option = $("mentionMenu").querySelectorAll(".mention-option")[state.mentionIndex];
+      if (!option) return false;
+      option.click();
+      return true;
+  }
+
   async function leave() {
     if (state.keyId && state.channelId) {
       try {
@@ -586,13 +805,22 @@
 
   // ---- wire up ------------------------------------------------------------
   $("createBtn").onclick = createChannel;
+  $("clearChannelsBtn").onclick = clearChannels;
   $("newChannelName").addEventListener("keydown", (e) => { if (e.key === "Enter") createChannel(); });
   $("listenBtn").onclick = toggleAudio;
   $("joinBtn").onclick = join;
   $("handle").addEventListener("keydown", (e) => { if (e.key === "Enter") join(); });
   $("leaveBtn").onclick = leave;
   $("sayBtn").onclick = say;
-  $("sayText").addEventListener("keydown", (e) => { if (e.key === "Enter") say(); });
+  $("sayText").addEventListener("input", updateMentions);
+  $("sayText").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" && navigateMentions(1)) e.preventDefault();
+    else if (e.key === "ArrowUp" && navigateMentions(-1)) e.preventDefault();
+    else if (e.key === "Enter" && $("mentionMenu").classList.contains("open")) {
+      if (selectMention()) e.preventDefault();
+    } else if (e.key === "Escape") $("mentionMenu").classList.remove("open");
+    else if (e.key === "Enter") say();
+  });
   window.addEventListener("beforeunload", () => { if (state.keyId) navigator.sendBeacon; });
 
   async function init() {
