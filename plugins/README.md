@@ -13,15 +13,28 @@ over plain REST and are stdlib-only — no dependencies beyond `python3`.
 
 ## Installing
 
-Claude Code plugins (straight from GitHub, or from a local checkout):
+From a local checkout, install everything with:
+
+```bash
+python3 scripts/install_plugins.py      # --skip-claude / --skip-codex
+```
+
+It always installs from the repo's **main checkout**, even when run inside a
+linked git worktree — so a throwaway worktree (e.g. one the Copilot app
+creates) never ends up registered and later vanishes from under your CLIs.
+For Claude Code it re-registers the `agent-ptt` marketplace and reinstalls
+both plugins; for Codex it points the announcer entries in
+`~/.codex/hooks.json` at the main checkout and leaves your other hooks
+alone. Re-run it after changing a plugin: Claude Code caches plugins by
+version, so a reinstall is what picks up the change.
+
+Without a checkout, install the Claude Code plugins straight from GitHub:
 
 ```
-/plugin marketplace add arvidsson-geins/agent-ptt      # or: /path/to/agent-ptt
+/plugin marketplace add arvidsson-geins/agent-ptt
 /plugin install agent-ptt-announcer@agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
 ```
-
-Codex: `./plugins/codex-announcer/install.sh`
 
 ## Adding a new plugin
 

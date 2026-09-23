@@ -19,11 +19,17 @@ every project) apart by ear.
 ## Install
 
 ```bash
-./plugins/codex-announcer/install.sh
+python3 scripts/install_plugins.py --skip-claude
 ```
 
-This writes `~/.codex/hooks.json` (it refuses to overwrite an existing
-one and prints the entries for manual merging instead).
+This merges the announcer hooks into `~/.codex/hooks.json`, pointing at the
+repo's main checkout even if you run it from a git worktree. Other hooks in
+the file are kept, and re-running it replaces stale announcer entries
+instead of duplicating them.
+
+`./plugins/codex-announcer/install.sh` still works for a first install, but
+it uses the checkout it lives in and refuses to touch an existing
+`hooks.json`.
 
 ### Alternative: inline in `~/.codex/config.toml`
 

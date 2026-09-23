@@ -111,12 +111,10 @@ The script requires `claude` and `jq`. If the team has a different agent CLI, re
 
 ## 4. Claude Code integration
 
-Install the two Claude plugins from the local checkout. In Claude Code, run:
+Install the two Claude plugins (and the Codex hooks) from the local checkout:
 
-```text
-/plugin marketplace add /path/to/agent-ptt
-/plugin install agent-ptt-announcer@agent-ptt
-/plugin install agent-ptt-voice@agent-ptt
+```bash
+python3 scripts/install_plugins.py
 ```
 
 Set the shared channel for the Claude session:
@@ -137,13 +135,7 @@ In Claude Code, invoke the voice skill for a deliberate announcement:
 
 ## 5. Codex integration
 
-Install the Codex hooks from the repository:
-
-```bash
-./plugins/codex-announcer/install.sh
-```
-
-If Codex already has a `~/.codex/hooks.json`, the installer prints entries to merge rather than overwriting it. For a local demo, configure the hook environment to use the same channel:
+`scripts/install_plugins.py` (section 4) already installed the Codex hooks: it merges the announcer entries into `~/.codex/hooks.json` and keeps any other hooks there. For a local demo, configure the hook environment to use the same channel:
 
 ```text
 AGENT_PTT_URL=http://localhost:8770

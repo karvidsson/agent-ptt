@@ -238,18 +238,18 @@ Needs `tmux`, `git`, `jq`, `python3` and the `claude` CLI on your PATH, and a Cl
 
 ## Use it with your coding agent
 
-**Claude Code** — announcer hooks plus a `/say` skill, installed from this repo as a plugin marketplace:
+**From a local checkout** — one command installs both, always from the repo's main checkout (even if you run it inside a git worktree), and is safe to re-run after changing a plugin:
+
+```bash
+python3 scripts/install_plugins.py      # Claude Code plugins + Codex hooks
+```
+
+**Claude Code without a checkout** — announcer hooks plus a `/say` skill, installed straight from GitHub:
 
 ```
 /plugin marketplace add arvidsson-geins/agent-ptt
 /plugin install agent-ptt-announcer@agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
-```
-
-**Codex CLI** — the same announcer, packaged as Codex hooks:
-
-```bash
-./plugins/codex-announcer/install.sh    # writes ~/.codex/hooks.json
 ```
 
 Each project joins as `Claude · <folder>` / `Codex · <folder>` and is assigned its own voice, so you can tell agents and repos apart without looking. Details in [plugins/](plugins/).
