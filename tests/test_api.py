@@ -50,6 +50,44 @@ def test_list_channels(client):
     assert [c["channel_id"] for c in listed] == [channel_id]
 
 
+def test_delete_all_channels(client):
+    first = _create_channel(client, "First")
+    second = _create_channel(client, "Second")
+
+    resp = client.delete("/channels")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": 2}
+    assert client.get("/channels").json() == []
+    assert client.get(f"/channels/{first}").status_code == 404
+    assert client.get(f"/channels/{second}").status_code == 404
+
+
+def test_delete_one_empty_channel(client):
+    channel_id = _create_channel(client)
+
+    resp = client.delete(f"/channels/{channel_id}")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": channel_id}
+    assert client.get("/channels").json() == []
+
+
+def test_delete_one_channel_with_agent_is_rejected(client):
+    channel_id = _create_channel(client)
+    _join(client, channel_id)
+
+    resp = client.delete(f"/channels/{channel_id}")
+
+    assert resp.status_code == 409
+    assert resp.json() == {"error": "Channel has connected agents"}
+    assert client.get(f"/channels/{channel_id}").status_code == 200
+
+
+def test_delete_one_unknown_channel(client):
+    assert client.delete("/channels/nonexistent").status_code == 404
+
+
 def test_get_channel_detail(client):
     channel_id = _create_channel(client)
     resp = client.get(f"/channels/{channel_id}")

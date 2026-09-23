@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
-from agent_ptt.audio import get_mixer
+from agent_ptt.audio import get_mixer, remove_mixer
 from agent_ptt.db import SessionLocal, get_db, init_db
 from agent_ptt.models import Message, VoiceProfile
 from agent_ptt.tts import get_backend, has_backend
@@ -184,6 +184,41 @@ async def create_channel(req: CreateChannelRequest, db: Session = Depends(get_db
 async def list_channels():
     """List all active channels."""
     return [c.model_dump() for c in ch.list_channels()]
+
+
+@app.delete("/channels")
+async def delete_all_channels(db: Session = Depends(get_db)):
+    """Delete every channel and stop its workers and audio mixers."""
+    channel_ids = [channel.channel_id for channel in ch.list_channels()]
+    for channel_id in channel_ids:
+        for websocket in _ws_clients.pop(channel_id, []):
+            with contextlib.suppress(Exception):
+                await websocket.close(code=4004, reason="Channels cleared")
+        _stop_tts_worker(channel_id)
+        remove_mixer(channel_id)
+        ch.delete_channel(channel_id, db=db)
+    return {"deleted": len(channel_ids)}
+
+
+@app.delete("/channels/{channel_id}")
+async def delete_one_channel(channel_id: str, db: Session = Depends(get_db)):
+    """Delete one channel when no agents are currently connected."""
+    channel = ch.get_channel(channel_id)
+    if channel is None:
+        return JSONResponse({"error": "Channel not found"}, status_code=404)
+    if channel.participants:
+        return JSONResponse(
+            {"error": "Channel has connected agents"},
+            status_code=409,
+        )
+
+    for websocket in _ws_clients.pop(channel_id, []):
+        with contextlib.suppress(Exception):
+            await websocket.close(code=4004, reason="Channel deleted")
+    _stop_tts_worker(channel_id)
+    remove_mixer(channel_id)
+    ch.delete_channel(channel_id, db=db)
+    return {"deleted": channel_id}
 
 
 @app.get("/channels/{channel_id}")

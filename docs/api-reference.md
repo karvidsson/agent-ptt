@@ -90,6 +90,41 @@ GET /channels/{channel_id}
 
 ---
 
+### Delete Channel
+
+```
+DELETE /channels/{channel_id}
+```
+
+Deletes one channel, its participant keys and its transcript. Only allowed
+while nobody is in the channel.
+
+**Response (200):**
+```json
+{ "deleted": "cd6a64f1-..." }
+```
+
+**Errors:** `404` unknown channel, `409` the channel still has participants.
+
+---
+
+### Clear All Channels
+
+```
+DELETE /channels
+```
+
+Deletes every channel, including ones with participants: connected agent
+WebSockets are closed with code `4004`, and each channel's TTS worker and
+audio mixer are stopped.
+
+**Response (200):**
+```json
+{ "deleted": 3 }
+```
+
+---
+
 ### Join Channel
 
 ```
