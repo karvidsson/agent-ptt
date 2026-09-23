@@ -276,8 +276,8 @@ async def get_history(channel_id: str):
 
 
 @app.get("/voices")
-async def list_voices(engine: str = "edge-tts"):
-    """List available voices from the active TTS engine."""
+async def list_voices(engine: str = "omnivoice"):
+    """List designed voices from the active TTS engine."""
     backend = get_backend(engine)
     voices = await backend.list_voices()
     return [v.model_dump() for v in voices]

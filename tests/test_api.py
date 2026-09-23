@@ -57,6 +57,13 @@ def test_get_channel_detail(client):
     assert resp.json()["channel_id"] == channel_id
 
 
+def test_list_voices_defaults_to_designed_backend(client, fake_tts):
+    resp = client.get("/voices")
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["voice_id"] == "fake-voice"
+
+
 def test_get_unknown_channel(client):
     assert client.get("/channels/nonexistent").status_code == 404
 

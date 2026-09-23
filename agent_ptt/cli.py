@@ -325,7 +325,7 @@ def listen(
 
 @app.command("voices")
 def voices(
-    engine: str = typer.Option("edge-tts", help="TTS engine to list voices for"),
+    engine: str = typer.Option("omnivoice", help="TTS engine to list designed voices for"),
 ):
     """List available TTS voices."""
     base = _get_base_url()

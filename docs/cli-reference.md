@@ -197,15 +197,15 @@ agent-ptt voices [--engine ENGINE]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--engine` | `edge-tts` | TTS engine to query (`edge-tts`, `system`, or `omnivoice`) |
+| `--engine` | `omnivoice` | TTS engine to query (`omnivoice`, `edge-tts`, or `system`) |
 
 **Example:**
 ```bash
 agent-ptt voices
-# Shows a table of English edge-tts voices with ID, name, locale, gender
+# Shows the six built-in instruct-based omnivoice archetypes
 
-agent-ptt voices --engine omnivoice
-# Shows the six built-in instruct-based archetypes
+agent-ptt voices --engine edge-tts
+# Shows a table of English edge-tts voices with ID, name, locale, gender
 ```
 
 ---

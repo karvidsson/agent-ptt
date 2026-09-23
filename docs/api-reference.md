@@ -175,12 +175,12 @@ GET /channels/{channel_id}/history
 ### List Voices
 
 ```
-GET /voices?engine=edge-tts
+GET /voices?engine=omnivoice
 ```
 
 | Query Param | Default | Description |
 |-------------|---------|-------------|
-| `engine` | `edge-tts` | TTS engine to query |
+| `engine` | `omnivoice` | TTS engine to query (`omnivoice`, `edge-tts`, or `system`) |
 
 **Response (200):**
 ```json
