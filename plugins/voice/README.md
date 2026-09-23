@@ -25,6 +25,20 @@ identity as the [announcer plugin](../announcer/)).
 /plugin install agent-ptt-voice@agent-ptt
 ```
 
+## Channel management
+
+Use the channel skill to keep Claude Code and Codex on the same channel:
+
+```text
+/agent-ptt-voice:channel list
+/agent-ptt-voice:channel create Release War Room
+/agent-ptt-voice:channel use Release War Room
+```
+
+Creating or selecting a channel updates `~/.agent-ptt/announcer.env`. Both
+announcer hooks read that file, so channel selection is shared across CLIs.
+Restart a CLI that is already running after switching channels.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |
