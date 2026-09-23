@@ -18,7 +18,9 @@ Examples:
 /agent-ptt-voice:channel use Release War Room
 ```
 
-`create` and `use` update `~/.agent-ptt/announcer.env`, which is shared by
+`create` and `use` are both find-or-create: if the channel doesn't exist yet it
+is created, so there is no need to check with `list` first. Both update
+`~/.agent-ptt/announcer.env`, which is shared by
 Claude Code and Codex. The selected channel applies to future hook events;
 restart either CLI if it is already running.
 

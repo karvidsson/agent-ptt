@@ -41,6 +41,15 @@ def _save_channel(name: str) -> None:
     CONFIG_FILE.write_text("\n".join(output).rstrip() + "\n")
 
 
+def _find_or_create(name: str) -> tuple[dict, bool]:
+    """Return the channel with this name, creating it if missing, and whether it was created."""
+    channels = _request("GET", "/channels")
+    channel = next((item for item in channels if item["name"] == name), None)
+    if channel is not None:
+        return channel, False
+    return _request("POST", "/channels", {"name": name}), True
+
+
 def main(args: list[str]) -> int:
     action = args[0] if args else "list"
     if action == "list":
@@ -48,27 +57,16 @@ def main(args: list[str]) -> int:
         for channel in channels:
             print(f"{channel['name']}\t{channel['channel_id']}")
         return 0
-    if action == "create":
+    if action in ("create", "use"):
         name = " ".join(args[1:]).strip()
         if not name:
-            print("usage: channel.py create <channel name>", file=sys.stderr)
+            print(f"usage: channel.py {action} <channel name>", file=sys.stderr)
             return 2
-        channel = _request("POST", "/channels", {"name": name})
+        # Both are find-or-create: never a duplicate, never "not found"
+        channel, created = _find_or_create(name)
         _save_channel(channel["name"])
-        print(f"Created and selected: {channel['name']} ({channel['channel_id']})")
-        return 0
-    if action == "use":
-        name = " ".join(args[1:]).strip()
-        if not name:
-            print("usage: channel.py use <channel name>", file=sys.stderr)
-            return 2
-        channels = _request("GET", "/channels")
-        channel = next((item for item in channels if item["name"] == name), None)
-        if channel is None:
-            print(f"Channel not found: {name}", file=sys.stderr)
-            return 1
-        _save_channel(channel["name"])
-        print(f"Selected: {channel['name']} ({channel['channel_id']})")
+        verb = "Created and selected" if created else "Selected"
+        print(f"{verb}: {channel['name']} ({channel['channel_id']})")
         return 0
     print("usage: channel.py [list|create|use] [channel name]", file=sys.stderr)
     return 2

@@ -35,6 +35,12 @@ Use the channel skill to keep Claude Code and Codex on the same channel:
 /agent-ptt-voice:channel use Release War Room
 ```
 
+`create` and `use` both find the channel by name and create it if it doesn't
+exist, so neither makes duplicates or fails with "not found". Speaking works
+the same way: `say` and the announcer hooks create their channel on first use,
+and recreate it if it was deleted mid-session (e.g. with **Clear all** in the
+web UI).
+
 Creating or selecting a channel updates `~/.agent-ptt/announcer.env`. Both
 announcer hooks read that file, so channel selection is shared across CLIs.
 Restart a CLI that is already running after switching channels.

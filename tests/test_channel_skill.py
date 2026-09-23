@@ -21,23 +21,53 @@ def test_save_channel_preserves_other_settings(tmp_path, monkeypatch):
     )
 
 
-def test_create_selects_channel(monkeypatch, tmp_path, capsys):
+def _fake_server(existing):
+    """A fake _request over a list of channels; POST /channels appends one."""
+    channels = list(existing)
+    posts = []
+
+    def fake_request(method, path, payload=None):
+        if method == "GET" and path == "/channels":
+            return channels
+        if method == "POST" and path == "/channels":
+            posts.append(payload["name"])
+            created = {"name": payload["name"], "channel_id": f"c{len(channels) + 1}"}
+            channels.append(created)
+            return created
+        raise AssertionError(f"unexpected request {method} {path}")
+
+    return fake_request, posts
+
+
+def test_create_selects_new_channel(monkeypatch, tmp_path, capsys):
     config = tmp_path / "announcer.env"
     monkeypatch.setattr(channel, "CONFIG_FILE", config)
-    monkeypatch.setattr(
-        channel,
-        "_request",
-        lambda method, path, payload=None: {"name": payload["name"], "channel_id": "c1"},
-    )
+    fake_request, posts = _fake_server([])
+    monkeypatch.setattr(channel, "_request", fake_request)
 
     assert channel.main(["create", "Release", "War", "Room"]) == 0
+    assert posts == ["Release War Room"]
     assert "AGENT_PTT_CHANNEL=Release War Room" in config.read_text()
     assert "Created and selected" in capsys.readouterr().out
 
 
-def test_use_rejects_unknown_channel(monkeypatch, tmp_path, capsys):
+def test_create_reuses_existing_channel(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(channel, "CONFIG_FILE", tmp_path / "announcer.env")
-    monkeypatch.setattr(channel, "_request", lambda *args, **kwargs: [])
+    fake_request, posts = _fake_server([{"name": "Release", "channel_id": "c1"}])
+    monkeypatch.setattr(channel, "_request", fake_request)
 
-    assert channel.main(["use", "Missing"]) == 1
-    assert "Channel not found" in capsys.readouterr().err
+    assert channel.main(["create", "Release"]) == 0
+    assert posts == []
+    assert "Selected: Release (c1)" in capsys.readouterr().out
+
+
+def test_use_creates_missing_channel(monkeypatch, tmp_path, capsys):
+    config = tmp_path / "announcer.env"
+    monkeypatch.setattr(channel, "CONFIG_FILE", config)
+    fake_request, posts = _fake_server([])
+    monkeypatch.setattr(channel, "_request", fake_request)
+
+    assert channel.main(["use", "Missing"]) == 0
+    assert posts == ["Missing"]
+    assert "AGENT_PTT_CHANNEL=Missing" in config.read_text()
+    assert "Created and selected" in capsys.readouterr().out

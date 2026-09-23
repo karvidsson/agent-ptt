@@ -311,7 +311,8 @@ def announce(session_id: str, handle: str, text: str) -> None:
     except urllib.error.HTTPError as e:
         if e.code != 404:
             raise
-        # Stale key (server restarted between calls) — rejoin once
+        # Stale key or deleted channel — find (or recreate) the channel and rejoin once
+        channel_id = _find_or_create_channel()
         key_id = _join(channel_id, handle)
         state[cache_key] = {"channel_id": channel_id, "key_id": key_id}
         _save_state(state)

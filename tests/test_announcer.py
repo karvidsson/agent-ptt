@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -242,6 +243,72 @@ CODEX_INSTALL = REPO_ROOT / "plugins" / "codex-announcer" / "install.sh"
 def test_codex_script_is_identical_to_claude_script():
     """One script serves both tools — fix bugs in one place and copy."""
     assert CODEX_ANNOUNCE.read_bytes() == ANNOUNCE_PY.read_bytes()
+
+
+def test_announce_creates_missing_channel(monkeypatch, tmp_path):
+    monkeypatch.setattr(announce, "STATE_FILE", tmp_path / "state.json")
+    requests = []
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append((method, path))
+        if method == "GET" and path == "/channels":
+            return []
+        if method == "POST" and path == "/channels":
+            assert payload == {"name": announce.CHANNEL_NAME}
+            return {"channel_id": "chan-1"}
+        if path.endswith("/join"):
+            return {"key_id": "key-1"}
+        if path.endswith("/say"):
+            return {"message_id": "m1"}
+        raise AssertionError(f"unexpected request {method} {path}")
+
+    monkeypatch.setattr(announce, "_request", fake_request)
+
+    announce.announce("s1", "Claude · proj", "hello")
+
+    assert requests == [
+        ("GET", "/channels"),
+        ("POST", "/channels"),
+        ("POST", "/channels/chan-1/join"),
+        ("POST", "/channels/chan-1/say"),
+    ]
+
+
+def test_announce_recreates_channel_deleted_mid_session(monkeypatch, tmp_path):
+    """Channel cleared after the key was cached: the 404 retry recreates it."""
+    state_file = tmp_path / "state.json"
+    monkeypatch.setattr(announce, "STATE_FILE", state_file)
+    state_file.write_text(
+        json.dumps({"s1:Claude · proj": {"channel_id": "chan-1", "key_id": "old-key"}})
+    )
+    live = {"channels": [{"name": announce.CHANNEL_NAME, "channel_id": "chan-1"}]}
+    requests = []
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append((method, path))
+        if method == "GET" and path == "/channels":
+            return live["channels"]
+        if method == "POST" and path == "/channels":
+            live["channels"] = [{"name": payload["name"], "channel_id": "chan-2"}]
+            return live["channels"][0]
+        if path == "/channels/chan-1/say":
+            live["channels"] = []  # cleared between lookup and say
+            raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+        if path == "/channels/chan-2/join":
+            return {"key_id": "new-key"}
+        if path == "/channels/chan-2/say":
+            return {"message_id": "m1"}
+        raise AssertionError(f"unexpected request {method} {path}")
+
+    monkeypatch.setattr(announce, "_request", fake_request)
+
+    announce.announce("s1", "Claude · proj", "hello")
+
+    assert requests[-1] == ("POST", "/channels/chan-2/say")
+    assert json.loads(state_file.read_text())["s1:Claude · proj"] == {
+        "channel_id": "chan-2",
+        "key_id": "new-key",
+    }
 
 
 def test_agent_name_prefixes_the_handle(monkeypatch):

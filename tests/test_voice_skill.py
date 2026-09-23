@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -80,3 +81,35 @@ def test_say_reuses_cached_key(monkeypatch, tmp_path):
     assert len(says) == 2
     cached = json.loads((tmp_path / "state.json").read_text())
     assert next(iter(cached.values())) == {"channel_id": "chan-1", "key_id": "key-1"}
+
+
+def test_say_recreates_deleted_channel(monkeypatch, tmp_path):
+    """A 404 on say (channel cleared) re-resolves the channel instead of failing."""
+    monkeypatch.setattr(say, "STATE_FILE", tmp_path / "state.json")
+    live = {"channels": [{"name": say.CHANNEL_NAME, "channel_id": "chan-1"}]}
+    requests = []
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append((method, path))
+        if method == "GET" and path == "/channels":
+            return live["channels"]
+        if method == "POST" and path == "/channels":
+            live["channels"] = [{"name": payload["name"], "channel_id": "chan-2"}]
+            return live["channels"][0]
+        if path.endswith("/join"):
+            return {"key_id": f"key-for-{path.split('/')[2]}"}
+        if path == "/channels/chan-1/say":
+            live["channels"] = []  # cleared between lookup and say
+            raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+        if path == "/channels/chan-2/say":
+            return {"message_id": "m1"}
+        raise AssertionError(f"unexpected request {method} {path}")
+
+    monkeypatch.setattr(say, "_request", fake_request)
+
+    say.say("hello")
+
+    assert ("POST", "/channels") in requests
+    assert requests[-1] == ("POST", "/channels/chan-2/say")
+    cached = json.loads((tmp_path / "state.json").read_text())
+    assert next(iter(cached.values())) == {"channel_id": "chan-2", "key_id": "key-for-chan-2"}
