@@ -4,7 +4,7 @@ Integrations that let coding agents speak through Agent PTT voice channels.
 
 | Plugin | For | What it does |
 |--------|-----|--------------|
-| [announcer/](announcer/) | Claude Code | Announces "Starting: …" / "Done." on every task via hooks |
+| [announcer/](announcer/) | Claude Code | Announces "I'm currently looking into …" / "I've finished working on it." on every task via hooks |
 | [voice/](voice/) | Claude Code | `/agent-ptt-voice:say` skill — speak any message on demand |
 | [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as Codex hooks |
 

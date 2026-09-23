@@ -1,8 +1,8 @@
 # Agent PTT Announcer — Codex CLI hooks
 
-The same announcer as the [Claude Code plugin](../announcer/), for
-OpenAI's Codex CLI: your Mac announces **"Starting: …"** when you submit
-a prompt and **"Done."** when Codex finishes, through an
+The same Agent PTT integration for OpenAI's Codex CLI: your Mac announces
+**"I'll inspect the project and identify the entry point."** when you submit
+a prompt and **"I've finished working on it."** when Codex finishes, through an
 [Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel.
 
 Codex sessions join as `Codex · <folder>`, so Codex gets different
@@ -14,6 +14,7 @@ every project) apart by ear.
 - An Agent PTT server running locally: `uv run agent-ptt server start`
 - Codex CLI with hooks support
 - `python3` on PATH (the hook script is stdlib-only)
+- Codex authentication configured, so the short summarization call can run
 
 ## Install
 
@@ -49,10 +50,22 @@ timeout = 60
 | `AGENT_PTT_AGENT` | `Claude` | Speaker name prefix (set to `Codex` by the hook entries) |
 | `AGENT_PTT_ANNOUNCE` | `1` | Set `0` to disable announcements |
 
+Claude and Codex share the persistent settings in
+`~/.agent-ptt/announcer.env`, so configure the channel once instead of
+editing Codex hooks:
+
+```text
+AGENT_PTT_URL=http://localhost:8770
+AGENT_PTT_CHANNEL=Hackathon Demo
+```
+
+Shell environment variables override this file for temporary experiments.
+
 ## Behavior notes
 
 - **Never blocks Codex.** The script forks immediately after parsing the
   event, so the hook returns instantly while the announcement happens in
   the background; every failure path exits silently.
-- `plugins/codex-announcer/announce.py` is byte-identical to the Claude plugin's
-  script (a test enforces this) — fix bugs in one place and copy.
+- The hook uses `codex exec --sandbox read-only` for its short start-summary
+  call, so Codex works without Claude installed. If Codex is unavailable, it
+  falls back to the original prompt.

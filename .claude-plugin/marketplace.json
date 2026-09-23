@@ -6,19 +6,13 @@
       "name": "agent-ptt-announcer",
       "displayName": "Agent PTT Announcer",
       "description": "Announces in an Agent PTT voice channel what Claude Code is working on.",
-      "source": {
-        "type": "path",
-        "path": "./plugins/announcer"
-      }
+      "source": "./plugins/announcer"
     },
     {
       "name": "agent-ptt-voice",
       "displayName": "Agent PTT Voice",
       "description": "Speak messages aloud in an Agent PTT voice channel — /say skill for on-demand spoken updates.",
-      "source": {
-        "type": "path",
-        "path": "./plugins/voice"
-      }
+      "source": "./plugins/voice"
     }
   ]
 }

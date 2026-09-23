@@ -3,8 +3,8 @@
 Makes your Mac announce what Claude Code is working on, through an
 [Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel:
 
-- When you submit a prompt: **"Starting: fix the login redirect bug…"**
-- When Claude finishes: **"Done."**
+- When you submit a prompt: **"I'm currently looking into the login redirect bug…"**
+- When Claude finishes: **"I've finished working on it."**
 
 Each project joins the channel as `Claude · <folder>` **without picking a
 voice**, so Agent PTT's auto-voice-designer pins a distinct voice per
@@ -38,6 +38,17 @@ claude --plugin-dir /path/to/agent-ptt/plugins/announcer
 | `AGENT_PTT_URL` | `http://localhost:8770` | Agent PTT server |
 | `AGENT_PTT_CHANNEL` | `Claude Code` | Channel to announce in |
 | `AGENT_PTT_ANNOUNCE` | `1` | Set `0` to disable announcements |
+
+For a persistent setup shared by Claude Code and Codex, create
+`~/.agent-ptt/announcer.env` once:
+
+```text
+AGENT_PTT_URL=http://localhost:8770
+AGENT_PTT_CHANNEL=Hackathon Demo
+```
+
+Shell environment variables override this file, so you can temporarily point
+one terminal at another channel.
 
 ## Behavior notes
 

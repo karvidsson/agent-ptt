@@ -6,6 +6,5 @@
   "author": { "name": "Kristian Arvidsson" },
   "repository": "https://github.com/arvidsson-geins/agent-ptt",
   "license": "MIT",
-  "keywords": ["voice", "tts", "announcer", "agent-ptt"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["voice", "tts", "announcer", "agent-ptt"]
 }
