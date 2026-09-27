@@ -2,19 +2,17 @@
 
 ## Overview
 
-Voice profiles define how an agent's text messages sound when synthesized to speech. They follow the same contract/shape as [OmniVoice Studio](https://github.com/debpalash/OmniVoice-Studio), making configs portable between the two apps.
+Voice profiles define how an agent's text messages sound when synthesized to speech. Pocket TTS is the only supported built-in engine.
 
 ## Schema
 
 ```json
 {
-  "voice_id": "en-US-AriaNeural",
-  "display_name": "Aria (US English)",
-  "engine": "edge-tts",
+  "voice_id": "alba",
+  "display_name": "Alba",
+  "engine": "pocket-tts",
   "settings": {
-    "voice": "en-US-AriaNeural",
-    "rate": "+0%",
-    "pitch": "+0Hz"
+    "voice": "alba"
   },
   "created_at": "2026-07-02T07:19:57.000Z"
 }
@@ -24,7 +22,7 @@ Voice profiles define how an agent's text messages sound when synthesized to spe
 |-------|------|-------------|
 | `voice_id` | string | Unique identifier (maps to engine-specific voice name) |
 | `display_name` | string | Human-readable name |
-| `engine` | string | TTS engine identifier (`edge-tts`, `system`, `omnivoice`) |
+| `engine` | string | TTS engine identifier (`pocket-tts`) |
 | `settings` | object | Engine-specific parameters |
 | `created_at` | datetime | When the profile was created |
 
@@ -37,76 +35,42 @@ Joining **without** `--voice` auto-designs a deterministic voice from your handl
 ```bash
 agent-ptt join <channel-id> --handle "Claude"
 # ✅ Joined as [Claude]
-#    Voice: auto-designed {"voice": "en-GB-RyanNeural", "rate": "+5%", "pitch": "-8Hz"}
+#    Voice: auto-designed {"voice": "cosette"}
 ```
 
-On the base install the design picks an edge-tts voice with rate/pitch variation; with the `omnivoice` extra installed it generates an instruct string instead.
+Automatic assignment always selects a Pocket TTS catalog voice deterministically. Handles can share a catalog voice.
 
-When the **LLM voice designer** is installed (`uv sync --extra voice-designer`, already satisfied by the omnivoice extra), a small local LLM (Qwen2.5-0.5B, ~1 GB download on first use) picks instruct attributes matching the *vibe* of the handle instead of a hash. The LLM's answer is validated against the model vocabulary and any invalid or missing attribute falls back to the deterministic hash, so a bad answer can never produce a broken voice. `agent-ptt voice pinned` shows which source designed each voice; `agent-ptt voice redesign <handle>` rolls a new one.
+On server startup, saved legacy engine profiles (including removed OmniVoice profiles) are migrated to Pocket TTS while preserving their IDs and pin references. Their sound changes; old instruction, rate, and pitch settings are discarded. For an old raw voice name not saved as a profile, choose a Pocket voice when rejoining.
 
 ## Engine-Specific Settings
 
-### edge-tts
+### pocket-tts (default)
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `voice` | string | `en-US-AriaNeural` | Edge TTS voice short name |
-| `rate` | string | `+0%` | Speed adjustment (`-50%` to `+100%`) |
-| `pitch` | string | `+0Hz` | Pitch adjustment (`-50Hz` to `+50Hz`) |
-| `locale` | string | — | Language/region code (read-only, from voice listing) |
-| `gender` | string | — | `Male` or `Female` (read-only, from voice listing) |
+| `voice` | string | `alba` | Catalog name, reference audio path, or exported voice state path |
 
-### system (pyttsx3)
+[Pocket TTS](https://github.com/kyutai-labs/pocket-tts) runs locally on CPU. Model and voice downloads happen on first use; subsequent synthesis uses the cache. Model loading and inference run off the event loop, serialized across channels, with a bounded cache of voice states. Output is mono PCM16 WAV.
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `voice` | string | — | System voice ID (platform-specific) |
-| `rate` | integer | `200` | Words per minute |
+```bash
+uv sync
+agent-ptt voices
+agent-ptt voice clone --reference ./sample.wav --name "My voice"
+```
 
-### omnivoice (local neural TTS — requires `uv sync --extra omnivoice`)
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `instruct` | string | — | Voice design items, comma-separated, e.g. `female, young adult, british accent, low pitch` |
-| `ref_audio` | string | — | Path to a 5–30s reference clip for voice cloning |
-| `ref_text` | string | — | Transcript of the reference clip (required with `ref_audio`) |
-| `language` | string | — | Language code, e.g. `en` |
-| `speed` | number | `1.0` | Speaking speed multiplier |
-
-The model (~2.4 GB, `k2-fsa/OmniVoice`) downloads from HuggingFace Hub on first synthesis into `~/.cache/huggingface` (relocate with `HF_HOME`). Six instruct-based archetypes ship built in: `narrator`, `podcaster`, `newscaster`, `storyteller`, `assistant`, `professor` — see them with `agent-ptt voices --engine omnivoice`.
-
-Valid instruct items (the model rejects anything else): `male`/`female`; `child`/`teenager`/`young adult`/`middle-aged`/`elderly`; `american`/`australian`/`british`/`canadian`/`chinese`/`indian`/`japanese`/`korean`/`portuguese`/`russian` + ` accent`; `very low`/`low`/`moderate`/`high`/`very high` + ` pitch`; `whisper`. Note this differs from the `[tag:value]` format sketched in the roadmap docs.
+Cloning needs no transcript. Reference files must remain available on the synthesis host. Description-based voice design is no longer supported; use catalog selection or reference-audio cloning.
 
 ## Available Voices
 
-| Voice ID | Gender | Accent |
-|----------|--------|--------|
-| `en-US-AriaNeural` | Female | American |
-| `en-US-GuyNeural` | Male | American |
-| `en-US-JennyNeural` | Female | American |
-| `en-US-DavisNeural` | Male | American |
-| `en-US-AndrewNeural` | Male | American |
-| `en-US-EmmaNeural` | Female | American |
-| `en-GB-SoniaNeural` | Female | British |
-| `en-GB-RyanNeural` | Male | British |
-| `en-GB-LibbyNeural` | Female | British |
-| `en-AU-NatashaNeural` | Female | Australian |
-| `en-AU-WilliamNeural` | Male | Australian |
-| `en-IN-NeerjaNeural` | Female | Indian |
-| `en-IN-PrabhatNeural` | Male | Indian |
-| `en-IE-EmilyNeural` | Female | Irish |
-| `en-IE-ConnorNeural` | Male | Irish |
-| `en-ZA-LeahNeural` | Female | South African |
-| `en-NZ-MollyNeural` | Female | New Zealand |
-
-Run `agent-ptt voices` for the complete list of English voices.
+The curated catalog is: `alba`, `marius`, `javert`, `jean`, `fantine`, `cosette`, `eponine`, `azelma`.
+Run `agent-ptt voices` to list it without loading the model.
 
 ## Using Voices
 
 ### When joining a channel
 
 ```bash
-agent-ptt join <channel-id> --handle "Claude" --voice "en-US-GuyNeural"
+agent-ptt join <channel-id> --handle "Claude" --voice "marius"
 ```
 
 ### Via the API
@@ -114,7 +78,7 @@ agent-ptt join <channel-id> --handle "Claude" --voice "en-US-GuyNeural"
 ```bash
 curl -X POST http://localhost:8770/channels/<id>/join \
   -H "Content-Type: application/json" \
-  -d '{"handle": "Claude", "voice_id": "en-US-GuyNeural"}'
+  -d '{"handle": "Claude", "voice_id": "marius"}'
 ```
 
 ## Adding Custom TTS Engines

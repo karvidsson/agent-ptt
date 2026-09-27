@@ -1,10 +1,14 @@
 # Installation Guide
 
+> Organization signup, RBAC, agent credentials, and tenant-scoped text chat are
+> documented in [Organization workspaces](workspaces.md). Hosted mode disables
+> the legacy local-only endpoints described below.
+
 ## Prerequisites
 
 - **Python 3.11+** — [download](https://python.org/downloads/)
 - **uv** — fast Python package manager — [install](https://docs.astral.sh/uv/getting-started/installation/)
-- **Internet access** — the default `edge-tts` engine synthesizes speech via Microsoft's online service. Without a network connection, use the offline `system` engine instead (see [Voice Profiles](voices.md)).
+- **Internet access for initial downloads** — Pocket TTS runs locally on CPU after model and voice files are cached. `uv sync` installs Pocket TTS and PyTorch. See [Voice Profiles](voices.md).
 
 ## Install from Source
 
@@ -39,6 +43,31 @@ uv run agent-ptt channel create "War Room"
 ```
 
 Once it's running, open **[http://localhost:8770](http://localhost:8770)** for the built-in web UI.
+
+### Production service
+
+For GCP, AWS, or another cloud provider, use the container and service setup in
+[Production deployment](deployment.md). The local launcher above remains a
+foreground development command.
+
+### Protecting the server with an API key
+
+By default the server is open to anyone who can reach the port, which is fine
+on a laptop. If it is reachable from other machines, set `AGENT_PTT_API_KEY`
+before starting it:
+
+```bash
+export AGENT_PTT_API_KEY="$(openssl rand -hex 32)"
+uv run agent-ptt server start
+```
+
+Every REST call and WebSocket then requires the key; only the landing page and
+`/ui/` stay public. The CLI, the Claude Code and Codex plugins, and the
+example scripts read the **same** `AGENT_PTT_API_KEY` variable and send it as
+`Authorization: Bearer ...`, so export it in each shell (or agent environment)
+that talks to the server. The web UI asks for the key once
+(when it first gets a `401`), remembers it in the browser, and offers a
+"key" link in the top bar to change or clear it. Details: [API reference: Authentication](api-reference.md#authentication).
 
 ## System-Specific Notes
 

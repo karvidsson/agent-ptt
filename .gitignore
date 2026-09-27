@@ -30,3 +30,20 @@ Thumbs.db
 
 # Mint tooling
 .mint/
+
+# Deployment credentials
+.env
+.env.*
+!.env.example
+
+# Generated test/lint state and local machine settings
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.claude/settings.local.json
+
+# SQLite sidecars and deployment backups
+*.db-wal
+*.db-shm
+deploy/backups/

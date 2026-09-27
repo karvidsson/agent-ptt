@@ -2,20 +2,20 @@
 
 import pytest
 
-from agent_ptt.tts import EdgeTTSBackend, SystemTTSBackend, get_backend, register_backend
+from agent_ptt.tts import PocketTTSBackend, get_backend, register_backend
 from tests.conftest import FakeTTSBackend
 
 
 def test_get_default_backend():
     backend = get_backend()
-    assert isinstance(backend, EdgeTTSBackend)
-    assert backend.engine_name == "edge-tts"
+    assert isinstance(backend, PocketTTSBackend)
+    assert backend.engine_name == "pocket-tts"
 
 
-def test_get_system_backend():
-    backend = get_backend("system")
-    assert isinstance(backend, SystemTTSBackend)
-    assert backend.engine_name == "system"
+@pytest.mark.parametrize("engine", ["edge-tts", "system", "omnivoice"])
+def test_removed_backends(engine):
+    with pytest.raises(ValueError, match="Unknown TTS engine"):
+        get_backend(engine)
 
 
 def test_get_unknown_backend():

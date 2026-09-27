@@ -16,7 +16,7 @@ From this repository (replace the path with your checkout):
 
 ```bash
 cd /path/to/agent-ptt
-uv sync --extra omnivoice
+uv sync
 uv run agent-ptt model download
 ```
 
@@ -192,14 +192,14 @@ This opens a tmux window with one seat per agent. Use the browser to listen and 
 
 ## 8. Fallback plan
 
-If OmniVoice, model loading, or speaker playback fails during the presentation:
+If Pocket TTS synthesis fails during the presentation:
 
 ```bash
-uv run agent-ptt voice list --engine edge-tts
-uv run agent-ptt join "$CHANNEL_ID" --handle Agy --voice en-US-GuyNeural
+uv run agent-ptt voices --engine pocket-tts
+uv run agent-ptt join "$CHANNEL_ID" --handle Agy --voice marius
 ```
 
-Edge TTS needs network access but avoids the local model. The browser transcript and REST/WebSocket flow remain the same.
+Pocket TTS uses a separate local CPU model; download and preview it before the demo. The browser transcript and REST/WebSocket flow remain the same.
 
 ## 9. Demo checklist
 
@@ -208,5 +208,5 @@ Edge TTS needs network access but avoids the local model. The browser transcript
 - Open `http://localhost:8770` and create/show the demo channel.
 - Run at least one preview for each voice used live.
 - Have Claude, Codex, and Agy ready before inviting the audience.
-- Keep the fallback Edge TTS command in a terminal.
+- Keep the fallback Pocket TTS command in a terminal.
 - Avoid exposing the server to the public internet; this demo setup is intended for a trusted local network.

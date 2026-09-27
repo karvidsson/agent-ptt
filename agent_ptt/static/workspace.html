@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent PTT · Workspace</title>
+  <link rel="stylesheet" href="/workspace/assets/workspace.css">
+  <script src="/workspace/assets/workspace.js" type="module"></script>
+</head>
+<body>
+  <div id="notice" role="status" hidden></div>
+  <main id="auth" class="entry">
+    <div class="brand">agent<b>PTT</b><span class="edition">organizations</span></div>
+    <p class="eyebrow">VOICE CHANNELS FOR PEOPLE &amp; AGENTS</p>
+    <h1>Join your team’s channel.</h1>
+    <p class="intro">Bring people and agents together in your organization's workspace.</p>
+    <section class="card">
+      <div class="tabs"><button id="signup-tab" class="selected">Create an account</button><button id="login-tab">Sign in</button></div>
+      <form id="auth-form">
+        <label id="name-label">Your name<input name="name" autocomplete="name" maxlength="80" required></label>
+        <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="15" maxlength="128" required><small id="password-hint">Use at least 15 characters.</small></label>
+        <label id="organization-label">Organization name<input name="organization" placeholder="e.g. Acme Studio" maxlength="80" required></label>
+        <button class="primary" id="auth-submit">Create your workspace</button>
+        <p id="auth-error" class="error" role="alert"></p>
+      </form>
+      <p id="invite-hint" hidden>You have an invitation. Sign in or create an account to join.</p>
+    </section>
+  </main>
+  <main id="app" hidden>
+    <div class="topbar"><div class="brand">agent<b>PTT</b></div><span id="org-name"></span><span class="topbar-spacer"></span><span id="connection" class="badge">Offline</span><button id="roster-toggle" aria-controls="roster" aria-expanded="true">People</button></div>
+    <aside class="sidebar">
+      <label class="org-label">WORKSPACE<select id="organizations" aria-label="Organization"></select></label>
+      <button id="new-org" class="subtle">＋ New organization</button>
+      <div class="section-title">CHANNELS<button id="new-channel" title="Create channel" aria-label="Create channel">＋</button></div>
+      <nav id="channels" aria-label="Channels"></nav>
+      <button id="people" class="people-button">People &amp; agents <span>↗</span></button>
+      <div class="account"><div><strong id="user-name"></strong><small id="user-role"></small></div><button id="logout">Sign out</button></div>
+    </aside>
+    <section class="conversation">
+      <header><div class="channel-titles"><h2 id="channel-name">Welcome</h2><small id="channel-description">Choose or create an organization to get started.</small></div><button id="export-log" disabled>Export log</button></header>
+      <div class="voice-bar"><span id="speech-status">Text conversation · audio is optional</span><div><button id="listen" disabled>Listen in</button><button id="mute" disabled aria-pressed="false">Mute</button></div></div>
+      <section id="invitation" class="invite-panel" hidden>
+        <h3>Join your team</h3><p id="invitation-description">Loading invitation…</p>
+        <div id="onboarding-fields" hidden><label>Number of agents <input id="onboard-count" type="number" min="0" max="20" value="8"></label><p class="muted">Give each agent a distinct name and choose its CLI. You can register fewer than the invitation allows.</p><div id="onboarding-agents"></div></div>
+        <p id="invitation-error" role="alert"></p><button id="accept-invite" class="primary" disabled>Accept invitation</button><button id="dismiss-invite">Dismiss</button>
+      </section>
+      <div id="messages" role="log" aria-live="polite" aria-label="Channel messages"><div class="empty">Your conversations start here.</div></div>
+      <div class="recipient-bar"><label for="recipient">Mention</label><select id="recipient" disabled><option value="">Everyone in this channel</option></select><small id="delivery-hint">Visible to everyone · mention an agent for delivery.</small></div>
+      <form id="compose"><label for="message" class="sr-only">Message</label><textarea id="message" placeholder="Message your team…" maxlength="8000" rows="2" required></textarea><button class="primary" id="send">Send ↗</button></form>
+      <small class="compose-note">Enter to send · Shift + Enter for a new line</small>
+    </section>
+    <aside class="roster" id="roster"><div class="section-title">PEOPLE &amp; AGENTS <span id="roster-count">0</span></div><div id="roster-list"></div><p class="roster-note" id="presence-note">Organization members. Activity is shown only when reported.</p></aside>
+    <div class="statusbar"><span id="status-org">No organization</span><span id="status-room">No channel</span><span id="status-role"></span></div>
+  </main>
+  <dialog id="profile" aria-labelledby="profile-title"><div class="dialog-heading"><h2 id="profile-title">Participant</h2><button data-close="profile" aria-label="Close participant details">✕</button></div><div id="profile-body"></div></dialog>
+  <dialog id="manage" aria-labelledby="manage-title"><div class="dialog-heading"><div><p class="eyebrow">WORKSPACE</p><h2 id="manage-title">People &amp; agents</h2></div><button data-close="manage" aria-label="Close">✕</button></div><p class="muted">Channels are shared with everyone in this organization.</p><h3>People</h3><div id="members"></div><form id="invite-form" class="inline"><select id="invite-role" aria-label="Invitation role"><option value="member">Member</option><option value="admin">Admin</option></select><button class="primary">Create invitation link</button></form><form id="team-invite-form" class="onboarding-card"><h3>Invite a developer with agents</h3><p class="muted">One link to join as a member and register a batch of agents. Each agent gets its own revocable credential.</p><div class="inline"><label>Agent limit <input id="team-limit" type="number" min="1" max="20" value="8" required></label><label>Starting channel <select id="team-channel" required></select></label></div><p class="muted">The starting channel is a default. Members and agents can access all organization channels.</p><button class="primary">Create developer invitation</button></form><div id="pending-invites"></div><h3>Agents</h3><p class="muted">Agents can read and send messages. Each has its own revocable credential.</p><div id="agents"></div><form id="agent-form" class="inline"><input id="agent-name" placeholder="Agent name" aria-label="Agent name" maxlength="80" required><button class="primary">Register agent</button></form></dialog>
+  <dialog id="name-dialog" aria-labelledby="name-title"><div class="dialog-heading"><h2 id="name-title">Create</h2><button data-close="name-dialog" aria-label="Close">✕</button></div><form id="name-form"><label>Name<input id="new-name" required maxlength="80"></label><button class="primary">Create</button></form></dialog>
+  <dialog id="setup-dialog" aria-labelledby="setup-title"><div class="dialog-heading"><h2 id="setup-title">Your agents are ready</h2><button data-close="setup-dialog" aria-label="Close">✕</button></div><p>Download your private launcher now. It contains a separate credential for each agent, valid for 90 days, and is shown only once. Keep it out of Git and shared folders.</p><button id="download-setup" class="primary">Download agent-ptt-team.py</button><p>Requires Python 3. Save the file in a private folder, then restrict access:</p><pre>chmod 600 agent-ptt-team.py</pre><div id="setup-commands"></div><h3>Connect your CLIs</h3><p>From an up-to-date Agent PTT checkout, install the hooks once:<pre>python3 scripts/install_plugins.py</pre>The installer configures Claude Code and Codex. The launcher sets connection details; other CLIs need a compatible hook or API integration.</p><p>In Herdr, use the corresponding launch command for each agent, with the absolute path to the downloaded file. Existing running sessions must be relaunched through it.</p><p>A localhost server URL also requires the private tunnel on the developer’s computer. For a shared deployment, use the reachable HTTPS server URL.</p><p id="setup-error" role="alert"></p></dialog>
+  <dialog id="secret-dialog" aria-labelledby="secret-title"><div class="dialog-heading"><h2 id="secret-title"></h2><button data-close="secret-dialog" aria-label="Close">✕</button></div><p id="secret-description"></p><textarea id="secret-value" readonly rows="4" aria-label="Credential or invitation link"></textarea><button id="copy-secret" class="primary">Copy</button></dialog>
+</body>
+</html>

@@ -12,8 +12,6 @@ import io
 import logging
 import os
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 
@@ -73,6 +71,8 @@ class AudioMixer:
 
     async def _playback_loop(self) -> None:
         """Background loop: dequeue audio and play through speakers."""
+        import numpy as np
+
         if self.muted:
             sd = None
             logger.info("Speaker playback muted; audio remains available to stream listeners")
@@ -112,6 +112,8 @@ class AudioMixer:
 
     def _play_audio(self, sd, audio_bytes: bytes) -> None:
         """Play audio bytes through speakers (blocking, run in thread)."""
+        import numpy as np
+
         try:
             # Try to decode as WAV first
             import wave
@@ -139,7 +141,7 @@ class AudioMixer:
         except Exception:
             pass
 
-        # Fallback: treat as raw MP3 bytes (edge-tts outputs MP3)
+        # Fallback: treat as raw MP3 bytes (custom backends may output MP3)
         # Use a temp file approach with sounddevice
         try:
             import tempfile

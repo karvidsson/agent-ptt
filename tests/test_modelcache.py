@@ -157,7 +157,7 @@ def test_cli_model_list_empty(fake_hub):
 
 
 def test_modelcache_imports_first_in_fresh_interpreter():
-    """Regression: importing modelcache (-> engines.omnivoice -> tts) before
+    """Regression: importing modelcache before
     anything else must not blow up on a circular import."""
     result = subprocess.run(
         [
@@ -165,7 +165,7 @@ def test_modelcache_imports_first_in_fresh_interpreter():
             "-c",
             "import agent_ptt.modelcache; "
             "from agent_ptt.tts import has_backend; "
-            "print(has_backend('edge-tts'))",
+            "print(has_backend('pocket-tts'))",
         ],
         capture_output=True,
         text=True,
@@ -179,4 +179,4 @@ def test_cli_commands_fail_cleanly_without_extra(monkeypatch):
     for cmd in (["model", "download"], ["model", "list"], ["model", "status"]):
         result = runner.invoke(app, cmd)
         assert result.exit_code == 1
-        assert "uv sync --extra omnivoice" in _flat(result.output)
+        assert "uv sync" in _flat(result.output)

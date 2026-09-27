@@ -23,7 +23,7 @@ Configuration, all via environment (set them before launching `claude`):
   AGENT_PTT_CHANNEL    channel name to find or create  (default "Crew")
   AGENT_PTT_CHANNEL_ID exact channel id, wins over the name
   AGENT_PTT_HANDLE     what this session is called     (default "Claude · <dir>")
-  AGENT_PTT_VOICE      pin a specific voice id, e.g. en-GB-SoniaNeural
+  AGENT_PTT_VOICE      pin a specific voice id, e.g. fantine
   AGENT_PTT_CREW       comma-separated teammate handles — everyone else is human
   AGENT_PTT_ANNOUNCE=0 turn the whole thing off
 
@@ -43,6 +43,7 @@ import urllib.request
 from pathlib import Path
 
 BASE_URL = os.environ.get("AGENT_PTT_URL", "http://localhost:8770").rstrip("/")
+API_KEY = os.environ.get("AGENT_PTT_API_KEY", "").strip()  # server auth, optional
 CHANNEL_NAME = os.environ.get("AGENT_PTT_CHANNEL", "Crew")
 CHANNEL_ID = os.environ.get("AGENT_PTT_CHANNEL_ID", "")
 VOICE_ID = os.environ.get("AGENT_PTT_VOICE") or None
@@ -62,11 +63,14 @@ SETTLE_POLL = 0.2
 
 def _request(method: str, path: str, payload: dict | None = None, timeout: float | None = None):
     data = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
     req = urllib.request.Request(
         f"{BASE_URL}{path}",
         data=data,
         method=method,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as resp:
         return json.loads(resp.read())

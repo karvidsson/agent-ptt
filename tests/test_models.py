@@ -2,9 +2,13 @@
 
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from agent_ptt.models import (
     Channel,
     Message,
+    MessageContext,
     MessageDB,
     ParticipantKey,
     ParticipantKeyDB,
@@ -31,22 +35,22 @@ def test_participant_key_defaults():
 
 def test_voice_profile_defaults():
     profile = VoiceProfile(display_name="Aria")
-    assert profile.engine == "edge-tts"
+    assert profile.engine == "pocket-tts"
     assert profile.settings == {}
 
 
 def test_voice_profile_from_orm():
     # Column defaults (e.g. created_at) only apply at INSERT, so set them here
     db_row = VoiceProfileDB(
-        voice_id="en-US-AriaNeural",
+        voice_id="alba",
         display_name="Aria",
-        engine="edge-tts",
-        settings={"voice": "en-US-AriaNeural"},
+        engine="pocket-tts",
+        settings={"voice": "alba"},
         created_at=datetime.now(UTC),
     )
     profile = VoiceProfile.model_validate(db_row)
-    assert profile.voice_id == "en-US-AriaNeural"
-    assert profile.settings == {"voice": "en-US-AriaNeural"}
+    assert profile.voice_id == "alba"
+    assert profile.settings == {"voice": "alba"}
 
 
 def test_participant_key_from_orm():
@@ -74,3 +78,26 @@ def test_message_from_orm():
     msg = Message.model_validate(db_row)
     assert msg.message_id == "m1"
     assert msg.text == "hello"
+
+
+def test_message_context_rejects_unknown_keys():
+    with pytest.raises(ValidationError):
+        MessageContext(secret="x")
+    with pytest.raises(ValidationError):
+        MessageContext(files=[{"path": "a.py", "op": "edit", "lines": 3}])
+    assert MessageContext(repo="agent-ptt").model_dump(exclude_none=True) == {"repo": "agent-ptt"}
+
+
+def test_message_from_orm_with_context():
+    db_row = MessageDB(
+        message_id="m2",
+        channel_id="c1",
+        sender_key="k1",
+        handle="Claude",
+        text="hello",
+        context={"branch": "main", "files": [{"path": "a.py", "op": "edit"}]},
+        timestamp=datetime.now(UTC),
+    )
+    msg = Message.model_validate(db_row)
+    assert msg.context.branch == "main"
+    assert msg.context.files[0].op == "edit"

@@ -10,12 +10,12 @@ from agent_ptt.voices import (
 from tests.test_api import _create_channel, _join, _wait_for
 
 
-def _profile(voice_id="narrator", engine="edge-tts", **settings) -> VoiceProfile:
+def _profile(voice_id="narrator", engine="pocket-tts", **settings) -> VoiceProfile:
     return VoiceProfile(
         voice_id=voice_id,
         display_name=voice_id.title(),
         engine=engine,
-        settings=settings or {"voice": "en-US-GuyNeural"},
+        settings=settings or {"voice": "marius"},
     )
 
 
@@ -46,7 +46,7 @@ def test_save_is_upsert(db_session):
 
 
 def test_list_with_engine_filter(db_session):
-    save_voice_profile(_profile("a", engine="edge-tts"), db_session)
+    save_voice_profile(_profile("a", engine="pocket-tts"), db_session)
     save_voice_profile(_profile("b", engine="omnivoice"), db_session)
 
     assert {p.voice_id for p in list_voice_profiles(db_session)} == {"a", "b"}
@@ -65,12 +65,12 @@ def test_delete(db_session):
 # ---------------------------------------------------------------------------
 
 
-def _profile_payload(voice_id="narrator", engine="edge-tts"):
+def _profile_payload(voice_id="narrator", engine="pocket-tts"):
     return {
         "voice_id": voice_id,
         "display_name": voice_id.title(),
         "engine": engine,
-        "settings": {"voice": "en-US-GuyNeural"},
+        "settings": {"voice": "marius"},
     }
 
 
@@ -81,7 +81,7 @@ def test_api_save_and_get_profile(client, db_session):
 
     resp = client.get("/voices/profiles/narrator")
     assert resp.status_code == 200
-    assert resp.json()["settings"] == {"voice": "en-US-GuyNeural"}
+    assert resp.json()["settings"] == {"voice": "marius"}
 
 
 def test_api_get_missing_profile(client, db_session):
@@ -100,8 +100,9 @@ def test_api_save_is_upsert(client, db_session):
 
 
 def test_api_list_profiles_with_engine_filter(client, db_session):
-    client.post("/voices/profiles", json=_profile_payload("a", engine="edge-tts"))
-    client.post("/voices/profiles", json=_profile_payload("b", engine="omnivoice"))
+    client.post("/voices/profiles", json=_profile_payload("a", engine="pocket-tts"))
+    # Existing legacy rows remain queryable until startup migration runs.
+    save_voice_profile(_profile("b", engine="omnivoice"), db_session)
 
     assert len(client.get("/voices/profiles").json()) == 2
     filtered = client.get("/voices/profiles", params={"engine": "omnivoice"}).json()
@@ -142,9 +143,9 @@ def test_tts_worker_uses_stored_profile(client, db_session, fake_tts):
 
 
 def test_tts_worker_falls_back_to_raw_voice_id(client, fake_tts):
-    """Without a stored profile, the raw voice_id keeps working as an edge-tts voice."""
+    """Without a stored profile, the raw voice_id keeps working as an pocket-tts voice."""
     channel_id = _create_channel(client)
-    key_id = _join(client, channel_id, voice_id="en-US-GuyNeural")
+    key_id = _join(client, channel_id, voice_id="marius")
 
     with client.websocket_connect(f"/channels/{channel_id}/ws?key={key_id}") as ws:
         ws.send_json({"type": "message", "text": "fallback voice"})
@@ -152,5 +153,5 @@ def test_tts_worker_falls_back_to_raw_voice_id(client, fake_tts):
         assert _wait_for(lambda: fake_tts.calls)
 
     _text, voice = fake_tts.calls[0]
-    assert voice.engine == "edge-tts"
-    assert voice.settings == {"voice": "en-US-GuyNeural"}
+    assert voice.engine == "pocket-tts"
+    assert voice.settings == {"voice": "marius"}

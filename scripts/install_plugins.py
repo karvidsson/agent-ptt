@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 MARKETPLACE = "agent-ptt"
-CODEX_SCRIPT_MARKER = "codex-announcer/announce.py"
+CODEX_SCRIPT_MARKER = "codex-announcer/"  # any script from the plugin dir
 HERE = Path(__file__).resolve().parent
 
 

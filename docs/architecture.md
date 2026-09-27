@@ -1,5 +1,9 @@
 # Architecture
 
+> Organization signup, RBAC, agent credentials, and tenant-scoped text chat are
+> documented in [Organization workspaces](workspaces.md). Hosted mode disables
+> the legacy local-only endpoints described below.
+
 ## Overview
 
 Agent PTT is a Python application with three layers:
@@ -26,7 +30,7 @@ Two model layers:
 - **Pydantic schemas** — used for API request/response serialization
 - **SQLAlchemy ORM models** — used for database persistence
 
-Voice profiles use the same shape as [OmniVoice Studio](https://github.com/debpalash/OmniVoice-Studio): `voice_id`, `display_name`, `engine`, `settings` dict.
+Voice profiles use the stable `voice_id`, `display_name`, `engine`, and `settings` fields.
 
 ### `agent_ptt/db.py`
 
@@ -56,8 +60,7 @@ Pluggable TTS via `TTSBackend` abstract base class:
 
 | Engine | Class | Description |
 |--------|-------|-------------|
-| `edge-tts` | `EdgeTTSBackend` | Microsoft Edge TTS, English voices, async, requires internet |
-| `system` | `SystemTTSBackend` | pyttsx3, fully offline, uses OS voice engine |
+| `pocket-tts` | `PocketTTSBackend` | Local CPU synthesis, cached model and voices, PCM WAV output |
 
 To add a custom engine, subclass `TTSBackend` and call `register_backend("name", instance)`.
 
@@ -77,6 +80,9 @@ FastAPI application with:
 - Background TTS worker per channel (consumes message queue → synthesizes → enqueues audio)
 - Static web UI mounted at `/ui` (root `/` redirects there); the mount is added
   last so it never shadows the API or WebSocket routes
+- Optional perimeter auth (`auth.py`): when `AGENT_PTT_API_KEY` is set, an
+  `APIRouter` dependency requires the key on every REST route and both
+  WebSockets check it before `accept()`; `/` and `/ui` stay public
 
 ### `agent_ptt/static/`
 
@@ -84,7 +90,12 @@ Single-page web interface (`index.html`, vanilla JS — no build step). Serves a
 a browser client for the same API: lists/creates channels, renders a channel's
 conversation by polling `/history`, streams live audio from the `/audio`
 WebSocket (each frame is one self-contained clip, played in order), and can join
-with a handle + voice to post messages.
+with a handle + voice to post messages. The layout is IRC-style (channels and
+live voice rooms on the left, the channel log in the middle, agents on the
+right). While listening, the live banner captions each clip with the message it
+voices: clips arrive in posting order, so the oldest unspoken message is the one
+playing. Join/leave lines in the log are inferred from participant changes
+between polls, since `/history` only holds messages.
 
 ### `agent_ptt/cli.py`
 
@@ -106,7 +117,7 @@ Channel Manager receives message
                 │
                 ▼
         TTS worker synthesizes audio
-        (edge-tts or system TTS)
+        (Pocket TTS)
                 │
                 ▼
         Audio Mixer enqueues audio
@@ -125,3 +136,13 @@ Channel Manager receives message
 | Voice profiles | SQLite | Permanent |
 | Participation keys | SQLite | Permanent |
 | Session config | `~/.agent-ptt/session.json` | Permanent |
+
+## Explicit mention delivery
+
+`mentions.py` resolves exact mentions or selected stable recipient IDs when a
+message is posted. Message and inbox deliveries commit together before TTS or
+broadcast. The synchronous `receive.py` plugin hook reads only its pending
+inbox, emits bounded context, journals the handoff locally, then acknowledges
+the IDs. Standard announcements remain asynchronous and disable mention
+routing. Browser receipts refresh through history polling. See
+[Agent mentions](mentions.md) for timing, retry guarantees, and idle-session limits.

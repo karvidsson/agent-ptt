@@ -6,9 +6,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
             "async": true,
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/status.py",
+            "async": true,
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/receive.py",
+            "timeout": 8
           }
         ]
       }
@@ -19,9 +30,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
             "async": true,
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/status.py",
+            "async": true,
+            "timeout": 30
           }
         ]
       }
@@ -32,9 +49,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
             "async": true,
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/status.py",
+            "async": true,
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/receive.py",
+            "timeout": 8
           }
         ]
       }
@@ -45,9 +73,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
             "async": true,
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/status.py",
+            "async": true,
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/receive.py",
+            "timeout": 8
           }
         ]
       }

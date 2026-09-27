@@ -10,7 +10,7 @@ Lets Claude (or you) speak messages aloud through an
 …or just ask in plain language — "announce out loud that the build is
 fixed" — and Claude invokes the skill itself.
 
-Messages are spoken with the project's own auto-designed voice (same
+When a session ID is available, messages use its saved name and voice (same
 identity as the [announcer plugin](../announcer/)).
 
 ## Requirements
@@ -27,7 +27,7 @@ identity as the [announcer plugin](../announcer/)).
 
 ## Channel management
 
-Use the channel skill to keep Claude Code and Codex on the same channel:
+Use the channel skill to select a room for the current CLI session:
 
 ```text
 /agent-ptt-voice:channel list
@@ -41,16 +41,20 @@ the same way: `say` and the announcer hooks create their channel on first use,
 and recreate it if it was deleted mid-session (e.g. with **Clear all** in the
 web UI).
 
-Creating or selecting a channel updates `~/.agent-ptt/announcer.env`. Both
-announcer hooks read that file, so channel selection is shared across CLIs.
-Restart a CLI that is already running after switching channels.
+Creating or selecting a channel saves a per-session override under
+`~/.agent-ptt/session-channels/`. It applies to hooks and `say` on the next event
+without affecting other sessions. Use `/agent-ptt-voice:channel auto` to return
+to the Git repo/folder channel. Missing rooms are created automatically.
+The script detects `AGENT_PTT_SESSION_ID`, `CODEX_THREAD_ID`, or `CLAUDE_SESSION_ID`;
+you can also pass `--session-id <id> --agent <CLI>` to the channel command.
+The shared `announcer.env` file no longer supplies a channel override.
 
 ## Configuration (environment variables)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AGENT_PTT_URL` | `http://localhost:8770` | Agent PTT server |
-| `AGENT_PTT_CHANNEL` | `Claude Code` | Channel to speak in |
+| `AGENT_PTT_CHANNEL` | Repo/folder name | Process-local channel override |
 | `AGENT_PTT_AGENT` | `Claude` | Speaker name prefix |
 
 Unlike the announcer hooks, `/say` is explicitly invoked — so failures are

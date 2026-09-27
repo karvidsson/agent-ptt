@@ -20,21 +20,24 @@
 set -euo pipefail
 
 SERVER="${AGENT_PTT_URL:-http://localhost:8770}"
+# Sent on every curl call when the server runs with AGENT_PTT_API_KEY set.
+AUTH=()
+[[ -n "${AGENT_PTT_API_KEY:-}" ]] && AUTH=(-H "Authorization: Bearer ${AGENT_PTT_API_KEY}")
 # A bare number as the only argument means turns, not a project brief.
 if [ $# -eq 1 ] && [[ "$1" =~ ^[0-9]+$ ]]; then set -- "" "$1"; fi
 PROJECT="${1:-a single-page tip calculator — index.html, style.css, app.js, no frameworks and no build step}"
 TURNS="${2:-9}"
 PROJECT_DIR="${PROJECT_DIR:-$(mktemp -d -t agent-ptt-worksession)}"
 
-DEFAULT_TEAM="Mara|the markup and the styling — index.html and style.css|en-GB-SoniaNeural;\
-Kai|the behaviour — app.js and anything the page has to actually do|en-AU-WilliamMultilingualNeural;\
-Roy|reviewing what the other two wrote and fixing what is broken, rather than adding features|en-IE-ConnorNeural"
+DEFAULT_TEAM="Mara|the markup and the styling — index.html and style.css|fantine;\
+Kai|the behaviour — app.js and anything the page has to actually do|javert;\
+Roy|reviewing what the other two wrote and fixing what is broken, rather than adding features|javert"
 IFS=';' read -r -a TEAM <<<"${TEAM:-$DEFAULT_TEAM}"
 
 for bin in jq claude curl; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
-curl -sf "$SERVER/channels" >/dev/null || {
+curl -sf ${AUTH[@]+"${AUTH[@]}"} "$SERVER/channels" >/dev/null || {
   echo "no Agent PTT server at $SERVER — start one with: uv run agent-ptt server start" >&2
   exit 1
 }
@@ -43,7 +46,7 @@ mkdir -p "$PROJECT_DIR"
 
 # 1. A channel to work out loud in. Set CHANNEL=<id> to reuse an existing one
 #    (handy when you want the web UI open on it before they start).
-CHANNEL="${CHANNEL:-$(curl -sS -X POST "$SERVER/channels" \
+CHANNEL="${CHANNEL:-$(curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels" \
   -H 'content-type: application/json' \
   -d "$(jq -nc --arg n "Work session: $PROJECT" '{name:$n}')" | jq -r .channel_id)}"
 
@@ -51,7 +54,7 @@ CHANNEL="${CHANNEL:-$(curl -sS -X POST "$SERVER/channels" \
 HANDLES=() ROLES=() KEYS=()
 for member in "${TEAM[@]}"; do
   IFS='|' read -r handle role voice <<<"$member"
-  key=$(curl -sS -X POST "$SERVER/channels/$CHANNEL/join" \
+  key=$(curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels/$CHANNEL/join" \
     -H 'content-type: application/json' \
     -d "$(jq -nc --arg h "$handle" --arg v "${voice:-}" \
           '{handle:$h, voice_id:(if $v == "" then null else $v end)}')" | jq -r .key_id)
@@ -82,7 +85,7 @@ has_heard() { UNHEARD="${UNHEARD/ $1 / }"; }
 
 fetch_state() {
   local json guest gid ghandle gtext
-  json=$(curl -sS "$SERVER/channels/$CHANNEL/history")
+  json=$(curl -sS ${AUTH[@]+"${AUTH[@]}"} "$SERVER/channels/$CHANNEL/history")
   TRANSCRIPT=$(printf '%s' "$json" | jq -r '.[-10:][] | "\(.handle): \(.text)"')
 
   guest=$(printf '%s' "$json" | jq -r --arg p "$TEAM_LIST" '
@@ -153,7 +156,7 @@ SAY: <your sentence>" \
     -not -path './.*' | sed 's|^\./||' | tr '\n' ' ')
   [ -z "$files" ] || echo "  ✎ $files"
 
-  curl -sS -X POST "$SERVER/channels/$CHANNEL/say" \
+  curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels/$CHANNEL/say" \
     -H 'content-type: application/json' \
     -d "$(jq -nc --arg k "$1" --arg t "$reply" '{key_id:$k,text:$t}')" >/dev/null
   sleep 2   # let the speakers finish the line before the next one starts

@@ -7,12 +7,21 @@ import sys
 import urllib.error
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SAY_PY = REPO_ROOT / "plugins" / "voice" / "scripts" / "say.py"
 
 spec = importlib.util.spec_from_file_location("say", SAY_PY)
 say = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(say)
+
+
+@pytest.fixture(autouse=True)
+def isolated_routing(monkeypatch, tmp_path):
+    monkeypatch.setattr(say.routing, "ROUTES_DIR", tmp_path / "routes")
+    monkeypatch.setenv("AGENT_PTT_SESSION_ID", "s1")
+    monkeypatch.setenv("AGENT_PTT_CHANNEL", "test-room")
 
 
 def test_clean_message_collapses_whitespace():
@@ -63,7 +72,7 @@ def test_say_reuses_cached_key(monkeypatch, tmp_path):
     def fake_request(method, path, payload=None, timeout=None):
         requests.append((method, path))
         if path == "/channels":
-            return [{"name": say.CHANNEL_NAME, "channel_id": "chan-1"}]
+            return [{"name": "test-room", "channel_id": "chan-1"}]
         if path.endswith("/join"):
             return {"key_id": "key-1"}
         if path.endswith("/say"):
@@ -86,7 +95,7 @@ def test_say_reuses_cached_key(monkeypatch, tmp_path):
 def test_say_recreates_deleted_channel(monkeypatch, tmp_path):
     """A 404 on say (channel cleared) re-resolves the channel instead of failing."""
     monkeypatch.setattr(say, "STATE_FILE", tmp_path / "state.json")
-    live = {"channels": [{"name": say.CHANNEL_NAME, "channel_id": "chan-1"}]}
+    live = {"channels": [{"name": "test-room", "channel_id": "chan-1"}]}
     requests = []
 
     def fake_request(method, path, payload=None, timeout=None):

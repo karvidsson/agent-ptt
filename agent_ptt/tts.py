@@ -1,16 +1,15 @@
 """Pluggable TTS backends — no external service dependency.
 
-Voice profiles use the same shape as OmniVoice Studio so configs
-are portable between the two apps.
+Pocket TTS is the sole built-in speech engine.
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
-import tempfile
+import io
+import threading
 from abc import ABC, abstractmethod
-from pathlib import Path
+from collections import OrderedDict
 
 from agent_ptt.models import VoiceProfile
 
@@ -35,122 +34,61 @@ class TTSBackend(ABC):
         ...
 
 
-class EdgeTTSBackend(TTSBackend):
-    """Default TTS engine using Microsoft Edge TTS (free, English voices only).
+POCKET_VOICES = ("alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma")
 
-    Requires internet connectivity. Voices are identified by their
-    edge-tts short name (e.g. "en-US-AriaNeural").
-    """
+
+class PocketTTSBackend(TTSBackend):
+    """Local CPU synthesis; load once and serialize inference across channels."""
+
+    def __init__(self):
+        self._model = None
+        self._voice_states = OrderedDict()
+        self._lock = threading.Lock()
 
     @property
     def engine_name(self) -> str:
-        return "edge-tts"
-
-    async def synthesize(self, text: str, voice_profile: VoiceProfile) -> bytes:
-        """Synthesize text using edge-tts."""
-        import edge_tts
-
-        voice = voice_profile.settings.get("voice", "en-US-AriaNeural")
-        rate = voice_profile.settings.get("rate", "+0%")
-        pitch = voice_profile.settings.get("pitch", "+0Hz")
-
-        communicate = edge_tts.Communicate(
-            text=text,
-            voice=voice,
-            rate=rate,
-            pitch=pitch,
-        )
-
-        # Collect audio bytes — edge-tts streams MP3 chunks
-        audio_chunks: list[bytes] = []
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_chunks.append(chunk["data"])
-
-        return b"".join(audio_chunks)
+        return "pocket-tts"
 
     async def list_voices(self) -> list[VoiceProfile]:
-        """List available edge-tts voices."""
-        import edge_tts
-
-        voices = await edge_tts.list_voices()
         return [
             VoiceProfile(
-                voice_id=v["ShortName"],
-                display_name=f"{v['FriendlyName']} ({v['Locale']})",
-                engine="edge-tts",
-                settings={
-                    "voice": v["ShortName"],
-                    "locale": v["Locale"],
-                    "gender": v["Gender"],
-                },
+                voice_id=name,
+                display_name=name.title(),
+                engine=self.engine_name,
+                settings={"voice": name},
             )
-            for v in voices
-            if v["Locale"].startswith("en-")
+            for name in POCKET_VOICES
         ]
 
-
-class SystemTTSBackend(TTSBackend):
-    """Fallback TTS using pyttsx3 (fully offline, uses system voices).
-
-    macOS: uses 'say' command / NSSpeechSynthesizer
-    Windows: uses SAPI5
-    Linux: uses espeak
-    """
-
-    @property
-    def engine_name(self) -> str:
-        return "system"
-
     async def synthesize(self, text: str, voice_profile: VoiceProfile) -> bytes:
-        """Synthesize text using pyttsx3 (runs in thread to avoid blocking)."""
-        import pyttsx3
+        voice = voice_profile.settings.get("voice", "alba")
+        if not isinstance(voice, str) or not voice.strip():
+            raise ValueError("Pocket TTS voice must be a non-empty voice name or audio path")
+        return await asyncio.to_thread(self._synthesize, text, voice)
 
-        def _synth() -> bytes:
-            engine = pyttsx3.init()
+    def _synthesize(self, text: str, voice: str) -> bytes:
+        import soundfile as sf
+        from pocket_tts import TTSModel
 
-            # Apply voice settings
-            voice_name = voice_profile.settings.get("voice")
-            if voice_name:
-                for v in engine.getProperty("voices"):
-                    if voice_name in v.id or voice_name in v.name:
-                        engine.setProperty("voice", v.id)
-                        break
-
-            rate = voice_profile.settings.get("rate", 200)
-            engine.setProperty("rate", int(rate))
-
-            # Save to temp file and read bytes
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                tmp_path = f.name
-
-            engine.save_to_file(text, tmp_path)
-            engine.runAndWait()
-
-            audio_data = Path(tmp_path).read_bytes()
-            Path(tmp_path).unlink(missing_ok=True)
-            return audio_data
-
-        return await asyncio.to_thread(_synth)
-
-    async def list_voices(self) -> list[VoiceProfile]:
-        """List available system voices."""
-        import pyttsx3
-
-        def _list() -> list[VoiceProfile]:
-            engine = pyttsx3.init()
-            voices = engine.getProperty("voices")
-            return [
-                VoiceProfile(
-                    voice_id=v.id,
-                    display_name=v.name,
-                    engine="system",
-                    settings={"voice": v.id},
-                )
-                for v in voices
-            ]
-
-        return await asyncio.to_thread(_list)
+        # A thread lock also protects inference if an async caller is cancelled.
+        with self._lock:
+            if self._model is None:
+                self._model = TTSModel.load_model()
+            if voice not in self._voice_states:
+                self._voice_states[voice] = self._model.get_state_for_audio_prompt(voice)
+                if len(self._voice_states) > 32:
+                    self._voice_states.popitem(last=False)
+            self._voice_states.move_to_end(voice)
+            audio = self._model.generate_audio(self._voice_states[voice], text)
+            output = io.BytesIO()
+            sf.write(
+                output,
+                audio.detach().cpu().numpy(),
+                self._model.sample_rate,
+                format="WAV",
+                subtype="PCM_16",
+            )
+            return output.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -158,41 +96,17 @@ class SystemTTSBackend(TTSBackend):
 # ---------------------------------------------------------------------------
 
 _BACKENDS: dict[str, TTSBackend] = {
-    "edge-tts": EdgeTTSBackend(),
-    "system": SystemTTSBackend(),
+    "pocket-tts": PocketTTSBackend(),
 }
-
-
-_optional_backends_checked = False
-
-
-def _ensure_optional_backends() -> None:
-    """Register optional backends on first registry access.
-
-    Done lazily (not at import time) so agent_ptt.engines.omnivoice can
-    import TTSBackend from this module without a circular import.
-    """
-    global _optional_backends_checked
-    if _optional_backends_checked:
-        return
-    _optional_backends_checked = True
-
-    # Local neural TTS — present only with `uv sync --extra omnivoice`
-    if importlib.util.find_spec("omnivoice") is not None:
-        from agent_ptt.engines.omnivoice import OmniVoiceTTSBackend
-
-        _BACKENDS["omnivoice"] = OmniVoiceTTSBackend()
 
 
 def has_backend(engine: str) -> bool:
     """Check whether a TTS backend is registered."""
-    _ensure_optional_backends()
     return engine in _BACKENDS
 
 
-def get_backend(engine: str = "edge-tts") -> TTSBackend:
+def get_backend(engine: str = "pocket-tts") -> TTSBackend:
     """Get a TTS backend by engine name."""
-    _ensure_optional_backends()
     backend = _BACKENDS.get(engine)
     if backend is None:
         raise ValueError(f"Unknown TTS engine '{engine}'. Available: {list(_BACKENDS.keys())}")

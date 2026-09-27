@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (base install — no torch)
+      - name: Install dependencies (base install — Pocket TTS)
         run: uv sync
 
       - name: Lint

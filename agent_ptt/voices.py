@@ -45,3 +45,17 @@ def delete_voice_profile(voice_id: str, db: Session) -> bool:
     db.delete(row)
     db.commit()
     return True
+
+
+def migrate_legacy_voice_profiles(db: Session) -> None:
+    """Replace removed engines while preserving profile IDs and existing pins."""
+    from agent_ptt.voicedesign import design_voice
+
+    rows = db.scalars(
+        select(VoiceProfileDB).where(VoiceProfileDB.engine.in_(["edge-tts", "system", "omnivoice"]))
+    )
+    for row in rows:
+        replacement = design_voice(row.voice_id)
+        row.engine = replacement.engine
+        row.settings = replacement.settings
+    db.commit()

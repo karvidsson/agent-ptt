@@ -30,27 +30,30 @@
 set -euo pipefail
 
 SERVER="${AGENT_PTT_URL:-http://localhost:8770}"
+# Sent on every curl call when the server runs with AGENT_PTT_API_KEY set.
+AUTH=()
+[[ -n "${AGENT_PTT_API_KEY:-}" ]] && AUTH=(-H "Authorization: Bearer ${AGENT_PTT_API_KEY}")
 # A bare number as the only argument means turns, not a subject to debate.
 if [ $# -eq 1 ] && [[ "$1" =~ ^[0-9]+$ ]]; then set -- "" "$1"; fi
 SUBJECT="${1:-whether code comments are a sign of failure}"
 TURNS="${2:-9}"
 
-DEFAULT_PANEL="Nova|a true believer, certain the new way is obviously right and the old guard is just scared|en-AU-WilliamMultilingualNeural;\
-Ada|an engineer who trusts benchmarks and evidence over taste, and says so bluntly|en-GB-SoniaNeural;\
-Roy|a grumpy veteran who has watched this exact idea fail twice already under a different name|en-IE-ConnorNeural"
+DEFAULT_PANEL="Nova|a true believer, certain the new way is obviously right and the old guard is just scared|javert;\
+Ada|an engineer who trusts benchmarks and evidence over taste, and says so bluntly|fantine;\
+Roy|a grumpy veteran who has watched this exact idea fail twice already under a different name|javert"
 IFS=';' read -r -a PANEL <<<"${PANEL:-$DEFAULT_PANEL}"
 
 for bin in jq claude curl; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
-curl -sf "$SERVER/channels" >/dev/null || {
+curl -sf ${AUTH[@]+"${AUTH[@]}"} "$SERVER/channels" >/dev/null || {
   echo "no Agent PTT server at $SERVER — start one with: uv run agent-ptt server start" >&2
   exit 1
 }
 
 # 1. A channel for them to talk in. Set CHANNEL=<id> to reuse an existing one
 #    (handy when you want the web UI open on it before the panel starts).
-CHANNEL="${CHANNEL:-$(curl -sS -X POST "$SERVER/channels" \
+CHANNEL="${CHANNEL:-$(curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels" \
   -H 'content-type: application/json' \
   -d "$(jq -nc --arg n "Panel: $SUBJECT" '{name:$n}')" | jq -r .channel_id)}"
 
@@ -59,7 +62,7 @@ CHANNEL="${CHANNEL:-$(curl -sS -X POST "$SERVER/channels" \
 HANDLES=() PERSONAS=() KEYS=()
 for member in "${PANEL[@]}"; do
   IFS='|' read -r handle persona voice <<<"$member"
-  key=$(curl -sS -X POST "$SERVER/channels/$CHANNEL/join" \
+  key=$(curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels/$CHANNEL/join" \
     -H 'content-type: application/json' \
     -d "$(jq -nc --arg h "$handle" --arg v "${voice:-}" \
           '{handle:$h, voice_id:(if $v == "" then null else $v end)}')" | jq -r .key_id)
@@ -91,7 +94,7 @@ answered_the_room() { PENDING="${PENDING/ $1 / }"; }
 # newest message from anyone who isn't on the panel.
 fetch_state() {
   local json guest gid ghandle gtext
-  json=$(curl -sS "$SERVER/channels/$CHANNEL/history")
+  json=$(curl -sS ${AUTH[@]+"${AUTH[@]}"} "$SERVER/channels/$CHANNEL/history")
   TRANSCRIPT=$(printf '%s' "$json" | jq -r '.[-8:][] | "\(.handle): \(.text)"')
   LAST_ID=$(printf '%s' "$json" | jq -r '.[-1].message_id // ""')
   LAST_HANDLE=$(printf '%s' "$json" | jq -r '.[-1].handle // ""')
@@ -153,7 +156,7 @@ no preamble, no markdown, nothing that isn't meant to be heard." < /dev/null)
   answered_the_room "$2"
 
   echo "$2: $reply"
-  curl -sS -X POST "$SERVER/channels/$CHANNEL/say" \
+  curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels/$CHANNEL/say" \
     -H 'content-type: application/json' \
     -d "$(jq -nc --arg k "$1" --arg t "$reply" '{key_id:$k,text:$t}')" >/dev/null
   sleep 2   # let the speakers finish the line before the next one starts

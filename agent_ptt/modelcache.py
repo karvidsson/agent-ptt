@@ -1,6 +1,6 @@
 """Local model cache management — inspect and pre-download HF checkpoints.
 
-huggingface_hub arrives with the omnivoice extra, so it's imported
+huggingface_hub arrives with Pocket TTS, so it's imported
 lazily; every entry point degrades gracefully on the base install.
 """
 
@@ -10,7 +10,7 @@ import importlib.util
 
 from pydantic import BaseModel
 
-from agent_ptt.engines.omnivoice import DEFAULT_CHECKPOINT
+DEFAULT_CHECKPOINT = "kyutai/pocket-tts"
 
 __all__ = [
     "DEFAULT_CHECKPOINT",
@@ -33,7 +33,7 @@ class CachedModel(BaseModel):
 
 
 def hub_available() -> bool:
-    """True when huggingface_hub is installed (comes with the omnivoice extra)."""
+    """True when huggingface_hub is installed (comes with Pocket TTS)."""
     return importlib.util.find_spec("huggingface_hub") is not None
 
 

@@ -1,0 +1,26 @@
+# A single cloud VM with Docker Engine enabled at boot; use managed PostgreSQL.
+services:
+  server:
+    build:
+      context: ..
+    image: agent-ptt:production
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    env_file: .env
+    environment:
+      AGENT_PTT_HOSTED: "1"
+      AGENT_PTT_MUTE: "1"
+      PORT: "8080"
+    volumes:
+      - model-cache:/home/app/.cache/huggingface
+    ports:
+      - "127.0.0.1:8080:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  model-cache:

@@ -18,19 +18,22 @@
 set -euo pipefail
 
 SERVER="${AGENT_PTT_URL:-http://localhost:8770}"
+# Sent on every curl call when the server runs with AGENT_PTT_API_KEY set.
+AUTH=()
+[[ -n "${AGENT_PTT_API_KEY:-}" ]] && AUTH=(-H "Authorization: Bearer ${AGENT_PTT_API_KEY}")
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/crew/hook.py"
 REPO_ARG="${1:-$PWD}"
 GOAL="${2:-}"
 
-DEFAULT_CREW="Mara|the implementation — the code that makes the goal real|en-GB-SoniaNeural;\
-Kai|the tests and the docs for whatever Mara builds|en-AU-WilliamMultilingualNeural;\
-Roy|reviewing what the other two wrote and fixing what is broken, rather than adding features|en-IE-ConnorNeural"
+DEFAULT_CREW="Mara|the implementation — the code that makes the goal real|fantine;\
+Kai|the tests and the docs for whatever Mara builds|javert;\
+Roy|reviewing what the other two wrote and fixing what is broken, rather than adding features|javert"
 IFS=';' read -r -a CREW_MEMBERS <<<"${CREW:-$DEFAULT_CREW}"
 
 for bin in git tmux claude curl jq python3; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
-curl -sf "$SERVER/channels" >/dev/null || {
+curl -sf ${AUTH[@]+"${AUTH[@]}"} "$SERVER/channels" >/dev/null || {
   echo "no Agent PTT server at $SERVER — start one with: uv run agent-ptt server start" >&2
   exit 1
 }
@@ -81,7 +84,7 @@ else
 fi
 
 # 2. One channel for the crew.
-CHANNEL="${CHANNEL:-$(curl -sS -X POST "$SERVER/channels" \
+CHANNEL="${CHANNEL:-$(curl -sS ${AUTH[@]+"${AUTH[@]}"} -X POST "$SERVER/channels" \
   -H 'content-type: application/json' \
   -d "$(jq -nc --arg n "$REPO_NAME crew" '{name:$n}')" | jq -r .channel_id)}"
 
@@ -143,6 +146,7 @@ export AGENT_PTT_CHANNEL_ID="$CHANNEL"
 export AGENT_PTT_HANDLE="${HANDLES[$i]}"
 export AGENT_PTT_VOICE="${VOICES[$i]}"
 export AGENT_PTT_CREW="$CREW_LIST"
+export AGENT_PTT_API_KEY="${AGENT_PTT_API_KEY:-}"
 cd "$WORKSPACE"
 # --allowedTools is variadic: keep it away from the trailing prompt or the
 # prompt is parsed as one more tool name and the session starts with nothing.

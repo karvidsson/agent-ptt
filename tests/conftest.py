@@ -64,14 +64,6 @@ class FakeMixer:
 
 
 @pytest.fixture(autouse=True)
-def no_real_llm_designer(monkeypatch):
-    """Never load the real designer LLM in tests — transformers may be
-    installed (omnivoice extra), which would make joins download Qwen.
-    Tests that want the LLM path monkeypatch designer_available back."""
-    monkeypatch.setattr("agent_ptt.designer.designer_available", lambda: False)
-
-
-@pytest.fixture(autouse=True)
 def clean_state():
     """Reset in-memory registries and persisted rows between tests.
 
@@ -112,7 +104,7 @@ def db_session():
 @pytest.fixture
 def fake_tts(monkeypatch) -> FakeTTSBackend:
     backend = FakeTTSBackend()
-    monkeypatch.setattr(server, "get_backend", lambda engine="edge-tts": backend)
+    monkeypatch.setattr(server, "get_backend", lambda engine="pocket-tts": backend)
     return backend
 
 

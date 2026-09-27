@@ -6,299 +6,524 @@
 <title>Agent PTT — Channels</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --surface: rgba(255, 255, 255, 0.03);
-    --border: rgba(255, 255, 255, 0.08);
-    --text: #ffffff;
-    --muted: #888;
-    --muted-2: #666;
-    --dim: #555;
-    --accent: #ff4444;
-    --accent-2: #ff6b6b;
-    --success: #4ade80;
+    --bg: #0B0D10;
+    --panel: #101317;
+    --panel-2: #161A20;
+    --border: #222831;
+    --border-2: #2E3540;
+    --text: #D8DDE3;
+    --muted: #808996;
+    --dim: #4B535E;
+    --accent: #FFB020;
+    --accent-ink: #0B0D10;
+    --status: #0E1A2B;
+    --nick-orange: #FF8A3D;
+    --nick-cyan: #3EE0D8;
+    --nick-magenta: #D77BFF;
+    --nick-yellow: #F2D14B;
+    --nick-green: #5BD96B;
+    --nick-blue: #6EA8FF;
+    --nick-red: #FF5C5C;
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-    --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    font-family: var(--sans);
-    background: linear-gradient(160deg, #0a0a0f 0%, #12121a 50%, #0d1117 100%);
-    color: var(--text);
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    line-height: 1.6;
-    overflow: hidden;
+    font-family: var(--mono); font-size: 13px; line-height: 1.6;
+    background: var(--bg); color: var(--text);
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
   }
-  /* Brand: 40px grid wash + two off-screen glows */
-  body::before {
-    content: '';
-    position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image:
-      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 40px 40px;
-  }
-  .glow, .glow-2 { position: fixed; pointer-events: none; z-index: 0; }
-  .glow {
-    width: 600px; height: 600px; top: -150px; right: -150px;
-    background: radial-gradient(circle, rgba(255, 50, 50, 0.12) 0%, transparent 70%);
-  }
-  .glow-2 {
-    width: 400px; height: 400px; bottom: -100px; left: -100px;
-    background: radial-gradient(circle, rgba(255, 100, 50, 0.08) 0%, transparent 70%);
-  }
-  header, .layout { position: relative; z-index: 1; }
-
-  header {
-    display: flex; align-items: center; gap: 16px;
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
-    background: rgba(10, 10, 15, 0.6); backdrop-filter: blur(8px);
-  }
-  header h1 { font-family: var(--mono); font-size: 17px; font-weight: 700; margin: 0; letter-spacing: 0.02em; color: var(--text); }
-  header h1 .mic { margin-right: 8px; }
-  .tagline { font-family: var(--mono); font-size: 12px; color: var(--muted-2); letter-spacing: 0.05em; }
-  .tagline::before { content: "// "; color: var(--accent); }
+  button, input, select { font: inherit; color: inherit; }
+  svg.i { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .grow { flex: 1; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 7px;
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em; color: var(--muted);
-    padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
-  }
-  .pill.online { color: var(--success); border-color: rgba(74, 222, 128, 0.3); }
-  .pill.offline { color: var(--muted); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
-  .dot.on { background: var(--success); box-shadow: 0 0 8px var(--success); }
-  .dot.off { background: var(--dim); box-shadow: none; }
+  .workspace-link { color: var(--muted); font-size: 11px; text-decoration: none; }
+  .workspace-link:hover { color: var(--accent); }
+  .hidden { display: none !important; }
 
-  .layout { flex: 1; display: flex; min-height: 0; }
+  /* ---- Top bar ------------------------------------------------------------ */
+  .topbar {
+    height: 44px; flex: 0 0 44px; display: flex; align-items: center; gap: 14px;
+    padding: 0 16px; border-bottom: 1px solid var(--border);
+  }
+  .brand { font-size: 14px; font-weight: 700; letter-spacing: 0.01em; white-space: nowrap; }
+  .brand b { color: var(--accent); }
+  .beta {
+    font-size: 10px; font-style: italic; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 3px; padding: 0 5px; transform: rotate(-4deg); white-space: nowrap;
+  }
+  .server { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .server .host { color: var(--text); margin-right: 8px; }
+  .server .sep { color: var(--dim); margin: 0 6px; }
+  .server .ok { color: var(--nick-green); }
+  .server .bad { color: var(--nick-red); }
+  .role {
+    display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 12px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent);
+    background: #FFB0201A; border: 1px solid #FFB02055; border-radius: 3px; white-space: nowrap;
+  }
+  .role.on-air { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .whoami { color: var(--text); white-space: nowrap; }
 
-  aside {
-    width: 300px; flex-shrink: 0;
-    border-right: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.015);
-    display: flex; flex-direction: column; min-height: 0;
+  /* ---- Three-column shell -------------------------------------------------- */
+  .shell { flex: 1; display: flex; min-height: 0; }
+  aside { display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+  aside.left { width: 248px; flex: 0 0 248px; border-right: 1px solid var(--border); }
+  aside.right { width: 232px; flex: 0 0 232px; border-left: 1px solid var(--border); }
+  .sec-head {
+    display: flex; align-items: center; gap: 8px; padding: 16px 16px 8px;
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
   }
-  .side-section { padding: 14px; border-bottom: 1px solid var(--border); }
-  .side-section h2 {
-    font-family: var(--mono); font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.15em;
-    color: var(--accent-2); margin: 0 0 12px;
+  .sec-head .n { margin-left: auto; letter-spacing: 0; color: var(--dim); }
+  .link-btn { background: none; border: 0; padding: 0; cursor: pointer; font-size: 11px; color: var(--dim); letter-spacing: 0; text-transform: none; }
+  .link-btn:hover { color: var(--nick-red); }
+
+  /* Left: channels */
+  .channels { overflow-y: auto; min-height: 0; }
+  .new-ch { flex-shrink: 0; }
+  .join-help { margin: 20px 16px; color: var(--muted); font-size: 11px; }
+  .join-help summary { cursor: pointer; }
+  .join-help .side-note { padding: 8px 0; overflow-wrap: anywhere; }
+  .ch {
+    display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 8px 16px;
+    cursor: pointer; color: var(--text); border-left: 2px solid transparent;
   }
-  .side-section h2::before { content: "// "; color: var(--accent); }
-  .channels { overflow-y: auto; flex: 1; }
-  .section-heading { display: flex; align-items: center; gap: 8px; }
-  .section-heading h2 { flex: 1; }
-  .danger { color: var(--accent-2); }
-  .danger:hover { color: var(--text); border-color: rgba(255, 68, 68, 0.5); }
-  .say-editor { position: relative; flex: 1; min-width: 0; }
-  .say-editor input { width: 100%; }
+  .ch .channel-info { flex: 1; min-width: 0; }
+  .ch .name { display: block; }
+  .ch .summary { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
+  .ch .hash { color: var(--dim); }
+  .ch .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch:hover { background: var(--panel-2); }
+  .ch.active { background: var(--panel-2); border-left-color: var(--accent); font-weight: 700; color: #fff; }
+  .ch.active .hash { color: var(--accent); }
+  .badge { font-size: 10px; color: var(--muted); background: var(--panel-2); border-radius: 3px; padding: 0 6px; line-height: 17px; }
+  .ch.active .badge { background: var(--bg); }
+  .badge.hot { background: var(--nick-red); color: #fff; font-weight: 700; }
+  .ch .del { display: none; background: none; border: 0; padding: 0; color: var(--dim); cursor: pointer; }
+  .ch .del:hover { color: var(--nick-red); }
+  .ch.empty-room:hover .del { display: inline-flex; }
+  .ch.empty-room:hover .badge { display: none; }
+  .new-ch { display: flex; align-items: center; gap: 8px; height: 31px; padding: 0 16px; }
+  .new-ch .hash { color: var(--dim); }
+  .new-ch input { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--text); padding: 0; }
+  .new-ch input::placeholder { color: var(--dim); }
+  .new-ch:focus-within .hash { color: var(--accent); }
+
+  .side-note { padding: 0 16px; font-size: 11px; line-height: 1.7; color: var(--dim); }
+  .side-note code { color: var(--muted); }
+  .duck { margin-top: auto; text-align: center; color: var(--accent); font-size: 12px; line-height: 1.2; white-space: pre; padding: 16px 0 10px; }
+  .duck-cap { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 14px; }
+  .left-foot { border-top: 1px solid var(--border); padding: 12px 16px; font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .left-foot .dimmer { color: var(--dim); }
+
+  /* ---- Main column ---------------------------------------------------------- */
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .chan-head { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--border); min-height: 70px; }
+  .chan-head .titles { min-width: 0; flex: 1; }
+  .chan-title { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; color: #fff; }
+  .chan-title .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.chip { cursor: pointer; background: none; }
+  .shell.roster-closed aside.right { display: none; }
+  .chip { font-size: 10px; font-weight: 400; color: var(--muted); border: 1px solid var(--border-2); border-radius: 3px; padding: 0 6px; line-height: 18px; white-space: nowrap; }
+  .topic { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+    background: none; border: 0; color: var(--muted); cursor: pointer; border-radius: 3px;
+  }
+  .icon-btn:hover:not(:disabled) { color: var(--text); background: var(--panel-2); }
+  .icon-btn.boxed { border: 1px solid var(--border-2); }
+  .icon-btn.on { color: var(--accent); border-color: #FFB02055; }
+  .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* Live banner */
+  .live {
+    display: flex; align-items: center; gap: 24px; padding: 14px 24px; min-height: 96px;
+    background: linear-gradient(90deg, #FFB02012, #FFB0200D 60%, transparent);
+    border-bottom: 1px solid #FFB02033;
+  }
+  .live.idle { background: none; border-bottom-color: var(--border); min-height: 64px; padding-top: 10px; padding-bottom: 10px; }
+  .live.idle .wave, .live.idle .caption, .live.idle .live-tag { display: none; }
+  .live.idle .who-block { flex: 1; }
+  .live .who-block { flex: 0 0 auto; min-width: 150px; }
+  .live-tag { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .live-tag .rec { color: var(--nick-red); font-weight: 700; letter-spacing: 0.16em; display: inline-flex; align-items: center; gap: 7px; }
+  .live-tag .rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .live.idle .live-tag .rec { color: var(--dim); }
+  .live-who { font-size: 15px; font-weight: 700; color: var(--accent); margin-top: 4px; white-space: nowrap; }
+  .live-who small { font-size: 11px; font-weight: 400; color: var(--dim); margin-left: 8px; }
+  .live.idle .live-who { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .wave { display: flex; align-items: center; gap: 3px; height: 40px; flex: 0 0 auto; }
+  .wave span { width: 3px; border-radius: 1px; background: var(--accent); height: 6px; }
+  .live:not(.idle).playing .wave span { animation: bar 0.9s infinite ease-in-out; }
+  .live.idle .wave span, .live:not(.playing) .wave span { background: var(--dim); opacity: 0.6; }
+  @keyframes bar { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+  .caption { flex: 1; min-width: 0; }
+  .caption .lbl { font-size: 10px; letter-spacing: 0.2em; color: var(--dim); text-transform: uppercase; }
+  .caption .txt {
+    font-style: italic; color: var(--text); line-height: 1.5; margin-top: 2px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .live.idle .caption .txt { color: var(--dim); }
+  .live-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px;
+    border-radius: 3px; border: 1px solid var(--border-2); background: none; color: var(--text);
+    cursor: pointer; white-space: nowrap; font-size: 13px;
+  }
+  .btn:hover:not(:disabled) { background: var(--panel-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .btn.primary:hover:not(:disabled) { background: #FFC04D; }
+  .btn.primary.stop { background: none; color: var(--accent); border-color: #FFB02099; }
+  .btn.primary.stop:hover:not(:disabled) { background: #FFB0201A; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Log */
+  .log { flex: 1; overflow-y: auto; padding: 16px 0 12px; display: flex; flex-direction: column; }
+  .row {
+    display: grid; grid-template-columns: 86px 140px minmax(0, 1fr); column-gap: 14px;
+    padding: 3px 24px; border-left: 2px solid transparent;
+  }
+  .row + .row { margin-top: 6px; }
+  .row .ts { color: var(--dim); font-size: 12px; padding-top: 1px; }
+  .row .nick { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ctx-btn {
+    display: inline-block; margin-left: 8px; padding: 0 6px; font: inherit; font-size: 10px; line-height: 16px;
+    color: var(--muted); background: none; border: 1px solid var(--border-2); border-radius: 3px; cursor: pointer;
+    white-space: nowrap; vertical-align: 1px;
+  }
+  .ctx-btn:hover, .ctx-btn.open { color: var(--accent); border-color: #FFB02055; }
+  .ctx { display: grid; gap: 2px; margin-top: 6px; padding: 6px 8px; font-size: 11px; color: var(--muted);
+    border-left: 2px solid var(--border-2); white-space: normal; }
+  .ctx .kv { display: grid; grid-template-columns: 72px 1fr; gap: 8px; }
+  .ctx .k { color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; padding-top: 1px; }
+  .ctx .v { overflow-wrap: anywhere; }
+  .ctx .v code { color: var(--fg, #d6dbe3); font-size: 11px; }
+  .ctx .op { display: inline-block; width: 34px; color: var(--dim); font-size: 10px; text-transform: uppercase; }
+  .ctx .op.edit { color: var(--accent); }
+  .ctx .err { color: var(--nick-magenta); }
+  .row.hl { background: #FFB0200F; border-left-color: var(--accent); padding-top: 8px; padding-bottom: 8px; }
+  .row.hl .ts { color: var(--muted); }
+  .row.self .body { color: #fff; }
+  .row.sys .nick, .row.sys .body { color: var(--nick-green); }
+  .row.sys.part .nick, .row.sys.part .body { color: var(--dim); }
+  .row.note .nick, .row.note .body { color: var(--muted); font-style: italic; }
+  .row.action .nick { color: var(--nick-magenta); }
+  .row.action .body { color: var(--nick-magenta); }
+  .row.action .body b { font-weight: 600; }
+  .row.cmd .nick, .row.cmd .body { color: var(--nick-cyan); }
+  .row.cmd .body { display: grid; gap: 2px; }
+  .row.cmd .body .kv { display: grid; grid-template-columns: 96px 1fr; gap: 8px; }
+  .row.cmd .body .kv .k { color: var(--muted); }
+  .row.cmd .body .ln { display: grid; grid-template-columns: minmax(80px, max-content) 1fr; gap: 10px; }
+  .row.cmd .body .ln .st { color: var(--muted); }
+  .row.cmd .body .ln .st.away { color: var(--nick-yellow); }
+  .row.cmd .body .ln .st.active { color: var(--nick-green); }
+  .row.err .nick, .row.err .body { color: var(--nick-red); }
+  .topic.set { color: var(--text); }
+  .topic.set .by { color: var(--dim); }
+  .agent .sub.away { color: var(--nick-yellow); }
+  .row .body code { color: var(--nick-cyan); background: var(--panel-2); border-radius: 3px; padding: 1px 5px; }
+  .row .body pre {
+    margin: 8px 0 2px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--border);
+    border-left: 2px solid var(--nick-cyan); border-radius: 3px; color: var(--nick-cyan); white-space: pre-wrap;
+  }
+  .row .body .mention { color: var(--accent); }
+  .row .body .chanref { color: var(--nick-blue); }
+  .empty { margin: auto; text-align: center; color: var(--dim); padding: 24px; }
+  .empty pre { color: var(--muted); margin: 0 0 10px; font-size: 12px; line-height: 1.25; }
+
+  /* Composer */
+  .compose { display: flex; align-items: stretch; gap: 14px; padding: 12px 24px; border-top: 1px solid var(--border); }
+  .notice {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+    border: 1px solid var(--border); border-radius: 3px; color: var(--muted); font-size: 12px; line-height: 1.5;
+  }
+  .notice svg { color: var(--dim); }
+  .say-box {
+    flex: 1; min-width: 0; position: relative; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    border: 1px solid var(--border-2); border-radius: 3px; min-height: 42px;
+  }
+  .say-box:focus-within { border-color: #FFB02099; }
+  .say-box .prompt { color: var(--accent); white-space: nowrap; }
+  .delivery-receipt { display: block; color: var(--dim); font-size: 11px; margin-top: 4px; }
+  .say-box input { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--text); padding: 10px 0; }
+  .say-box input::placeholder { color: var(--dim); }
+  .compose .btn { height: auto; min-height: 36px; align-self: center; }
   .mention-menu {
     position: absolute; z-index: 5; left: 0; right: 0; bottom: calc(100% + 6px);
-    display: none; max-height: 180px; overflow-y: auto;
-    padding: 4px; background: #171721; border: 1px solid var(--border); border-radius: 7px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    display: none; max-height: 180px; overflow-y: auto; padding: 4px;
+    background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 3px;
+    box-shadow: 0 8px 24px #00000080;
   }
   .mention-menu.open { display: block; }
-  .mention-option {
-    display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 4px;
-    background: transparent; color: var(--text); text-align: left; font-size: 13px;
-  }
-  .mention-option:hover, .mention-option.active { background: rgba(255, 68, 68, 0.14); }
-  .channel {
-    padding: 10px 12px; cursor: pointer; margin-bottom: 6px;
-    display: flex; flex-direction: column; gap: 2px;
-    background: var(--surface); border-left: 3px solid transparent; border-radius: 0 6px 6px 0;
-    transition: background 0.2s ease, border-left-color 0.2s ease;
-  }
-  .channel:hover { background: rgba(255, 68, 68, 0.08); border-left-color: var(--accent-2); }
-  .channel.active { background: rgba(255, 68, 68, 0.10); border-left-color: var(--accent); }
-  .channel .name { font-weight: 600; font-size: 14px; }
-  .channel .meta { font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
-  .channel-top { display: flex; align-items: center; gap: 8px; }
-  .channel-top .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .channel-status { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--dim); }
-  .channel-status.connected { background: var(--success); box-shadow: 0 0 7px var(--success); }
-  .delete-channel { padding: 2px 6px; font-size: 11px; color: var(--accent-2); }
+  .mention-option { display: block; width: 100%; padding: 5px 9px; border: 0; border-radius: 3px; background: none; text-align: left; cursor: pointer; }
+  .mention-option:hover, .mention-option.active { background: #FFB0201A; color: var(--accent); }
+  .hint { padding: 0 24px 10px; font-size: 11px; color: var(--nick-red); }
 
-  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .main-head {
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 14px;
+  /* Status bar */
+  .statusbar {
+    display: flex; align-items: center; gap: 14px; height: 28px; flex: 0 0 28px; padding: 0 24px;
+    background: var(--status); font-size: 12px; white-space: nowrap; overflow: hidden;
   }
-  .main-head > div:first-child { min-width: 0; }
-  .main-head .title { font-size: 16px; font-weight: 600; }
-  .main-head .cid {
-    font-family: var(--mono); font-size: 11px; color: var(--muted-2);
-    overflow-wrap: anywhere;
-  }
+  .statusbar .sb-time { color: var(--muted); }
+  .statusbar .sb-me { color: var(--accent); }
+  .statusbar .sb-chan { color: var(--text); }
+  .statusbar .sb-act { color: var(--nick-cyan); }
+  .statusbar .sb-voice { color: var(--nick-orange); }
+  .statusbar .sb-lag { color: var(--dim); }
 
-  .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .empty { margin: auto; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--muted-2); }
-  .empty .big { font-size: 40px; margin-bottom: 8px; }
+  .agent-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+  .agent-name:hover { color: var(--accent); text-decoration: underline; }
+  .agent-name:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+  .agent-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; background: var(--panel); color: var(--text); border: 1px solid var(--border-2); border-radius: 8px; box-shadow: 0 24px 80px #0008; }
+  .agent-dialog::backdrop { background: #0B0D10BB; }
+  .agent-dialog header { position: sticky; top: 0; display: flex; align-items: center; gap: 12px; padding: 18px 22px; background: var(--panel); border-bottom: 1px solid var(--border); z-index: 1; }
+  .agent-dialog h2 { margin: 0; font-size: 17px; flex: 1; overflow-wrap: anywhere; }
+  .agent-detail-body { padding: 0 22px 22px; }
+  .agent-detail-body h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; margin: 22px 0 10px; }
+  .agent-detail-body dl { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 9px 16px; margin: 0; }
+  .agent-detail-body dt { color: var(--muted); }
+  .agent-detail-body dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .agent-detail-body pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; color: var(--muted); }
+  .agent-detail-body blockquote { margin: 10px 0; padding: 12px; background: var(--panel-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .agent-detail-body details { margin-top: 22px; }
+  .agent-detail-body summary { cursor: pointer; color: var(--muted); }
+  @media (max-width: 520px) { .agent-detail-body dl { grid-template-columns: 1fr; gap: 3px; } .agent-detail-body dd { margin-bottom: 10px; } }
 
-  .msg { display: flex; flex-direction: column; max-width: 74%; }
-  .msg.self { align-self: flex-end; align-items: flex-end; }
-  .msg .who {
-    font-family: var(--mono); font-size: 11px; font-weight: 700;
-    letter-spacing: 0.12em; text-transform: uppercase;
-    color: var(--accent-2); margin: 0 0 5px 15px;
+  /* Right: agents */
+  .agents, .listeners { padding: 0 8px; }
+  .agents { overflow-y: auto; min-height: 0; flex: 1; }
+  aside.right > :not(.agents) { flex-shrink: 0; }
+  .agent { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-left: 2px solid transparent; }
+  .kick-btn { flex: 0 0 auto; color: var(--muted); font-size: 10px; padding: 3px 6px; background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
+  .kick-btn:hover, .kick-btn:focus-visible { color: var(--nick-red); border-color: var(--nick-red); }
+  .archive-filter { margin: 6px 16px; text-align: left; color: var(--muted); }
+  .agent.speaking { background: #FFB0200F; border-left-color: var(--accent); }
+  .avatar {
+    width: 22px; height: 22px; flex: 0 0 22px; border-radius: 3px; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: var(--accent-ink);
   }
-  .msg.self .who { color: var(--accent); margin: 0 15px 5px 0; }
-  .msg .bubble {
-    background: var(--surface); border-left: 3px solid var(--accent);
-    border-radius: 0 6px 6px 0; padding: 11px 15px; line-height: 1.55; word-wrap: break-word;
+  .agent .meta { min-width: 0; flex: 1; line-height: 1.35; }
+  .agent .h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent .sub { font-size: 10px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent .mic { color: var(--accent); width: 13px; height: 13px; }
+  .listener { display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px; }
+  .listener svg { color: var(--dim); width: 14px; height: 14px; }
+  .listener .tag { margin-left: auto; font-size: 10px; color: var(--dim); }
+  .listener .tag.live { color: var(--nick-green); }
+  .right-note { padding: 4px 16px 0; font-size: 11px; color: var(--dim); }
+  .fortune {
+    margin: auto 22px 0; padding: 12px 14px; background: var(--accent); color: var(--accent-ink);
+    transform: rotate(-3deg); box-shadow: 4px 6px 0 #00000080; cursor: pointer; user-select: none;
   }
-  .msg.self .bubble {
-    background: rgba(255, 68, 68, 0.08);
-    border-left: none; border-right: 3px solid var(--accent-2); border-radius: 6px 0 0 6px;
-  }
-  .msg .time { font-family: var(--mono); font-size: 10px; color: var(--dim); margin: 4px 0 0 15px; }
-  .msg.self .time { margin: 4px 15px 0 0; }
-  .system { align-self: center; font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
+  .fortune .cmd { font-size: 9px; opacity: 0.75; }
+  .fortune .q { font-size: 12px; font-weight: 700; line-height: 1.4; margin: 6px 0; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .fortune .by { font-size: 10px; opacity: 0.8; }
+  .legend { margin-top: 28px; border-top: 1px solid var(--border); padding: 14px 16px; font-size: 10px; color: var(--dim); line-height: 2; }
+  .legend b { font-weight: 700; margin-right: 6px; }
 
-  .compose { border-top: 1px solid var(--border); padding: 14px 20px; background: rgba(255, 255, 255, 0.02); }
-  .join-intro { margin-bottom: 10px; }
-  .join-intro strong { display: block; font-size: 15px; color: var(--text); }
-  .join-intro span { color: var(--muted-2); font-size: 12px; }
-  .row { display: flex; gap: 10px; align-items: center; }
-  .row + .row { margin-top: 10px; }
-  .row > input, .row > select { min-width: 0; }
-  input, select, button, textarea {
-    font: inherit; font-size: 14px; color: var(--text);
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 6px; padding: 9px 11px;
+  /* Join popover (the "Voice for @handle" panel) */
+  .scrim { position: fixed; inset: 0; z-index: 20; background: #0B0D1099; }
+  .pop {
+    position: fixed; z-index: 21; top: 98px; right: 240px; width: 336px; max-height: calc(100vh - 120px);
+    display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border-2);
+    border-radius: 4px; box-shadow: 0 20px 60px #00000099;
   }
-  input::placeholder { color: var(--dim); }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
-  input, textarea { flex: 1; }
-  #joinRow #handle { flex: 1 1 auto; max-width: none; min-width: 180px; }
-  #joinRow #voice { flex: 0 1 190px; min-width: 120px; }
-  #joinBtn { padding-inline: 18px; font-size: 14px; }
-  button {
-    cursor: pointer; background: var(--accent); border-color: transparent;
-    color: #fff; font-weight: 600; white-space: nowrap; transition: background 0.2s ease, border-color 0.2s ease;
-  }
-  button:hover:not(:disabled) { background: var(--accent-2); }
-  button.ghost { background: var(--surface); color: var(--text); border-color: var(--border); font-weight: 500; }
-  button.ghost:hover:not(:disabled) { background: rgba(255, 68, 68, 0.08); border-color: var(--accent-2); }
-  button.ghost.active { background: rgba(255, 68, 68, 0.10); border-color: var(--accent); color: var(--accent-2); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .hint { font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
-  .joined-as { font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em; color: var(--accent-2); }
-  .speaking {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--accent-2); display: inline-flex; align-items: center; gap: 7px;
-  }
-  .wave { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; }
-  .wave span { width: 3px; background: var(--accent); border-radius: 1px; animation: w 1s infinite ease-in-out; }
-  .wave span:nth-child(2){ animation-delay: .15s } .wave span:nth-child(3){ animation-delay: .3s } .wave span:nth-child(4){ animation-delay: .45s }
-  @keyframes w { 0%,100%{ height: 3px } 50%{ height: 12px } }
-
-  @media (max-width: 700px) {
-    header { padding: 12px 14px; gap: 10px; }
-    .tagline { display: none; }
-    aside { width: 240px; }
-    .main-head { padding: 12px 14px; gap: 10px; }
-    .main-head .grow { display: none; }
-    .main-head > div:first-child { flex: 1; }
-    .main-head #listenBtn { flex-shrink: 0; }
-    .messages { padding: 14px; }
-    .compose { padding: 12px 14px; }
-    #joinRow { flex-wrap: wrap; }
-    #joinRow #handle { flex: 1 1 100%; }
-    #joinRow #voice { flex: 1 1 calc(100% - 120px); }
-  }
-  @media (max-width: 480px) {
-    .layout { flex-direction: column; overflow: auto; }
-    aside { width: 100%; height: auto; max-height: 36vh; }
-    .side-section[style*="flex:1"] { flex: none !important; }
-    .channels { max-height: 20vh; }
-    .main-head { flex-wrap: wrap; }
-    .main-head > div:first-child { flex-basis: calc(100% - 50px); }
-    .main-head #speaking { order: 3; flex-basis: 100%; }
-    .msg { max-width: 92%; }
-  }
+  .pop-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .pop-head .t { font-size: 13px; font-weight: 700; color: #fff; }
+  .pop-head .s { font-size: 11px; color: var(--dim); }
+  .pop-body { padding: 14px 16px; overflow-y: auto; }
+  .pop-note { display: flex; gap: 10px; padding: 10px 12px; background: var(--panel-2); border-radius: 3px; font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .pop-note svg { color: var(--accent); margin-top: 2px; }
+  .pop-lbl { margin: 18px 0 8px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--dim); }
+  .field { width: 100%; background: var(--bg); border: 1px solid var(--border-2); border-radius: 3px; padding: 8px 10px; outline: none; }
+  .field:focus { border-color: #FFB02099; }
+  .field::placeholder { color: var(--dim); }
+  .voices { border: 1px solid var(--border); border-radius: 3px; max-height: 260px; overflow-y: auto; }
+  .voice { display: flex; align-items: center; gap: 12px; padding: 9px 12px; cursor: pointer; }
+  .voice + .voice { border-top: 1px solid var(--border); }
+  .voice:hover { background: var(--panel-2); }
+  .voice .radio { width: 14px; height: 14px; flex: 0 0 14px; border-radius: 50%; border: 1px solid var(--dim); }
+  .voice.sel { background: #FFB0200F; }
+  .voice.sel .radio { border: 4px solid var(--accent); background: var(--accent-ink); }
+  .voice .vn { color: var(--text); }
+  .voice.sel .vn { color: var(--accent); }
+  .voice .vs { font-size: 10px; color: var(--dim); }
+  .pop-foot { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+  .pop-foot .link-btn { font-size: 12px; color: var(--muted); }
+  .pop-foot .link-btn:hover { color: var(--text); }
+  .pop-err { color: var(--nick-red); font-size: 11px; margin-top: 10px; }
 
   ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(255, 68, 68, 0.35); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+  @media (max-width: 1100px) {
+    aside.right { display: none; }
+    .shell.roster-open aside.right { display: flex; position: absolute; right: 0; top: 114px; bottom: 0; z-index: 6; box-shadow: -12px 0 24px #0006; }
+    .pop { right: 16px; }
+    .live .caption { display: none; }
+  }
+  @media (max-width: 760px) {
+    .server, .beta { display: none; }
+    .chan-head { flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+    .chan-head .titles { flex-basis: 100%; }
+    aside.left { width: 200px; flex-basis: 200px; }
+    .duck, .duck-cap, .side-note { display: none; }
+    .row { grid-template-columns: 1fr; }
+    .row .ts { display: none; }
+    .row .nick { text-align: left; }
+    .live .wave { display: none; }
+    .compose { flex-wrap: wrap; }
+  }
+  @media (max-width: 520px) {
+    .shell { flex-direction: column; overflow: auto; }
+    aside.left { width: 100%; flex: 0 0 auto; max-height: 34vh; overflow-y: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    .channels { flex-shrink: 0; }
+    .live { flex-wrap: wrap; gap: 12px; }
+    .say-box { flex-basis: 100%; }
+    .left-foot { display: none; }
+    main { min-height: 66vh; }
+    .pop { left: 16px; right: 16px; width: auto; top: 60px; }
+    .statusbar .sb-act, .statusbar .sb-lag { display: none; }
+  }
 </style>
 </head>
 <body>
-  <div class="glow"></div>
-  <div class="glow-2"></div>
-
-  <header>
-    <h1><span class="mic">🎙️</span>Agent PTT</h1>
-    <span class="tagline">voice channels for AI agents</span>
-    <span class="pill" id="serverPill"><span id="serverDot" class="dot"></span><span id="serverStatus">connecting…</span></span>
-    <div class="grow"></div>
-    <span class="pill" id="audioPill" style="display:none"><span id="audioDot" class="dot off"></span><span id="audioLabel">audio off</span></span>
+  <header class="topbar">
+    <span class="brand">agent<b>PTT</b></span>
+    <span class="beta">beta-ish</span>
+    <span class="server"><span class="host" id="host"></span><span id="serverStatus">connecting…</span></span>
+    <button class="link-btn" id="apiKeyBtn" title="Set or clear the server API key">key</button>
+    <span class="grow"></span>
+    <a class="workspace-link" href="/workspace/">Organizations</a>
+    <span class="role" id="roleBadge"></span>
+    <span class="whoami" id="whoami"></span>
   </header>
 
-  <div class="layout">
-    <aside>
-      <div class="side-section">
-        <h2>New channel</h2>
-        <div class="row">
-          <input id="newChannelName" placeholder="Channel name" />
-          <button id="createBtn">Create</button>
-        </div>
-      </div>
-      <div class="side-section" style="flex:1; display:flex; flex-direction:column; min-height:0;">
-        <div class="section-heading">
-          <h2>Channels <span id="chCount" class="hint"></span></h2>
-          <button id="clearChannelsBtn" class="danger ghost">Clear all</button>
-        </div>
-        <div id="channels" class="channels"></div>
-      </div>
+  <div class="shell">
+    <aside class="left">
+      <div class="sec-head">Channels <span class="n" id="chCount">0</span>
+        <button class="link-btn" id="clearChannelsBtn" title="Delete every channel">clear</button></div>
+      <button class="link-btn archive-filter" id="archiveFilter" aria-pressed="false">Show archived</button>
+      <div class="channels" id="channels"></div>
+      <label class="new-ch" title="Create a channel">
+        <span class="hash">+</span><input id="newChannelName" placeholder="new channel ↵" aria-label="New channel name" autocomplete="off" />
+      </label>
+
+      <details class="join-help">
+        <summary>Join from the terminal</summary>
+        <div class="side-note"><code>agent-ptt join &lt;id&gt; --handle you</code><br>then <code>agent-ptt say "…"</code></div>
+      </details>
+
+      <div class="duck">   __
+___( o)&gt;
+\ &lt;_. )
+ `---'</div>
+      <div class="duck-cap">rubber duck on duty · /msg it anything</div>
+      <div class="left-foot"><div id="footStats">—</div><div class="dimmer" id="footUptime"></div></div>
     </aside>
 
     <main>
-      <div class="main-head">
-        <div>
-          <div class="title" id="chTitle">No channel selected</div>
-          <div class="cid" id="chId"></div>
+      <div class="chan-head">
+        <div class="titles">
+          <div class="chan-title"><span class="title" id="chTitle">no channel selected</span><button class="chip hidden" id="chChip" aria-controls="agentRoster" aria-expanded="true"></button></div>
+          <div class="topic" id="chTopic">pick a channel on the left, or make a new one</div>
         </div>
-        <div class="grow"></div>
-        <button id="listenBtn" class="ghost" disabled>🔊 Listen</button>
-        <span id="speaking" class="speaking" style="display:none">
-          <span class="wave"><span></span><span></span><span></span><span></span></span>
-          <span id="speakingWho">speaking…</span>
-        </span>
+        <button class="btn hidden" id="archiveBtn">Close &amp; archive</button>
+        <button class="icon-btn" id="copyIdBtn" title="Copy channel ID" disabled></button>
+        <button class="icon-btn" id="exportTopBtn" title="Export log" disabled></button>
       </div>
 
-      <div id="messages" class="messages">
-        <div class="empty"><div class="big">💬</div>Select a channel to see the conversation</div>
+      <div class="live idle hidden" id="live">
+        <div class="who-block">
+          <div class="live-tag"><span class="rec" id="liveRec">off air</span><span id="liveRoomIcon"></span><span id="liveRoom"></span></div>
+          <div class="live-who" id="liveWho">not listening</div>
+        </div>
+        <div class="wave" id="wave"></div>
+        <div class="caption">
+          <div class="lbl">Live caption</div>
+          <div class="txt" id="caption">Listen in to hear this channel — captions follow the voice.</div>
+        </div>
+        <div class="live-actions">
+          <button class="icon-btn boxed on" id="captionBtn" title="Toggle captions"></button>
+          <button class="icon-btn boxed" id="muteBtn" title="Mute" disabled></button>
+          <button class="btn primary" id="listenBtn" disabled></button>
+        </div>
       </div>
 
-      <div class="compose">
-        <div class="join-intro">
-          <strong>Jump into the conversation</strong>
-          <span>Choose how you want to sound, then join the channel.</span>
-        </div>
-        <div class="row" id="joinRow">
-          <input id="handle" placeholder="Your name or handle" aria-label="Your name or handle" />
-          <select id="voice" aria-label="Choose your voice"><option value="">Loading voices…</option></select>
-          <button id="joinBtn" disabled>Jump in →</button>
-        </div>
-        <div class="row" id="sayRow" style="display:none">
-          <span class="joined-as" id="joinedAs"></span>
-          <div class="say-editor">
-            <input id="sayText" placeholder="Type a message, or @mention someone…" aria-label="Message" autocomplete="off" />
-            <div id="mentionMenu" class="mention-menu" role="listbox"></div>
-          </div>
-          <button id="sayBtn">Send 🔊</button>
-          <button id="leaveBtn" class="ghost">Leave</button>
-        </div>
-        <div class="hint" id="composeHint" style="display:none"></div>
+      <div class="log" id="messages">
+        <div class="empty"><pre>  _______
+ | #   _ |
+ |____|_||</pre>select a channel to see the conversation</div>
       </div>
+
+      <div class="compose" id="compose">
+        <div class="notice" id="listenNotice"><span id="lockIcon"></span><span>Join the channel to speak with the agents.</span></div>
+        <button class="btn" id="raiseBtn" disabled></button>
+        <div class="say-box hidden" id="sayRow">
+          <span class="prompt" id="joinedAs"></span>
+          <input id="sayText" placeholder="say something, @mention someone, or /help…" aria-label="Message" autocomplete="off" />
+          <div id="mentionMenu" class="mention-menu" role="listbox"></div>
+        </div>
+        <button class="btn primary hidden" id="sayBtn"></button>
+        <button class="btn hidden" id="leaveBtn"></button>
+        <button class="btn hidden" id="exportBtn" disabled></button>
+      </div>
+      <div class="hint hidden" id="composeHint"></div>
+
+      <div class="statusbar" id="statusbar"></div>
     </main>
+
+    <aside class="right" id="agentRoster">
+      <div class="sec-head">Agents <span class="n" id="agentCount">0</span></div>
+      <div class="agents" id="agents"></div>
+      <div class="sec-head">Listeners</div>
+      <div class="listeners" id="listeners"></div>
+      <div class="right-note">spectators on /audio aren't counted</div>
+
+      <div class="fortune hidden" id="fortune" title="Another one">
+        <div class="cmd">$ fortune --agents</div>
+        <div class="q" id="fortuneQ"></div>
+        <div class="by" id="fortuneBy"></div>
+      </div>
+      <div class="legend">
+        <div><b style="color:var(--nick-green)">+</b>voice — joined, can speak &amp; post</div>
+        <div><b style="color:var(--dim)">·</b>listener — read &amp; hear only</div>
+      </div>
+    </aside>
+  </div>
+
+  <dialog class="agent-dialog" id="agentDialog" aria-labelledby="agentDetailTitle">
+    <header><h2 id="agentDetailTitle">Agent details</h2><button class="icon-btn" id="agentDetailClose" aria-label="Close agent details" autofocus>×</button></header>
+    <div class="agent-detail-body" id="agentDetailBody" aria-live="polite"></div>
+  </dialog>
+
+  <div class="scrim hidden" id="scrim"></div>
+  <div class="pop hidden" id="joinPop" role="dialog" aria-labelledby="popTitle">
+    <div class="pop-head">
+      <div class="avatar" id="popAvatar">??</div>
+      <div class="grow"><div class="t" id="popTitle">Join</div><div class="s" id="popSub"></div></div>
+      <button class="icon-btn" id="popClose" title="Close"></button>
+    </div>
+    <div class="pop-body">
+      <div class="pop-note"><span id="popNoteIcon"></span><span>Everyone in the channel hears your messages in this voice. Leave it on auto and one is designed from your handle.</span></div>
+      <div class="pop-lbl">Handle</div>
+      <input class="field" id="handle" placeholder="your name or handle" aria-label="Your name or handle" autocomplete="off" />
+      <div class="pop-lbl">Voice</div>
+      <div class="voices" id="voice" role="radiogroup" aria-label="Choose your voice"><div class="voice"><span class="vs">loading voices…</span></div></div>
+      <div class="pop-err hidden" id="popErr"></div>
+    </div>
+    <div class="pop-foot">
+      <button class="link-btn" id="popCancel">Cancel</button>
+      <span class="grow"></span>
+      <button class="btn primary" id="joinBtn">Jump in →</button>
+    </div>
   </div>
 
 <script>
@@ -308,81 +533,231 @@
   const httpBase = location.origin;
   const wsBase = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 
+  // ---- API key (only used when the server has AGENT_PTT_API_KEY set) --------
+  // Kept in localStorage; sent as a Bearer header on fetches and as ?api_key=
+  // on WebSocket URLs (browsers cannot set headers on new WebSocket()).
+  const API_KEY_STORE = "agent_ptt_api_key";
+  let apiKey = "";
+  try { apiKey = localStorage.getItem(API_KEY_STORE) || ""; } catch {}
+  let keyPrompted = false;
+  function setApiKey(value) {
+    apiKey = (value || "").trim();
+    try { apiKey ? localStorage.setItem(API_KEY_STORE, apiKey) : localStorage.removeItem(API_KEY_STORE); } catch {}
+  }
+  function askForKey() {
+    if (keyPrompted) return false;
+    keyPrompted = true;
+    const v = prompt("This server requires an API key (AGENT_PTT_API_KEY).\nIt is stored in this browser only.", apiKey);
+    if (v === null) return false;
+    setApiKey(v);
+    return !!apiKey;
+  }
+  async function api(url, opts = {}) {
+    const headers = new Headers(opts.headers || {});
+    if (apiKey) headers.set("Authorization", "Bearer " + apiKey);
+    const r = await fetch(url, { ...opts, headers });
+    if (r.status !== 401 || !askForKey()) return r;
+    headers.set("Authorization", "Bearer " + apiKey);
+    return fetch(url, { ...opts, headers });
+  }
+  function wsUrl(path) {
+    if (!apiKey) return wsBase + path;
+    return wsBase + path + (path.includes("?") ? "&" : "?") + "api_key=" + encodeURIComponent(apiKey);
+  }
+
+  // Lucide-style icons, inlined so the page needs no icon library.
+  const ICONS = {
+    volume: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+    mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/>',
+    headphones: '<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>',
+    ear: '<path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/><path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/>',
+    hand: '<path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+    lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    leave: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+    cc: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/>',
+  };
+  const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+  const NICK_COLORS = ["--nick-orange", "--nick-cyan", "--nick-magenta", "--nick-yellow", "--nick-green", "--nick-blue", "--nick-red"];
+  const WAVE_BARS = 26;
+
   const state = {
     channelId: null,
+    archived: false,
+    showArchived: false,
     channelName: null,
-    keyId: null,       // set when joined to talk
+    keyId: null,         // set when joined to talk
     handle: null,
-    seen: new Set(),   // message_ids rendered
+    seen: new Set(),     // message_ids rendered
+    contexts: new Map(), // message_id -> fetched context
+    log: [],             // rendered messages, for export + fortune
     pollTimer: null,
     audioWs: null,
+    audioStartedAt: 0,
     audioQueue: [],
     audioPlaying: false,
+    muted: false,
+    captions: true,
+    spokenQueue: [],     // messages posted while listening; each audio frame voices the next one
+    speaking: null,      // { handle, text, since }
     participants: [],
+    mentionSelections: new Map(),
+    knownHandles: null,  // participant handles at the last poll, to narrate joins/leaves
     channels: [],
+    readCounts: {},      // channel_id -> message count when last viewed
+    voices: [],
+    pickedVoice: "",
     mentionIndex: 0,
+    lagMs: null,
+    online: null,
+    topic: null,
+    topicSetBy: null,
   };
+
+  // ---- small helpers --------------------------------------------------------
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function fmtTime(ts, withSeconds = true) {
+    try {
+      const opts = { hour: "2-digit", minute: "2-digit", hour12: false };
+      if (withSeconds) opts.second = "2-digit";
+      return new Date(ts).toLocaleTimeString([], opts);
+    } catch { return ""; }
+  }
+  function hashOf(s) {
+    let h = 0;
+    for (const ch of String(s)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return h;
+  }
+  const nickColor = (handle) => `var(${NICK_COLORS[hashOf(handle) % NICK_COLORS.length]})`;
+  function initials(handle) {
+    const parts = String(handle).replace(/^[@+]/, "").split(/[\s\-_.]+/).filter(Boolean);
+    const s = parts.length > 1 ? parts[0][0] + parts[1][0] : String(handle).slice(0, 2);
+    return (s || "??").toUpperCase();
+  }
+  const slug = (name) => String(name).trim().toLowerCase().replace(/\s+/g, "-");
+  const presentHandles = () => new Set(state.participants.map((p) => p.handle));
+
+  // Inline formatting for message bodies: ```blocks```, `code`, @mentions, #channels.
+  function formatBody(text) {
+    const parts = String(text).split(/```/);
+    return parts.map((part, i) => {
+      if (i % 2 === 1) return `<pre>${esc(part.replace(/^\w*\n/, "").trim())}</pre>`;
+      return esc(part)
+        .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+        .replace(/(^|\s)(@[\w.\-]+)/g, '$1<span class="mention">$2</span>')
+        .replace(/(^|\s)(#[\w.\-]+)/g, '$1<span class="chanref">$2</span>');
+    }).join("");
+  }
+  function mentionsMe(text) {
+    if (!state.handle) return false;
+    const h = state.handle.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\w])@?${h}([^\\w]|$)`, "i").test(text);
+  }
+
+  function hint(msg) {
+    const el = $("composeHint");
+    el.textContent = msg || "";
+    el.classList.toggle("hidden", !msg);
+  }
 
   // ---- Server status ------------------------------------------------------
   async function checkServer() {
+    const t0 = performance.now();
     try {
-      const r = await fetch(httpBase + "/channels");
+      const r = await api(httpBase + "/channels?include_archived=true");
       if (!r.ok) throw new Error();
-      $("serverPill").className = "pill online";
-      $("serverDot").className = "dot on";
-      $("serverStatus").textContent = "server online";
-      return true;
+      state.lagMs = Math.round(performance.now() - t0);
+      state.online = true;
     } catch {
-      $("serverPill").className = "pill offline";
-      $("serverDot").className = "dot off";
-      $("serverStatus").textContent = "server offline";
-      return false;
+      state.online = false;
+      state.lagMs = null;
     }
+    renderServer();
+    renderStatusbar();
+    return state.online;
+  }
+  function renderServer() {
+    $("host").textContent = location.host;
+    const el = $("serverStatus");
+    if (state.online === false) {
+      el.innerHTML = '<span class="bad">● offline</span><span class="sep">·</span>start it with agent-ptt server start';
+      return;
+    }
+    const n = state.channels.length;
+    el.innerHTML = `<span class="ok">● connected</span><span class="sep">·</span>${state.lagMs ?? "–"}ms` +
+      `<span class="sep">·</span>${n} channel${n === 1 ? "" : "s"}<span class="sep">·</span>vibes nominal`;
   }
 
   // ---- Channels list ------------------------------------------------------
   async function loadChannels() {
-    let channels = [];
+    let channels;
     try {
-      const r = await fetch(httpBase + "/channels");
+      const r = await api(httpBase + "/channels?include_archived=true");
       channels = await r.json();
     } catch { return; }
     state.channels = channels;
+    const current = channels.find((c) => c.channel_id === state.channelId);
+    if (current) state.readCounts[current.channel_id] = (current.messages || []).length;
+    renderChannels();
+    renderFooter();
+    renderServer();
+    renderStatusbar();
+  }
+
+  function renderChannels() {
     const wrap = $("channels");
+    const channels = state.channels.filter((c) => !!c.archived === state.showArchived);
+    $("archiveFilter").textContent = state.showArchived ? "← Active channels" : `Archived (${state.channels.filter((c) => c.archived).length})`;
+    $("archiveFilter").setAttribute("aria-pressed", state.showArchived);
+    $("chCount").textContent = channels.length;
+    $("clearChannelsBtn").classList.toggle("hidden", !channels.length);
     wrap.innerHTML = "";
-    $("chCount").textContent = channels.length ? `(${channels.length})` : "";
     if (!channels.length) {
-      wrap.innerHTML = '<div class="hint">No channels yet. Create one above.</div>';
+      wrap.innerHTML = `<div class="side-note">${state.showArchived ? 'no archived channels' : 'no channels yet — name one below'}</div>`;
       return;
     }
     for (const c of channels) {
+      const count = (c.messages || []).length;
+      const unread = c.channel_id === state.channelId ? 0 : count - (state.readCounts[c.channel_id] || 0);
+      const people = new Set(Object.values(c.participants || {}).map((p) => p.handle)).size;
       const el = document.createElement("div");
-      el.className = "channel" + (c.channel_id === state.channelId ? " active" : "");
-      const count = (c.messages && c.messages.length) || 0;
-      const people = c.participants ? Object.keys(c.participants).length : 0;
+      el.className = "ch" + (c.channel_id === state.channelId ? " active" : "") + (people ? "" : " empty-room");
+      el.title = `${people} joined · ${count} message${count === 1 ? "" : "s"}`;
       el.innerHTML =
-        `<div class="channel-top"><span class="channel-status${people ? " connected" : ""}" ` +
-        `title="${people ? "Agents connected" : "No agents connected"}" aria-label="${people ? "Agents connected" : "No agents connected"}"></span>` +
-        `<span class="name">${esc(c.name)}</span>` +
-        (people === 0 ? '<button class="delete-channel ghost" title="Delete channel">Delete</button>' : "") +
-        `</div>` +
-        `<span class="meta">${people} joined · ${count} message${count === 1 ? "" : "s"}</span>`;
+        `<span class="hash">#</span><span class="channel-info"><span class="name">${esc(slug(c.name))}</span><span class="summary">${c.archived ? "archived · read only" : `${people} agent${people === 1 ? "" : "s"}`}</span></span>` +
+        (unread > 0 ? `<span class="badge" title="${unread} unread messages">${unread}</span>` : "") +
+        (people || c.archived ? "" : `<button class="del" title="Delete channel">${icon("x")}</button>`);
       el.onclick = () => selectChannel(c.channel_id, c.name);
-      const deleteButton = el.querySelector(".delete-channel");
-      if (deleteButton) {
-        deleteButton.onclick = (event) => {
-          event.stopPropagation();
-          deleteChannel(c.channel_id, c.name);
-        };
-      }
+      const del = el.querySelector(".del");
+      if (del) del.onclick = (event) => { event.stopPropagation(); deleteChannel(c.channel_id, c.name); };
       wrap.appendChild(el);
     }
   }
 
+  function renderFooter() {
+    const agents = state.channels.reduce((n, c) => n + new Set(Object.values(c.participants || {}).map((p) => p.handle)).size, 0);
+    const msgs = state.channels.reduce((n, c) => n + (c.messages || []).length, 0);
+    $("footStats").textContent = `${agents} agent${agents === 1 ? "" : "s"} · ${msgs} message${msgs === 1 ? "" : "s"}`;
+    const oldest = state.channels.map((c) => Date.parse(c.created_at)).filter(Boolean).sort()[0];
+    $("footUptime").textContent = oldest ? `oldest channel up ${since(oldest)}` : "channels vanish on server restart";
+  }
+  function since(t) {
+    const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${s % 60}s`;
+  }
+
   async function createChannel() {
-    const name = $("newChannelName").value.trim();
+    const name = $("newChannelName").value.trim().replace(/^#/, "");
     if (!name) return;
-    const r = await fetch(httpBase + "/channels", {
+    const r = await api(httpBase + "/channels", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -395,35 +770,78 @@
     }
   }
 
-  async function clearChannels() {
-    const channels = await fetch(httpBase + "/channels").then((r) => r.json());
-    if (!channels.length) return;
-    if (!confirm(`Clear all ${channels.length} channel${channels.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
-    const r = await fetch(httpBase + "/channels", { method: "DELETE" });
-    if (!r.ok) {
-      hint("Could not clear channels — is the server still running?");
-      return;
-    }
+  function clearSelection() {
     stopAudio();
     stopPolling();
     forgetJoin();
     resetJoin();
+    closeJoin();
     state.channelId = null;
+    state.archived = false;
     state.channelName = null;
     state.seen = new Set();
-    $("chTitle").textContent = "No channel selected";
-    $("chId").textContent = "";
-    $("messages").innerHTML = '<div class="empty"><div class="big">💬</div>Select a channel to see the conversation</div>';
-    $("listenBtn").disabled = true;
-    $("joinBtn").disabled = true;
-    $("audioPill").style.display = "none";
+    state.contexts = new Map();
+    state.log = [];
+    state.participants = [];
+    state.mentionSelections.clear();
+    state.knownHandles = null;
+    state.topic = null;
+    state.topicSetBy = null;
+    $("messages").innerHTML = '<div class="empty">select a channel to see the conversation</div>';
     history.replaceState(null, "", location.pathname);
+    renderChannelChrome();
+  }
+
+  async function kickAgent(participant) {
+    const id = state.channelId;
+    if (!confirm(`Kick ${participant.handle} from this channel? Their current connections will be revoked.`)) return;
+    try {
+      const r = await api(`${httpBase}/channels/${id}/kick/${encodeURIComponent(participant.key_id)}`, { method: "POST" });
+      if (!r.ok) throw new Error("Could not kick agent. Refresh and try again.");
+      await refreshParticipants(id);
+      await loadChannels();
+    } catch (error) { hint(error.message); }
+  }
+
+  async function toggleArchive() {
+    const id = state.channelId;
+    if (!id) return;
+    const archive = !state.archived;
+    if (archive && !confirm(`Close and archive “${state.channelName}”? Agents will be removed and the transcript preserved. You can reopen it later.`)) return;
+    $("archiveBtn").disabled = true;
+    try {
+      const r = await api(`${httpBase}/channels/${id}/${archive ? "archive" : "reopen"}`, { method: "POST" });
+      if (!r.ok) throw new Error("Could not update channel. Please try again.");
+      if (id === state.channelId) {
+        if (archive) { stopAudio(); forgetJoin(); resetJoin(); closeJoin(); }
+        state.archived = archive;
+        state.showArchived = archive;
+        await refreshParticipants(id);
+        renderChannelChrome();
+      }
+      await loadChannels();
+    } catch (error) { hint(error.message); }
+    finally { $("archiveBtn").disabled = false; }
+  }
+  $("archiveBtn").onclick = toggleArchive;
+  $("archiveFilter").onclick = () => { state.showArchived = !state.showArchived; renderChannels(); };
+
+  async function clearChannels() {
+    const channels = await api(httpBase + "/channels?include_archived=true").then((r) => r.json());
+    if (!channels.length) return;
+    if (!confirm(`Clear all ${channels.length} channel${channels.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    const r = await api(httpBase + "/channels", { method: "DELETE", headers: { "X-Confirm-Delete-All": "yes" } });
+    if (!r.ok) {
+      hint("Could not clear channels — is the server still running?");
+      return;
+    }
+    clearSelection();
     await loadChannels();
   }
 
   async function deleteChannel(id, name) {
     if (!confirm(`Are you sure you want to delete “${name}”? This cannot be undone.`)) return;
-    const r = await fetch(`${httpBase}/channels/${id}`, { method: "DELETE" });
+    const r = await api(`${httpBase}/channels/${id}`, { method: "DELETE" });
     if (r.status === 409) {
       hint("This channel now has an agent connected, so it was not deleted.");
       await loadChannels();
@@ -433,22 +851,7 @@
       hint("Could not delete the channel — is the server still running?");
       return;
     }
-    if (state.channelId === id) {
-      stopAudio();
-      stopPolling();
-      forgetJoin();
-      resetJoin();
-      state.channelId = null;
-      state.channelName = null;
-      state.seen = new Set();
-      $("chTitle").textContent = "No channel selected";
-      $("chId").textContent = "";
-      $("messages").innerHTML = '<div class="empty"><div class="big">💬</div>Select a channel to see the conversation</div>';
-      $("listenBtn").disabled = true;
-      $("joinBtn").disabled = true;
-      $("audioPill").style.display = "none";
-      history.replaceState(null, "", location.pathname);
-    }
+    if (state.channelId === id) clearSelection();
     await loadChannels();
   }
 
@@ -457,60 +860,411 @@
     if (state.channelId === id) return;
     stopAudio();
     resetJoin();
+    closeJoin();
     state.channelId = id;
     state.channelName = name;
-    const channel = state.channels?.find((item) => item.channel_id === id);
+    const channel = state.channels.find((item) => item.channel_id === id);
+    state.mentionSelections.clear();
+    state.archived = !!channel?.archived;
     state.participants = channel?.participants ? Object.values(channel.participants) : [];
+    state.topic = channel?.topic || null;
+    state.topicSetBy = channel?.topic_set_by || null;
+    state.knownHandles = null;
     state.seen = new Set();
-    $("chTitle").textContent = name;
-    $("chId").textContent = id;
+    state.contexts = new Map();
+    state.log = [];
     $("messages").innerHTML = "";
-    $("listenBtn").disabled = false;
-    $("joinBtn").disabled = false;
-    $("audioPill").style.display = "";
     hint("");
     restoreJoin(id);
     location.hash = id;
+    renderChannelChrome();
     loadChannels();
     startPolling();
+  }
+
+  // Everything around the log that depends on the selected channel / join state.
+  function renderChannelChrome() {
+    const has = !!state.channelId;
+    const joined = !!state.keyId && !state.archived;
+    $("archiveBtn").classList.toggle("hidden", !has);
+    $("archiveBtn").textContent = state.archived ? "Reopen channel" : "Close & archive";
+    $("chTitle").textContent = has ? `#${slug(state.channelName)}` : "no channel selected";
+    $("chChip").classList.toggle("hidden", !has);
+    const agentCount = new Set(state.participants.map((p) => p.handle)).size;
+    $("chChip").textContent = has ? `${agentCount} agent${agentCount === 1 ? "" : "s"}` : "";
+    $("chChip").title = "Show or hide agents in this channel";
+    updateRosterToggle();
+    const topicEl = $("chTopic");
+    topicEl.classList.toggle("set", has && !!state.topic);
+    if (has && state.topic) {
+      topicEl.innerHTML = esc(state.topic) + (state.topicSetBy ? ` <span class="by">— set by ${esc(state.topicSetBy)}</span>` : "");
+      topicEl.title = state.topic;
+    } else {
+      topicEl.textContent = has
+        ? `${state.log.filter((m) => !m.system).length} messages · no topic`
+        : "pick a channel on the left, or make a new one";
+      topicEl.title = "";
+    }
+    for (const b of ["copyIdBtn", "exportTopBtn", "exportBtn", "listenBtn", "raiseBtn"]) $(b).disabled = !has;
+    $("live").classList.toggle("hidden", !has || state.archived);
+    $("raiseBtn").disabled = !has || state.archived;
+    $("listenNotice").querySelector("span:last-child").textContent = state.archived ? "Archived · transcript is read only. Reopen to resume." : "Join the channel to speak with the agents.";
+
+    $("listenNotice").classList.toggle("hidden", joined);
+    $("raiseBtn").classList.toggle("hidden", joined);
+    $("sayRow").classList.toggle("hidden", !joined);
+    $("sayBtn").classList.toggle("hidden", !joined);
+    $("leaveBtn").classList.toggle("hidden", !joined);
+    $("joinedAs").textContent = joined ? `[${state.handle}] ❯` : "";
+
+    const badge = $("roleBadge");
+    badge.className = "role" + (joined ? " on-air" : "");
+    badge.innerHTML = joined ? `${icon("mic")} ON AIR` : `${icon("ear")} LISTEN-ONLY`;
+    $("whoami").textContent = joined ? state.handle : "";
+    renderAgents();
+    renderListeners();
+    renderStatusbar();
   }
 
   // ---- Message polling (side-effect-free spectating) ----------------------
   function startPolling() {
     stopPolling();
-    pollHistory();
-    state.pollTimer = setInterval(pollHistory, 1000);
+    poll();
+    state.pollTimer = setInterval(poll, 1000);
   }
   function stopPolling() {
     if (state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = null;
   }
-  async function pollHistory() {
-    if (!state.channelId) return;
+  async function poll() {
+    const id = state.channelId;
+    if (!id) return;
+    await Promise.all([pollHistory(id), refreshParticipants(id, true)]);
+  }
+  async function pollHistory(id = state.channelId) {
+    if (!id) return;
     let msgs;
     try {
-      const r = await fetch(`${httpBase}/channels/${state.channelId}/history`);
+      const r = await api(`${httpBase}/channels/${id}/history`);
       if (!r.ok) return;
       msgs = await r.json();
     } catch { return; }
+    if (id !== state.channelId) return;
+    let added = false;
     for (const m of msgs) {
-      if (state.seen.has(m.message_id)) continue;
+      if (state.seen.has(m.message_id)) {
+        updateReceipt(m);
+        continue;
+      }
       state.seen.add(m.message_id);
       renderMessage(m);
+      // Notices are never synthesized, so they must not claim an audio clip.
+      if (state.audioWs && m.kind !== "notice" && Date.parse(m.timestamp) >= state.audioStartedAt - 2000) state.spokenQueue.push(m);
+      added = true;
+    }
+    if (added) {
+      renderChannelChrome();
+      if (!$("fortune").dataset.shown) showFortune();
     }
   }
 
-  function renderMessage(m) {
+  async function refreshParticipants(id = state.channelId, narrate = false) {
+    if (!id) return;
+    try {
+      const response = await api(`${httpBase}/channels/${id}`);
+      if (!response.ok) return;
+      const channel = await response.json();
+      if (id !== state.channelId) return;
+      var archiveChanged = state.archived !== !!channel.archived;
+      state.archived = !!channel.archived;
+      if (state.archived) stopAudio();
+      var before = presenceKey(state.participants);
+      state.participants = channel.participants ? Object.values(channel.participants) : [];
+      if (state.keyId && !state.participants.some((p) => p.key_id === state.keyId)) {
+        forgetJoin(); resetJoin(); renderChannelChrome();
+      }
+      var topic = channel.topic || null;
+      var topicChanged = topic !== state.topic;
+      if (topicChanged && narrate && state.knownHandles) {
+        renderSystem(topic ? `${channel.topic_set_by || "someone"} set the topic: ${topic}` : "the topic was cleared");
+      }
+      state.topic = topic;
+      state.topicSetBy = channel.topic_set_by || null;
+    } catch { return; }
+    const now = presentHandles();
+    if (narrate && state.knownHandles) {
+      for (const h of now) if (!state.knownHandles.has(h)) renderSystem(`${h} has joined #${slug(state.channelName)}`);
+      for (const h of state.knownHandles) if (!now.has(h)) renderSystem(`${h} has left #${slug(state.channelName)}`, true);
+    }
+    const changed = !state.knownHandles || now.size !== state.knownHandles.size || [...now].some((h) => !state.knownHandles.has(h))
+      || archiveChanged || topicChanged || before !== presenceKey(state.participants);
+    state.knownHandles = now;
+    if (changed) renderChannelChrome();
+  }
+
+  function appendRow(el) {
     const box = $("messages");
-    const mine = state.handle && m.handle === state.handle;
-    const el = document.createElement("div");
-    el.className = "msg" + (mine ? " self" : "");
-    el.innerHTML =
-      `<div class="who">${esc(m.handle)}</div>` +
-      `<div class="bubble">${esc(m.text)}</div>` +
-      `<div class="time">${fmtTime(m.timestamp)}</div>`;
+    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    box.querySelector(".empty")?.remove();
     box.appendChild(el);
-    box.scrollTop = box.scrollHeight;
+    if (stick) box.scrollTop = box.scrollHeight;
+  }
+
+  // What the TTS worker says for a message: actions are spoken as "handle text".
+  const spokenText = (m) => (m.kind === "action" ? `${m.handle} ${m.text}` : m.text);
+
+  function renderMessage(m) {
+    state.log.push(m);
+    const kind = m.kind || "message";
+    const mine = state.handle && m.handle === state.handle;
+    const present = presentHandles().has(m.handle);
+    const el = document.createElement("div");
+    el.id = `message-${m.message_id}`;
+    el.className = "row" + (mine ? " self" : "") + (!mine && mentionsMe(m.text) ? " hl" : "") +
+      (kind === "notice" ? " note" : kind === "action" ? " action" : "");
+    const ts = `<span class="ts">${fmtTime(m.timestamp)}</span>`;
+    if (kind === "action") {
+      el.innerHTML = ts +
+        `<span class="nick" title="action">*</span>` +
+        `<span class="body"><b style="color:${nickColor(m.handle)}">${esc(m.handle)}</b> ${formatBody(m.text)}<small class="delivery-receipt"></small></span>`;
+    } else if (kind === "notice") {
+      el.innerHTML = ts +
+        `<span class="nick" title="notice from ${esc(m.handle)} (not spoken)">-${esc(m.handle)}-</span>` +
+        `<span class="body">${formatBody(m.text)}<small class="delivery-receipt"></small></span>`;
+    } else {
+      el.innerHTML = ts +
+        `<span class="nick" style="color:${nickColor(m.handle)}" title="${esc(m.handle)}">${present ? "+" : ""}${esc(m.handle)}</span>` +
+        `<span class="body">${formatBody(m.text)}<small class="delivery-receipt"></small></span>`;
+    }
+    if (m.has_context) {
+      const btn = document.createElement("button");
+      btn.className = "ctx-btn";
+      btn.type = "button";
+      btn.title = "What the agent was working on when it said this";
+      btn.textContent = contextLabel(m.context_summary);
+      btn.addEventListener("click", () => toggleContext(m, el, btn));
+      el.querySelector(".body")?.appendChild(btn);
+    }
+    appendRow(el);
+    updateReceipt(m);
+  }
+
+  // Message context: the silent detail behind a spoken line, fetched on demand.
+  function contextLabel(summary) {
+    const parts = [];
+    if (summary?.files) parts.push(`${summary.files} file${summary.files === 1 ? "" : "s"}`);
+    if (summary?.branch) parts.push(summary.branch);
+    return "⌄ " + (parts.join(" · ") || "context");
+  }
+  async function toggleContext(m, row, btn) {
+    const existing = row.querySelector(".ctx");
+    if (existing) {
+      existing.remove();
+      btn.classList.remove("open");
+      btn.textContent = contextLabel(m.context_summary);
+      return;
+    }
+    btn.classList.add("open");
+    btn.textContent = "⌃ " + contextLabel(m.context_summary).slice(2);
+    let context = m.context || state.contexts.get(m.message_id);
+    if (!context) {
+      try {
+        const r = await api(`${httpBase}/channels/${m.channel_id || state.channelId}/messages/${m.message_id}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        context = (await r.json()).context || {};
+        state.contexts.set(m.message_id, context);
+      } catch (e) {
+        context = { _error: `couldn't load context (${e.message || e})` };
+      }
+    }
+    if (!btn.classList.contains("open")) return; // closed again while loading
+    row.querySelector(".body")?.appendChild(renderContext(context));
+  }
+  function renderContext(c) {
+    const box = document.createElement("div");
+    box.className = "ctx";
+    const kv = (k, v) => { if (v) box.insertAdjacentHTML("beforeend", `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`); };
+    if (c._error) { kv("context", `<span class="err">${esc(c._error)}</span>`); return box; }
+    const where = [c.repo ? `<code>${esc(c.repo)}</code>` : "", c.branch ? `@ ${esc(c.branch)}` : ""].filter(Boolean).join(" ");
+    const flags = [c.worktree ? `worktree ${esc(c.worktree)}` : "", Number.isInteger(c.dirty) ? `${c.dirty} modified` : ""].filter(Boolean).join(", ");
+    kv("where", where + (flags ? ` <span class="st">(${flags})</span>` : "") + (c.cwd ? `<br><code>${esc(c.cwd)}</code>` : ""));
+    kv("task", c.task ? esc(c.task) : "");
+    if (Array.isArray(c.files) && c.files.length) {
+      kv("files", c.files.map((f) => `<span class="op ${esc(f.op || "")}">${esc(f.op || "")}</span><code>${esc(f.path)}</code>`).join("<br>"));
+    }
+    if (c.tools && Object.keys(c.tools).length) {
+      kv("tools", Object.entries(c.tools).map(([t, n]) => `${esc(t)} ×${n}`).join(", "));
+    }
+    const who = [c.agent, c.host ? `on ${c.host}` : "", c.event ? `at ${c.event}` : ""].filter(Boolean).map(esc).join(" ");
+    kv("from", who + (c.session_id ? `<br><code>${esc(c.session_id)}</code>` : ""));
+    kv("trace", c.trace_id ? `<code>${esc(c.trace_id)}</code>` : "");
+    kv("transcript", c.transcript ? `<code>${esc(c.transcript)}</code>` : "");
+    if (!box.children.length) kv("context", "<span class=\"st\">empty</span>");
+    return box;
+  }
+
+  // Inline result of a slash command (only this browser sees it).
+  function renderCommandRow(name, html, isError = false) {
+    const el = document.createElement("div");
+    el.className = "row " + (isError ? "err" : "cmd");
+    el.innerHTML = `<span class="ts">${fmtTime(Date.now())}</span><span class="nick">/${esc(name)}</span><span class="body">${html}</span>`;
+    appendRow(el);
+  }
+
+  function updateReceipt(m) {
+    const row = document.getElementById(`message-${m.message_id}`);
+    const receipt = row?.querySelector(".delivery-receipt");
+    if (!receipt) return;
+    receipt.textContent = (m.deliveries || []).map((d) =>
+      `${d.handle}: ${d.status === "delivered" ? "delivered" : "pending"}`
+    ).join(" · ");
+    receipt.title = "Delivered means handed to the agent hook, not completed. Idle agents pick up pending mentions at their next hook event.";
+  }
+
+  function renderSystem(text, part = false) {
+    state.log.push({ system: true, text, timestamp: new Date().toISOString() });
+    const el = document.createElement("div");
+    el.className = "row sys" + (part ? " part" : "");
+    el.innerHTML = `<span class="ts">${fmtTime(Date.now())}</span><span class="nick">${part ? "&lt;--" : "***"}</span><span class="body">${esc(text)}</span>`;
+    appendRow(el);
+  }
+
+  function updateRosterToggle() {
+    $("chChip").setAttribute("aria-expanded", getComputedStyle($("agentRoster")).display !== "none");
+  }
+  $("chChip").onclick = () => {
+    const show = getComputedStyle($("agentRoster")).display === "none";
+    document.querySelector(".shell").classList.toggle("roster-open", show);
+    document.querySelector(".shell").classList.toggle("roster-closed", !show);
+    updateRosterToggle();
+  };
+  window.addEventListener("resize", updateRosterToggle);
+
+  // ---- Right column -------------------------------------------------------
+  function renderAgents() {
+    const wrap = $("agents");
+    const people = [...new Map(state.participants.map((p) => [p.handle, p])).values()];
+    $("agentCount").textContent = people.length;
+    wrap.innerHTML = people.length ? "" :
+      `<div class="side-note" style="padding:0 8px">${state.channelId ? "no agents on voice yet" : "—"}</div>`;
+    for (const p of people) {
+      const talking = state.speaking?.handle === p.handle;
+      const mine = p.handle === state.handle;
+      const el = document.createElement("div");
+      el.className = "agent" + (talking ? " speaking" : "");
+      const voice = p.voice_id ? voiceName(p.voice_id) : "auto";
+      const away = p.state === "away";
+      const bits = [];
+      if (talking) bits.push("speaking");
+      else if (mine) bits.push("you");
+      if (away) bits.push("away" + (p.away_reason ? ` · ${p.away_reason}` : ""));
+      if (p.doing) bits.push(`* ${p.doing}`);
+      el.className += away ? " away" : "";
+      el.title = `${p.handle} · ${voice}` + (away ? ` · away${p.away_reason ? ": " + p.away_reason : ""}` : "") + (p.doing ? ` · ${p.doing}` : "");
+      el.innerHTML =
+        `<div class="avatar" style="background:var(--panel-2);color:${nickColor(p.handle)}">${esc(initials(p.handle))}</div>` +
+        `<div class="meta"><button class="h agent-name" aria-haspopup="dialog">${esc(p.handle)}</button>` +
+        `${bits.length ? `<div class="sub${away ? " away" : ""}">${esc(bits.join(" · "))}</div>` : ""}</div>` +
+        (talking ? icon("mic").replace('class="i"', 'class="i mic"') : "");
+      el.querySelector(".agent-name").onclick = (event) => openAgentDetails(p, event.currentTarget);
+      const kick = document.createElement("button");
+      kick.className = "kick-btn";
+      kick.textContent = "Kick";
+      kick.setAttribute("aria-label", `Kick ${p.handle}`);
+      kick.onclick = () => kickAgent(p);
+      el.appendChild(kick);
+      wrap.appendChild(el);
+    }
+  }
+  let agentDetailRequest = 0;
+  let agentDetailOpener = null;
+  function closeAgentDetails() { $("agentDialog").close(); }
+  $("agentDetailClose").onclick = closeAgentDetails;
+  $("agentDialog").addEventListener("click", (event) => {
+    if (event.target !== $("agentDialog")) return;
+    const box = event.target.getBoundingClientRect();
+    if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) closeAgentDetails();
+  });
+  $("agentDialog").addEventListener("close", () => {
+    agentDetailRequest++;
+    if (agentDetailOpener?.isConnected) agentDetailOpener.focus();
+    else $("chChip").focus();
+  });
+  async function openAgentDetails(participant, opener) {
+    const request = ++agentDetailRequest;
+    agentDetailOpener = opener;
+    const id = state.channelId;
+    $("agentDetailTitle").textContent = participant.handle;
+    $("agentDetailBody").textContent = "Loading agent details…";
+    $("agentDialog").showModal();
+    try {
+      const response = await api(`${httpBase}/channels/${encodeURIComponent(id)}/participants/${encodeURIComponent(participant.key_id)}`);
+      if (!response.ok) throw new Error(response.status === 404 ? "This agent is no longer in the channel." : "Could not load agent details. Close this window and try again.");
+      const data = await response.json();
+      if (request !== agentDetailRequest || !$("agentDialog").open) return;
+      const p = data.participant;
+      // SQLite timestamps without an offset are stored in UTC.
+      const date = (value) => value ? new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : value + "Z").toLocaleString() : "Not recorded";
+      const value = (item) => item === null || item === undefined || item === "" ? "Not recorded" : String(item);
+      const row = (label, item) => `<dt>${esc(label)}</dt><dd>${esc(value(item))}</dd>`;
+      const optionalRow = (label, item) => item === null || item === undefined || item === "" ? "" : row(label, item);
+      const section = (title, rows) => `<h3>${esc(title)}</h3><dl>${rows}</dl>`;
+      const last = data.activity.last_message;
+      $("agentDetailBody").innerHTML =
+        section("Session", row("Harness", data.harness === "Claude" ? "Claude Code" : data.harness) + row("Session ID", data.session?.session_id || data.context?.session_id) + row("Assigned", date(data.session?.created_at)) + row("Channel", data.channel.name)) +
+        section("Presence & activity", row("Status", p.state) + row("Since", date(p.since)) + row("Joined", date(p.created_at)) + row("Last active", date(p.last_active)) + optionalRow("Doing", p.doing) + optionalRow("Away reason", p.away_reason) + row("Messages here", data.activity.message_count)) +
+        (data.context ? section("Workspace · latest reported", row("Repository", data.context?.repo) + row("Folder", data.context?.cwd) + row("Branch", data.context?.branch) + row("Worktree", data.context?.worktree) + row("Host", data.context?.host) + row("Task", data.context?.task)) : "") +
+        section("Voice", row("Name", data.voice?.display_name || p.voice_id) + row("Voice ID", p.voice_id) + row("Engine", data.voice?.engine) + row("Created", date(data.voice?.created_at)) + row("Pin source", data.voice_pin?.source)) +
+        section("Connections", row("Connections here", data.connections.length) + row("Participation key", p.key_id) + row("Channel ID", p.channel_id) + row("Mention receiver", p.mention_id)) +
+        (last ? `<h3>Last message · ${esc(date(last.timestamp))}</h3><blockquote>${esc(last.text)}</blockquote>` : "") +
+        '<details><summary>All metadata · voice settings, connections & message context</summary><pre id="agentDetailRaw"></pre></details>';
+      $("agentDetailRaw").textContent = JSON.stringify(data, null, 2);
+    } catch (error) {
+      if (request === agentDetailRequest && $("agentDialog").open) $("agentDetailBody").textContent = error.message;
+    }
+  }
+
+  // Fingerprint of the presence-related participant fields, to re-render the roster on change.
+  const presenceKey = (people) => people.map((p) => `${p.handle}|${p.state || "active"}|${p.away_reason || ""}|${p.doing || ""}`).sort().join("\n");
+  function voiceName(id) {
+    const v = state.voices.find((item) => item.voice_id === id);
+    return v ? (v.display_name || v.voice_id) : id.length > 16 ? id.slice(0, 8) + "…" : id;
+  }
+
+  function renderListeners() {
+    const listening = !!state.audioWs;
+    $("listeners").innerHTML =
+      `<div class="listener">${icon("ear")}<span>${esc(state.handle || "you")}</span>` +
+      `<span class="tag${listening ? " live" : ""}">${!state.channelId ? "idle" : listening ? (state.muted ? "muted" : "listening") : "reading"}</span></div>`;
+  }
+
+  function showFortune() {
+    const quotes = state.log.filter((m) => !m.system && (m.kind || "message") === "message" && m.text.length > 8 && m.text.length < 180);
+    const card = $("fortune");
+    if (!quotes.length) { card.classList.add("hidden"); delete card.dataset.shown; return; }
+    const q = quotes[Math.floor(Math.random() * quotes.length)];
+    $("fortuneQ").textContent = `“${q.text}”`;
+    $("fortuneBy").textContent = `— ${q.handle}, ${fmtTime(q.timestamp, false)}`;
+    card.dataset.shown = "1";
+    card.classList.remove("hidden");
+  }
+
+  // ---- Status bar ---------------------------------------------------------
+  function renderStatusbar() {
+    const idx = state.channels.findIndex((c) => c.channel_id === state.channelId);
+    const act = state.channels
+      .map((c, i) => [c, i + 1])
+      .filter(([c]) => c.channel_id !== state.channelId && (c.messages || []).length > (state.readCounts[c.channel_id] || 0))
+      .map(([, i]) => i);
+    const me = state.handle ? `${state.handle}(+v)` : "you(+L)";
+    const voice = state.speaking ? `${slug(state.channelName)} ▸ ${state.speaking.handle}` : state.audioWs ? `${slug(state.channelName)} ▸ quiet` : "off";
+    $("statusbar").innerHTML =
+      `<span class="sb-time">[${fmtTime(Date.now(), false)}]</span>` +
+      `<span class="sb-me">[${esc(me)}]</span>` +
+      (idx >= 0 ? `<span class="sb-chan">[${idx + 1}:#${esc(slug(state.channelName))}]</span>` : "") +
+      `<span class="sb-act">[Act: ${act.length ? act.join(",") : "–"}]</span>` +
+      `<span class="sb-voice">[voice: ${esc(voice)}]</span>` +
+      `<span class="sb-lag">[Lag: ${state.lagMs == null ? "–" : (state.lagMs / 1000).toFixed(2)}]</span>`;
   }
 
   // ---- Live audio (spectator stream) --------------------------------------
@@ -520,55 +1274,110 @@
   }
   function startAudio() {
     if (!state.channelId) return;
-    const ws = new WebSocket(`${wsBase}/channels/${state.channelId}/audio`);
+    const ws = new WebSocket(wsUrl(`/channels/${state.channelId}/audio`));
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => {
-      $("audioDot").className = "dot on";
-      $("audioLabel").textContent = "audio live";
-      $("listenBtn").classList.add("active");
-      $("listenBtn").textContent = "🔇 Stop";
-    };
+    state.audioStartedAt = Date.now();
+    state.spokenQueue = [];
+    ws.onopen = () => renderLive();
     ws.onmessage = (ev) => {
-      const blob = new Blob([ev.data], { type: "audio/mpeg" });
-      state.audioQueue.push(blob);
+      state.audioQueue.push(new Blob([ev.data], { type: "audio/mpeg" }));
       drainAudio();
     };
-    ws.onclose = () => { if (state.audioWs === ws) stopAudio(); };
+    ws.onclose = (ev) => {
+      if (state.audioWs !== ws) return;
+      stopAudio();
+      if (ev.code === 4401 && askForKey()) startAudio();
+    };
     ws.onerror = () => {};
     state.audioWs = ws;
+    renderLive();
+    renderListeners();
   }
   function stopAudio() {
     if (state.audioWs) { try { state.audioWs.close(); } catch {} }
     state.audioWs = null;
     state.audioQueue = [];
+    state.spokenQueue = [];
     state.audioPlaying = false;
-    $("audioDot").className = "dot off";
-    $("audioLabel").textContent = "audio off";
-    $("listenBtn").classList.remove("active");
-    $("listenBtn").textContent = "🔊 Listen";
-    showSpeaking(false);
+    if (state.currentAudio) { try { state.currentAudio.pause(); } catch {} }
+    state.currentAudio = null;
+    setSpeaking(null);
+    renderListeners();
   }
   function drainAudio() {
     if (state.audioPlaying || !state.audioQueue.length) return;
     const blob = state.audioQueue.shift();
     state.audioPlaying = true;
-    showSpeaking(true);
+    // Clips arrive in the order messages were posted, so the oldest unspoken
+    // message is the one this clip voices.
+    const m = state.spokenQueue.shift();
+    setSpeaking(m ? { handle: m.handle, text: spokenText(m), since: Date.now() } : { handle: "someone", text: "", since: Date.now() });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = audio.onerror = () => {
+    audio.muted = state.muted;
+    state.currentAudio = audio;
+    const done = () => {
       URL.revokeObjectURL(url);
       state.audioPlaying = false;
-      if (!state.audioQueue.length) showSpeaking(false);
+      state.currentAudio = null;
+      if (!state.audioQueue.length) setSpeaking(null);
       drainAudio();
     };
+    audio.onended = audio.onerror = done;
     audio.play().catch(() => {
       URL.revokeObjectURL(url);
       state.audioPlaying = false;
-      showSpeaking(false);
+      state.currentAudio = null;
+      setSpeaking(null);
+      hint("The browser blocked playback — click Listen in again.");
     });
   }
-  function showSpeaking(on) {
-    $("speaking").style.display = on ? "" : "none";
+  function setSpeaking(s) {
+    state.speaking = s;
+    renderLive();
+    renderAgents();
+    renderStatusbar();
+  }
+
+  function renderLive() {
+    const listening = !!state.audioWs;
+    const s = state.speaking;
+    const live = $("live");
+    live.classList.toggle("idle", !listening);
+    live.classList.toggle("playing", !!s);
+    $("liveRec").textContent = listening ? "live" : "off air";
+    $("liveRoom").textContent = state.channelName ? slug(state.channelName) : "";
+    if (s) {
+      $("liveWho").innerHTML = `@${esc(s.handle)}<small>speaking · <span id="liveElapsed">0:00</span></small>`;
+      $("caption").textContent = state.captions ? (s.text ? `“${s.text}”` : "…") : "captions off";
+    } else {
+      $("liveWho").innerHTML = listening ? `quiet<small>waiting for the next voice</small>` : "not listening";
+      $("caption").textContent = listening
+        ? "Nobody is speaking right now. New messages are read aloud here."
+        : "Listen in to hear this channel — captions follow the voice.";
+    }
+    const btn = $("listenBtn");
+    btn.classList.toggle("stop", listening);
+    btn.innerHTML = listening ? `${icon("x")} Stop` : `${icon("headphones")} Listen in`;
+    $("muteBtn").disabled = !listening;
+    $("muteBtn").innerHTML = icon(state.muted ? "mute" : "volume");
+    $("muteBtn").classList.toggle("on", listening && state.muted);
+    $("muteBtn").title = state.muted ? "Unmute" : "Mute";
+    $("captionBtn").classList.toggle("on", state.captions);
+  }
+  setInterval(() => {
+    const el = $("liveElapsed");
+    if (el && state.speaking) {
+      const s = Math.floor((Date.now() - state.speaking.since) / 1000);
+      el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    }
+  }, 250);
+
+  function toggleMute() {
+    state.muted = !state.muted;
+    if (state.currentAudio) state.currentAudio.muted = state.muted;
+    renderLive();
+    renderListeners();
   }
 
   // ---- Join & say (participate) -------------------------------------------
@@ -580,7 +1389,7 @@
     try {
       localStorage.setItem(JOIN_STORE, JSON.stringify({
         channelId: state.channelId, keyId: state.keyId,
-        handle: state.handle, voice: $("voice").value || null,
+        handle: state.handle, voice: state.pickedVoice || null,
       }));
     } catch {}
   }
@@ -595,46 +1404,76 @@
     if (!saved || saved.channelId !== channelId || !saved.keyId) return;
     state.keyId = saved.keyId;
     state.handle = saved.handle;
-    $("joinRow").style.display = "none";
-    $("sayRow").style.display = "flex";
-    $("joinedAs").textContent = `● ${saved.handle}`;
-  }
-
-  function hint(msg) {
-    const el = $("composeHint");
-    el.textContent = msg || "";
-    el.style.display = msg ? "" : "none";
+    state.pickedVoice = saved.voice || "";
   }
 
   async function loadVoices() {
     try {
-      const r = await fetch(httpBase + "/voices");
-      const voices = await r.json();
-      const sel = $("voice");
-      sel.innerHTML = "";
-      const auto = document.createElement("option");
-      auto.value = ""; auto.textContent = "Design a voice for me";
-      sel.appendChild(auto);
-      for (const v of voices) {
-        const o = document.createElement("option");
-        o.value = v.voice_id;
-        o.textContent = v.display_name || v.voice_id;
-        sel.appendChild(o);
-      }
+      const r = await api(httpBase + "/voices");
+      state.voices = await r.json();
     } catch {
-      $("voice").innerHTML = '<option value="">Auto-designed voice</option>';
+      state.voices = [];
     }
+    renderVoicePicker();
+  }
+  function voiceSummary(v) {
+    const bits = [v.engine];
+    for (const [k, val] of Object.entries(v.settings || {})) {
+      if (bits.length >= 3) break;
+      if (typeof val === "string" && val.length < 24 && !/^(\/|https?:)/.test(val)) bits.push(val);
+      else if (typeof val === "number") bits.push(`${k} ${val}`);
+    }
+    return bits.filter(Boolean).join(" · ");
+  }
+  function renderVoicePicker() {
+    const wrap = $("voice");
+    const options = [{ voice_id: "", display_name: "Auto-design", sub: "a voice made from your handle, pinned to it" },
+      ...state.voices.map((v) => ({ voice_id: v.voice_id, display_name: v.display_name || v.voice_id, sub: voiceSummary(v) }))];
+    wrap.innerHTML = "";
+    for (const o of options) {
+      const el = document.createElement("div");
+      const sel = o.voice_id === state.pickedVoice;
+      el.className = "voice" + (sel ? " sel" : "");
+      el.setAttribute("role", "radio");
+      el.setAttribute("aria-checked", sel ? "true" : "false");
+      el.tabIndex = 0;
+      el.innerHTML = `<span class="radio"></span><div><div class="vn">${esc(o.display_name)}</div><div class="vs">${esc(o.sub)}</div></div>`;
+      el.onclick = () => { state.pickedVoice = o.voice_id; renderVoicePicker(); };
+      el.onkeydown = (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); el.onclick(); } };
+      wrap.appendChild(el);
+    }
+  }
+
+  function openJoin() {
+    if (!state.channelId) return;
+    $("popErr").classList.add("hidden");
+    $("popSub").textContent = `/join #${slug(state.channelName)}`;
+    updatePopHead();
+    renderVoicePicker();
+    $("scrim").classList.remove("hidden");
+    $("joinPop").classList.remove("hidden");
+    $("handle").focus();
+  }
+  function closeJoin() {
+    $("scrim").classList.add("hidden");
+    $("joinPop").classList.add("hidden");
+  }
+  function updatePopHead() {
+    const h = $("handle").value.trim();
+    $("popTitle").textContent = h ? `Voice for @${h}` : `Join #${slug(state.channelName || "")}`;
+    $("popAvatar").textContent = h ? initials(h) : "??";
+    $("popAvatar").style.background = h ? nickColor(h) : "var(--dim)";
   }
 
   async function join() {
     if (!state.channelId) return;
     const handle = $("handle").value.trim();
     if (!handle) { $("handle").focus(); return; }
-    const voice = $("voice").value || null;
+    const voice = state.pickedVoice || null;
     $("joinBtn").disabled = true;
     $("joinBtn").textContent = "Joining…";
     try {
-      const r = await fetch(`${httpBase}/channels/${state.channelId}/join`, {
+      const r = await api(`${httpBase}/channels/${state.channelId}/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ handle, voice_id: voice }),
@@ -643,26 +1482,32 @@
       const data = await r.json();
       state.keyId = data.key_id;
       state.handle = handle;
-      $("joinRow").style.display = "none";
-      $("sayRow").style.display = "flex";
-      $("joinedAs").textContent = `● ${handle}`;
-      $("sayText").focus();
       rememberJoin();
+      closeJoin();
       hint("");
+      renderChannelChrome();
+      $("sayText").focus();
       loadChannels();
     } catch (e) {
-      hint("Join failed: " + e.message);
+      $("popErr").textContent = "Join failed: " + e.message;
+      $("popErr").classList.remove("hidden");
     } finally {
       $("joinBtn").disabled = false;
       $("joinBtn").textContent = "Jump in →";
     }
   }
 
+  function mentionToken(handle) {
+    return /^[\w-]+$/.test(handle) ? `@${handle}` : `@"${handle}"`;
+  }
+
   function postSay(text) {
-    return fetch(`${httpBase}/channels/${state.channelId}/say`, {
+    const selected = [...state.mentionSelections.entries()]
+      .filter(([token]) => text.includes(token)).map(([, id]) => id);
+    return api(`${httpBase}/channels/${state.channelId}/say`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key_id: state.keyId, text }),
+      body: JSON.stringify({ key_id: state.keyId, text, recipient_ids: selected.length ? selected : null }),
     });
   }
 
@@ -672,7 +1517,7 @@
     const saved = savedJoin();
     if (!saved || !saved.handle) return false;
     try {
-      const r = await fetch(`${httpBase}/channels/${state.channelId}/join`, {
+      const r = await api(`${httpBase}/channels/${state.channelId}/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ handle: saved.handle, voice_id: saved.voice || null }),
@@ -689,13 +1534,16 @@
     const text = $("sayText").value.trim();
     if (!text) return;
     if (!state.channelId) { hint("Pick a channel first."); return; }
-    if (!state.keyId) { hint("Join the channel first — enter a handle and press Join."); return; }
+    if (!state.keyId) { hint("Join the channel first — raise a hand and pick a handle."); return; }
+    if (text.startsWith("/")) { await runCommand(text); return; }
     $("sayText").value = "";
     try {
       let r = await postSay(text);
       if (r.status === 404 && await rejoin()) r = await postSay(text);
       if (!r.ok) throw new Error(await r.text());
       hint("");
+      state.mentionSelections.clear();
+      $("mentionMenu").classList.remove("open");
       pollHistory();
     } catch (e) {
       hint("Send failed: " + e.message + " — is the server still running?");
@@ -703,115 +1551,270 @@
     }
   }
 
-  function updateMentions() {
-      const input = $("sayText");
-      const before = input.value.slice(0, input.selectionStart);
-      const match = before.match(/(?:^|\s)@([^\s@]*)$/);
-      const menu = $("mentionMenu");
-      if (!match) {
-        menu.classList.remove("open");
+  // ---- Slash commands (IRC-style) ------------------------------------------
+  // "/name args" → POST /channels/{id}/command {key_id, name, args}. /help is local.
+  const COMMANDS = [
+    ["names", "", "who is in the channel, with state and what they're doing"],
+    ["whois", "<handle>", "details about one participant (prefix match)"],
+    ["me", "<text>", "an action, shown as * you text (spoken as \"you text\")"],
+    ["notice", "<text>", "a text-only notice, never spoken"],
+    ["topic", "[text]", "show or set the channel topic"],
+    ["away", "[reason]", "mark yourself away"],
+    ["back", "", "mark yourself active again"],
+    ["help", "", "this list"],
+  ];
+  function parseCommand(text) {
+    const m = text.match(/^\/(\S*)\s*([\s\S]*)$/);
+    return { name: (m?.[1] || "").toLowerCase(), args: (m?.[2] || "").trim() };
+  }
+  function postCommand(name, args) {
+    return api(`${httpBase}/channels/${state.channelId}/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key_id: state.keyId, name, args }),
+    });
+  }
+  async function runCommand(text) {
+    const { name, args } = parseCommand(text);
+    if (!name) { hint("Type /help for the list of commands."); return; }
+    $("sayText").value = "";
+    $("mentionMenu").classList.remove("open");
+    if (name === "help") {
+      renderCommandRow("help", COMMANDS.map(([n, a, d]) =>
+        `<span class="ln"><span>/${n}${a ? " " + esc(a) : ""}</span><span class="st">${esc(d)}</span></span>`).join(""));
+      return;
+    }
+    try {
+      let r = await postCommand(name, args);
+      if (r.status === 404 && !state.participants.some((p) => p.key_id === state.keyId) && await rejoin()) r = await postCommand(name, args);
+      let data = null;
+      try { data = await r.json(); } catch {}
+      if (!r.ok) {
+        const msg = data?.error || data?.detail || `${r.status} ${r.statusText}`;
+        renderCommandRow(name, esc(typeof msg === "string" ? msg : JSON.stringify(msg)), true);
+        $("sayText").value = text;
         return;
       }
-      refreshParticipants().then(() => {
-        if ($("sayText").value.slice(0, $("sayText").selectionStart) !== before) return;
-        const query = match[1].toLowerCase();
-        const matches = [...new Map(
-          state.participants.map((participant) => [participant.handle, participant])
-        ).values()].filter((participant) =>
-          participant.handle.toLowerCase().includes(query)
-        );
-        menu.innerHTML = "";
-        state.mentionIndex = 0;
-        matches.forEach((participant, index) => {
-          const option = document.createElement("button");
-          option.type = "button";
-          option.className = "mention-option" + (index === 0 ? " active" : "");
-          option.textContent = `@${participant.handle}`;
-          option.setAttribute("role", "option");
-          option.onclick = () => insertMention(participant.handle, match.index + match[0].indexOf("@"));
-          menu.appendChild(option);
-        });
-        menu.classList.toggle("open", matches.length > 0);
+      hint("");
+      renderCommandResult(data?.name || name, data?.result || {});
+      // Actions, notices, topic and presence changes come back through the polls.
+      poll();
+    } catch (e) {
+      renderCommandRow(name, esc("failed: " + e.message + " — is the server still running?"), true);
+      $("sayText").value = text;
+    }
+  }
+  function participantLine(p) {
+    const st = p.state === "away" ? "away" + (p.away_reason ? ` · ${p.away_reason}` : "") : "active";
+    const sinceTs = p.since ? Date.parse(p.since) : NaN;
+    const meta = [st, p.doing ? `* ${p.doing}` : "", Number.isFinite(sinceTs) ? `since ${fmtTime(sinceTs, false)} (${since(sinceTs)})` : ""]
+      .filter(Boolean).join(" · ");
+    return `<span class="ln"><span style="color:${nickColor(p.handle)}">${esc(p.handle)}</span>` +
+      `<span class="st ${p.state === "away" ? "away" : "active"}">${esc(meta)}</span></span>`;
+  }
+  const kv = (k, v) => `<span class="kv"><span class="k">${esc(k)}</span><span>${esc(v)}</span></span>`;
+  function renderCommandResult(name, result) {
+    switch (name) {
+      case "names": {
+        const people = result.participants || [];
+        renderCommandRow(name, people.length
+          ? `<span class="ln"><span>${people.length} in #${esc(slug(state.channelName))}</span><span class="st"></span></span>` + people.map(participantLine).join("")
+          : "nobody here");
+        return;
+      }
+      case "whois": {
+        const p = result.participant || {};
+        const rows = [
+          kv("handle", p.handle || "?"),
+          kv("state", p.state === "away" ? "away" + (p.away_reason ? ` · ${p.away_reason}` : "") : (p.state || "active")),
+          p.doing ? kv("doing", p.doing) : "",
+          p.voice_id ? kv("voice", voiceName(p.voice_id)) : "",
+          p.since ? kv("since", `${fmtTime(p.since)} (${since(Date.parse(p.since))})`) : "",
+          p.last_active ? kv("last active", fmtTime(p.last_active)) : "",
+          p.joined_at ? kv("joined", fmtTime(p.joined_at)) : "",
+          result.last_message
+            ? kv("last said", `[${fmtTime(result.last_message.timestamp)}] ${result.last_message.text}`)
+            : kv("last said", "nothing yet"),
+        ].filter(Boolean).join("");
+        renderCommandRow(name, rows);
+        return;
+      }
+      case "topic":
+        state.topic = result.topic || null;
+        state.topicSetBy = result.topic_set_by || null;
+        renderChannelChrome();
+        renderCommandRow(name, result.topic
+          ? `<span>topic: ${esc(result.topic)}${result.topic_set_by ? ` <span class="st">— set by ${esc(result.topic_set_by)}</span>` : ""}</span>`
+          : "no topic set");
+        return;
+      case "away": {
+        const p = result.participant || {};
+        renderCommandRow(name, `you are now away${p.away_reason ? `: ${esc(p.away_reason)}` : ""}`);
+        return;
+      }
+      case "back":
+        renderCommandRow(name, "welcome back — you are active again");
+        return;
+      case "me":
+      case "notice":
+        return; // rendered from history with its kind
+      default:
+        renderCommandRow(name, `<code>${esc(JSON.stringify(result))}</code>`);
+    }
+  }
+
+  function updateMentions() {
+    const input = $("sayText");
+    const before = input.value.slice(0, input.selectionStart);
+    const match = before.match(/(?:^|\s)@([^\s@]*)$/);
+    const menu = $("mentionMenu");
+    if (!match) {
+      menu.classList.remove("open");
+      return;
+    }
+    refreshParticipants().then(() => {
+      if ($("sayText").value.slice(0, $("sayText").selectionStart) !== before) return;
+      const query = match[1].toLowerCase();
+      const matches = [...new Map(
+        state.participants.filter((p) => p.mention_id && p.key_id !== state.keyId).map((participant) => [participant.mention_id, participant])
+      ).values()].filter((participant) =>
+        participant.handle.toLowerCase().includes(query)
+      );
+      menu.innerHTML = "";
+      state.mentionIndex = 0;
+      matches.forEach((participant, index) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "mention-option" + (index === 0 ? " active" : "");
+        option.textContent = `@${participant.handle}`;
+        option.style.color = nickColor(participant.handle);
+        option.setAttribute("role", "option");
+        option.onclick = () => insertMention(participant, match.index + match[0].indexOf("@"));
+        menu.appendChild(option);
       });
+      menu.classList.toggle("open", matches.length > 0);
+    });
   }
 
-  async function refreshParticipants() {
-    if (!state.channelId) return;
-    try {
-      const response = await fetch(`${httpBase}/channels/${state.channelId}`);
-      if (!response.ok) return;
-      const channel = await response.json();
-      state.participants = channel.participants ? Object.values(channel.participants) : [];
-    } catch {}
-  }
-
-  function insertMention(handle, start) {
-      const input = $("sayText");
-      const cursor = input.selectionStart;
-      const before = input.value.slice(0, start);
-      const after = input.value.slice(cursor);
-      input.value = `${before}@${handle} ${after}`;
-      input.focus();
-      const position = before.length + handle.length + 2;
-      input.setSelectionRange(position, position);
-      $("mentionMenu").classList.remove("open");
+  function insertMention(participant, start) {
+    const token = mentionToken(participant.handle);
+    state.mentionSelections.set(token, participant.mention_id);
+    const input = $("sayText");
+    const cursor = input.selectionStart;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(cursor);
+    input.value = `${before}${token} ${after}`;
+    input.focus();
+    const position = before.length + token.length + 1;
+    input.setSelectionRange(position, position);
+    $("mentionMenu").classList.remove("open");
   }
 
   function navigateMentions(direction) {
-      const options = [...$("mentionMenu").querySelectorAll(".mention-option")];
-      if (!options.length) return false;
-      state.mentionIndex = (state.mentionIndex + direction + options.length) % options.length;
-      options.forEach((option, index) => option.classList.toggle("active", index === state.mentionIndex));
-      options[state.mentionIndex].scrollIntoView({ block: "nearest" });
-      return true;
+    const options = [...$("mentionMenu").querySelectorAll(".mention-option")];
+    if (!options.length) return false;
+    state.mentionIndex = (state.mentionIndex + direction + options.length) % options.length;
+    options.forEach((option, index) => option.classList.toggle("active", index === state.mentionIndex));
+    options[state.mentionIndex].scrollIntoView({ block: "nearest" });
+    return true;
   }
 
   function selectMention() {
-      const option = $("mentionMenu").querySelectorAll(".mention-option")[state.mentionIndex];
-      if (!option) return false;
-      option.click();
-      return true;
+    const option = $("mentionMenu").querySelectorAll(".mention-option")[state.mentionIndex];
+    if (!option) return false;
+    option.click();
+    return true;
   }
 
   async function leave() {
     if (state.keyId && state.channelId) {
       try {
-        await fetch(`${httpBase}/channels/${state.channelId}/leave?key_id=${encodeURIComponent(state.keyId)}`, { method: "POST" });
+        await api(`${httpBase}/channels/${state.channelId}/leave?key_id=${encodeURIComponent(state.keyId)}`, { method: "POST" });
       } catch {}
     }
     forgetJoin();
     resetJoin();
+    renderChannelChrome();
     loadChannels();
   }
 
   function resetJoin() {
     state.keyId = null;
     state.handle = null;
-    $("joinRow").style.display = "flex";
-    $("sayRow").style.display = "none";
+    state.pickedVoice = "";
     $("handle").value = "";
     $("sayText").value = "";
+    $("mentionMenu").classList.remove("open");
   }
 
-  // ---- helpers ------------------------------------------------------------
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // ---- Export & copy --------------------------------------------------------
+  function exportLog() {
+    if (!state.channelId) return;
+    const lines = state.log.map((m) => m.system
+      ? `[${fmtTime(m.timestamp)}] *** ${m.text}`
+      : m.kind === "action" ? `[${fmtTime(m.timestamp)}] * ${m.handle} ${m.text}`
+      : m.kind === "notice" ? `[${fmtTime(m.timestamp)}] -${m.handle}- ${m.text}`
+      : `[${fmtTime(m.timestamp)}] <${m.handle}> ${m.text}`);
+    const blob = new Blob([`# #${slug(state.channelName)} (${state.channelId})\n` + lines.join("\n") + "\n"], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${slug(state.channelName)}-${new Date().toISOString().slice(0, 10)}.log`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
-  function fmtTime(ts) {
-    try { return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
-    catch { return ""; }
+  async function copyId() {
+    if (!state.channelId) return;
+    try {
+      await navigator.clipboard.writeText(state.channelId);
+      $("copyIdBtn").classList.add("on");
+      setTimeout(() => $("copyIdBtn").classList.remove("on"), 900);
+    } catch {
+      hint(`Channel ID: ${state.channelId}`);
+    }
   }
 
   // ---- wire up ------------------------------------------------------------
-  $("createBtn").onclick = createChannel;
+  $("wave").innerHTML = Array.from({ length: WAVE_BARS }, (_, i) => {
+    const h = 8 + Math.round(30 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.45)));
+    return `<span style="height:${h}px;animation-delay:${(i % 7) * 0.11}s"></span>`;
+  }).join("");
+  $("liveRoomIcon").innerHTML = icon("volume");
+  $("lockIcon").innerHTML = icon("lock");
+  $("popNoteIcon").innerHTML = icon("ear");
+  $("popClose").innerHTML = icon("x");
+  $("copyIdBtn").innerHTML = icon("copy");
+  $("exportTopBtn").innerHTML = icon("download");
+  $("captionBtn").innerHTML = icon("cc");
+  $("raiseBtn").innerHTML = `${icon("hand")} Raise hand`;
+  $("exportBtn").innerHTML = `${icon("download")} Export log`;
+  $("sayBtn").innerHTML = `${icon("send")} Send`;
+  $("leaveBtn").innerHTML = `${icon("leave")} Leave`;
+
   $("clearChannelsBtn").onclick = clearChannels;
+  $("apiKeyBtn").onclick = () => {
+    const v = prompt("Server API key (leave empty to clear):", apiKey);
+    if (v === null) return;
+    setApiKey(v);
+    location.reload();
+  };
   $("newChannelName").addEventListener("keydown", (e) => { if (e.key === "Enter") createChannel(); });
   $("listenBtn").onclick = toggleAudio;
+  $("muteBtn").onclick = toggleMute;
+  $("captionBtn").onclick = () => { state.captions = !state.captions; renderLive(); };
+  $("raiseBtn").onclick = openJoin;
   $("joinBtn").onclick = join;
+  $("popClose").onclick = closeJoin;
+  $("popCancel").onclick = closeJoin;
+  $("scrim").onclick = closeJoin;
+  $("handle").addEventListener("input", updatePopHead);
   $("handle").addEventListener("keydown", (e) => { if (e.key === "Enter") join(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("joinPop").classList.contains("hidden")) closeJoin(); });
   $("leaveBtn").onclick = leave;
   $("sayBtn").onclick = say;
+  $("exportBtn").onclick = exportLog;
+  $("exportTopBtn").onclick = exportLog;
+  $("copyIdBtn").onclick = copyId;
+  $("fortune").onclick = showFortune;
   $("sayText").addEventListener("input", updateMentions);
   $("sayText").addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown" && navigateMentions(1)) e.preventDefault();
@@ -821,9 +1824,11 @@
     } else if (e.key === "Escape") $("mentionMenu").classList.remove("open");
     else if (e.key === "Enter") say();
   });
-  window.addEventListener("beforeunload", () => { if (state.keyId) navigator.sendBeacon; });
 
   async function init() {
+    renderServer();
+    renderChannelChrome();
+    renderLive();
     await loadVoices();
     const ok = await checkServer();
     await loadChannels();
@@ -831,23 +1836,25 @@
     const hash = location.hash.replace(/^#/, "");
     if (hash) {
       try {
-        const r = await fetch(`${httpBase}/channels/${hash}`);
+        const r = await api(`${httpBase}/channels/${hash}`);
         if (r.ok) {
           const c = await r.json();
           selectChannel(c.channel_id, c.name);
         } else {
-          $("chTitle").textContent = "Channel not found";
-          $("chId").textContent = hash;
+          $("chTitle").textContent = "channel not found";
+          $("chTopic").textContent = hash;
           hint(ok ? "That channel no longer exists — pick one from the list."
                   : "Server offline — start it with: uv run agent-ptt server start");
         }
       } catch {
-        $("chTitle").textContent = "Channel not found";
+        $("chTitle").textContent = "channel not found";
         hint("Server offline — start it with: uv run agent-ptt server start");
       }
     }
     setInterval(checkServer, 5000);
-    setInterval(() => { if (!state.channelId) loadChannels(); }, 3000);
+    setInterval(loadChannels, 3000);
+    setInterval(renderStatusbar, 15000);
+    setInterval(() => { if (state.log.length) showFortune(); }, 45000);
   }
   init();
 })();

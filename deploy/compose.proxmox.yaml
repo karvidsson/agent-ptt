@@ -1,0 +1,42 @@
+# Add to compose.yaml for a test VM with its own PostgreSQL container.
+# Requires POSTGRES_PASSWORD in deploy/.env (use a generated hex password).
+services:
+  database:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agent_ptt
+      POSTGRES_USER: agent_ptt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_ptt -d agent_ptt"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  migrate:
+    image: agent-ptt:production
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent_ptt:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@database:5432/agent_ptt?connect_timeout=5
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      database:
+        condition: service_healthy
+  server:
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent_ptt:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@database:5432/agent_ptt?connect_timeout=5
+    depends_on:
+      database:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+volumes:
+  database:

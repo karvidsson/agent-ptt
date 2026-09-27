@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -45,6 +46,16 @@ def _get_base_url() -> str:
     """Get the server base URL from session or default."""
     session = _load_session()
     return session.get("base_url", DEFAULT_BASE_URL)
+
+
+def _auth_headers() -> dict[str, str]:
+    """Bearer header for the server's API key, read from AGENT_PTT_API_KEY.
+
+    Empty when the variable is unset, so an unauthenticated local server
+    keeps working. Read per call so the env is picked up at run time.
+    """
+    key = os.environ.get("AGENT_PTT_API_KEY", "").strip()
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +109,7 @@ app.add_typer(channel_app, name="channel")
 def channel_create(name: str = typer.Argument(help="Channel name")):
     """Create a new voice channel."""
     base = _get_base_url()
-    resp = httpx.post(f"{base}/channels", json={"name": name})
+    resp = httpx.post(f"{base}/channels", json={"name": name}, headers=_auth_headers())
     if resp.status_code == 200:
         data = resp.json()
         rprint(f"[bold green]✅ Channel created:[/bold green] {data['name']}")
@@ -111,7 +122,7 @@ def channel_create(name: str = typer.Argument(help="Channel name")):
 def channel_list():
     """List all active channels."""
     base = _get_base_url()
-    resp = httpx.get(f"{base}/channels")
+    resp = httpx.get(f"{base}/channels", headers=_auth_headers())
     if resp.status_code == 200:
         channels = resp.json()
         if not channels:
@@ -134,13 +145,48 @@ def channel_list():
         rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
 
 
+def _format_context(context: dict) -> list[str]:
+    """Compact one-liners for a message's context, printed under its line."""
+    lines: list[str] = []
+    where = " ".join(
+        part
+        for part in (
+            context.get("repo"),
+            f"@ {context['branch']}" if context.get("branch") else None,
+            f"({context['dirty']} dirty)" if context.get("dirty") else None,
+            f"worktree {context['worktree']}" if context.get("worktree") else None,
+        )
+        if part
+    )
+    if where:
+        lines.append(where)
+    if context.get("files"):
+        lines.append("files: " + ", ".join(f"{f['path']} ({f['op']})" for f in context["files"]))
+    if context.get("tools"):
+        lines.append("tools: " + " ".join(f"{k} x{v}" for k, v in context["tools"].items()))
+    if context.get("task"):
+        lines.append(f"task: {context['task']}")
+    return lines
+
+
 @channel_app.command("history")
-def channel_history(channel_id: str = typer.Argument(help="Channel ID")):
+def channel_history(
+    channel_id: str = typer.Argument(help="Channel ID"),
+    context: bool = typer.Option(
+        False, "--context", help="Also show each message's context (repo, files, tools)"
+    ),
+    limit: int | None = typer.Option(None, "--limit", "-n", help="Only the last N messages"),
+):
     """View what has been said in a channel."""
     base = _get_base_url()
-    resp = httpx.get(f"{base}/channels/{channel_id}/history")
+    params = {"with_context": 1} if context else {}
+    resp = httpx.get(
+        f"{base}/channels/{channel_id}/history", params=params, headers=_auth_headers()
+    )
     if resp.status_code == 200:
         messages = resp.json()
+        if limit:
+            messages = messages[-limit:]
         if not messages:
             rprint("[dim]No messages yet[/dim]")
             return
@@ -153,6 +199,9 @@ def channel_history(channel_id: str = typer.Argument(help="Channel ID")):
             handle = msg.get("handle", "?")
             text = msg.get("text", "")
             rprint(f"[dim]{ts}[/dim] [bold cyan]{handle}[/bold cyan]: {text}")
+            if context and msg.get("context"):
+                for line in _format_context(msg["context"]):
+                    rprint(f"         [dim]↳ {line}[/dim]")
     else:
         rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
 
@@ -172,9 +221,10 @@ def join(
 ):
     """Join a channel with a handle and voice."""
     base = _get_base_url()
-    # Generous timeout: joining without a voice may load the designer LLM
+    # Generous timeout: joining may include database work
     resp = httpx.post(
         f"{base}/channels/{channel_id}/join",
+        headers=_auth_headers(),
         json={"handle": handle, "voice_id": voice},
         timeout=120.0,
     )
@@ -213,6 +263,7 @@ def leave():
     base = _get_base_url()
     resp = httpx.post(
         f"{base}/channels/{channel_id}/leave",
+        headers=_auth_headers(),
         params={"key_id": key_id},
     )
     if resp.status_code == 200:
@@ -245,7 +296,7 @@ def say(text: str = typer.Argument(help="Message to send")):
 
     async def _send():
         uri = f"ws://{base.replace('http://', '')}/channels/{channel_id}/ws?key={key_id}"
-        async with websockets.connect(uri) as ws:
+        async with websockets.connect(uri, additional_headers=_auth_headers()) as ws:
             await ws.send(json.dumps({"type": "message", "text": text}))
             # Wait briefly for the broadcast echo
             try:
@@ -261,6 +312,201 @@ def say(text: str = typer.Argument(help="Message to send")):
                 rprint(f"[bold green]✅ Sent:[/bold green] {text}")
 
     asyncio.run(_send())
+
+
+# ---------------------------------------------------------------------------
+# Channel commands (IRC-style: names, whois, me, notice, topic, away, back)
+# ---------------------------------------------------------------------------
+
+_JSON_FLAG = typer.Option(False, "--json", help="Print the raw result as JSON")
+
+
+def _short_time(value: str | None) -> str:
+    """Trim an ISO timestamp to HH:MM:SS for table display."""
+    if not value:
+        return ""
+    if "T" in value:
+        return value.split("T")[1][:8]
+    return value
+
+
+def _run_command(name: str, args: str = "") -> dict:
+    """POST a channel command with the joined channel and key from the session.
+
+    Prints the server's `error` field and exits 1 on any non-200 response.
+    Returns the `result` object from the contract envelope.
+    """
+    session = _load_session()
+    key_id = session.get("key_id")
+    channel_id = session.get("channel_id")
+    if not key_id or not channel_id:
+        rprint("[yellow]Not in any channel. Use 'agent-ptt join' first.[/yellow]")
+        raise typer.Exit(1)
+
+    base = _get_base_url()
+    resp = httpx.post(
+        f"{base}/channels/{channel_id}/command",
+        headers=_auth_headers(),
+        json={"key_id": key_id, "name": name, "args": args},
+    )
+    if resp.status_code != 200:
+        try:
+            body = resp.json()
+            error = body.get("error") or body.get("detail") or resp.text
+        except (ValueError, AttributeError):
+            error = resp.text
+        rprint(f"[bold red]❌ Error:[/bold red] {escape(str(error))}")
+        raise typer.Exit(1)
+    return resp.json().get("result", {})
+
+
+def _print_json(result: dict) -> None:
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _state_label(participant: dict) -> str:
+    state = participant.get("state", "active")
+    reason = participant.get("away_reason")
+    if state == "away" and reason:
+        return f"away ({reason})"
+    return state
+
+
+@app.command("names")
+def names(as_json: bool = _JSON_FLAG):
+    """List who is in the current channel and what they're doing."""
+    result = _run_command("names")
+    if as_json:
+        _print_json(result)
+        return
+
+    participants = result.get("participants", [])
+    if not participants:
+        rprint("[dim]Nobody in the channel[/dim]")
+        return
+
+    table = Table(title="Names")
+    table.add_column("Handle", style="cyan")
+    table.add_column("State")
+    table.add_column("Since", style="dim")
+    table.add_column("Last active", style="dim")
+    table.add_column("Doing")
+    for p in participants:
+        table.add_row(
+            p.get("handle", "?"),
+            _state_label(p),
+            _short_time(p.get("since")),
+            _short_time(p.get("last_active")),
+            p.get("doing") or "",
+        )
+    console.print(table)
+
+
+@app.command("whois")
+def whois(
+    handle: str = typer.Argument(help="Handle to look up (case-insensitive prefix)"),
+    as_json: bool = _JSON_FLAG,
+):
+    """Show details about a participant in the current channel."""
+    result = _run_command("whois", handle)
+    if as_json:
+        _print_json(result)
+        return
+
+    p = result.get("participant", {})
+    lines = [
+        ("Handle", p.get("handle", "?")),
+        ("State", _state_label(p)),
+        ("Since", p.get("since") or ""),
+        ("Last active", p.get("last_active") or ""),
+        ("Doing", p.get("doing") or "-"),
+        ("Voice", p.get("voice_id") or "auto"),
+        ("Joined", p.get("created_at") or ""),
+    ]
+    last = result.get("last_message")
+    if last:
+        when = _short_time(last.get("timestamp"))
+        lines.append(("Last message", f"{when} {last.get('text', '')}"))
+    else:
+        lines.append(("Last message", "none"))
+    for key, value in lines:
+        rprint(f"[bold]{key}:[/bold] {escape(str(value))}")
+
+
+@app.command("me")
+def me(
+    text: str = typer.Argument(help="Action text, spoken as '<handle> <text>'"),
+    as_json: bool = _JSON_FLAG,
+):
+    """Send an action ("* handle does something") to the current channel."""
+    result = _run_command("me", text)
+    if as_json:
+        _print_json(result)
+        return
+    msg = result.get("message", {})
+    handle = escape(msg.get("handle", "?"))
+    rprint(f"[bold cyan]* {handle}[/bold cyan] {escape(msg.get('text', text))}")
+
+
+@app.command("notice")
+def notice(
+    text: str = typer.Argument(help="Notice text (broadcast to agents, not spoken)"),
+    as_json: bool = _JSON_FLAG,
+):
+    """Send a silent notice to the current channel."""
+    result = _run_command("notice", text)
+    if as_json:
+        _print_json(result)
+        return
+    msg = result.get("message", {})
+    rprint(f"[bold green]✅ Notice sent:[/bold green] {escape(msg.get('text', text))}")
+
+
+@app.command("topic")
+def topic(
+    text: str = typer.Argument(None, help="New topic (omit to show the current one)"),
+    as_json: bool = _JSON_FLAG,
+):
+    """Show or set the channel topic."""
+    result = _run_command("topic", text or "")
+    if as_json:
+        _print_json(result)
+        return
+    current = result.get("topic")
+    set_by = result.get("topic_set_by")
+    if not current:
+        rprint("[dim]No topic set[/dim]")
+        return
+    suffix = f" [dim](set by {escape(set_by)})[/dim]" if set_by else ""
+    label = "Topic set" if text else "Topic"
+    rprint(f"[bold]{label}:[/bold] {escape(current)}{suffix}")
+
+
+@app.command("away")
+def away(
+    reason: str = typer.Argument(None, help="Optional away reason"),
+    as_json: bool = _JSON_FLAG,
+):
+    """Mark yourself away in the current channel."""
+    result = _run_command("away", reason or "")
+    if as_json:
+        _print_json(result)
+        return
+    p = result.get("participant", {})
+    why = p.get("away_reason")
+    detail = f": {escape(why)}" if why else ""
+    rprint(f"[bold yellow]🌙 {escape(p.get('handle', 'You'))} is away[/bold yellow]{detail}")
+
+
+@app.command("back")
+def back(as_json: bool = _JSON_FLAG):
+    """Mark yourself active again in the current channel."""
+    result = _run_command("back")
+    if as_json:
+        _print_json(result)
+        return
+    p = result.get("participant", {})
+    rprint(f"[bold green]☀️  {escape(p.get('handle', 'You'))} is back[/bold green]")
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +530,7 @@ def listen(
         rprint("[bold green]🎧 Listening to channel...[/bold green] (Ctrl+C to stop)")
 
         try:
-            async with websockets.connect(uri) as ws:
+            async with websockets.connect(uri, additional_headers=_auth_headers()) as ws:
                 try:
                     import io
                     import wave
@@ -325,11 +571,11 @@ def listen(
 
 @app.command("voices")
 def voices(
-    engine: str = typer.Option("omnivoice", help="TTS engine to list designed voices for"),
+    engine: str = typer.Option("pocket-tts", help="TTS engine to list designed voices for"),
 ):
     """List available TTS voices."""
     base = _get_base_url()
-    resp = httpx.get(f"{base}/voices", params={"engine": engine})
+    resp = httpx.get(f"{base}/voices", params={"engine": engine}, headers=_auth_headers())
     if resp.status_code == 200:
         voice_list = resp.json()
         if not voice_list:
@@ -372,7 +618,7 @@ def voice_list(
     """List stored voice profiles."""
     base = _get_base_url()
     params = {"engine": engine} if engine else {}
-    resp = httpx.get(f"{base}/voices/profiles", params=params)
+    resp = httpx.get(f"{base}/voices/profiles", params=params, headers=_auth_headers())
     if resp.status_code == 200:
         profiles = resp.json()
         if not profiles:
@@ -401,7 +647,7 @@ def voice_list(
 def voice_show(voice_id: str = typer.Argument(help="Voice profile ID")):
     """Show a stored voice profile."""
     base = _get_base_url()
-    resp = httpx.get(f"{base}/voices/profiles/{voice_id}")
+    resp = httpx.get(f"{base}/voices/profiles/{voice_id}", headers=_auth_headers())
     if resp.status_code == 200:
         rprint(escape(json.dumps(resp.json(), indent=2, default=str)))
     else:
@@ -412,7 +658,7 @@ def voice_show(voice_id: str = typer.Argument(help="Voice profile ID")):
 def voice_save(
     voice_id: str = typer.Option(..., "--id", help="Voice profile ID"),
     name: str = typer.Option(..., "--name", "-n", help="Display name"),
-    engine: str = typer.Option("edge-tts", "--engine", "-e", help="TTS engine"),
+    engine: str = typer.Option("pocket-tts", "--engine", "-e", help="TTS engine"),
     settings: str = typer.Option("{}", "--settings", "-s", help="Engine settings as JSON"),
 ):
     """Create or update a voice profile."""
@@ -425,6 +671,7 @@ def voice_save(
     base = _get_base_url()
     resp = httpx.post(
         f"{base}/voices/profiles",
+        headers=_auth_headers(),
         json={
             "voice_id": voice_id,
             "display_name": name,
@@ -442,84 +689,9 @@ def voice_save(
 def voice_delete(voice_id: str = typer.Argument(help="Voice profile ID")):
     """Delete a stored voice profile."""
     base = _get_base_url()
-    resp = httpx.delete(f"{base}/voices/profiles/{voice_id}")
+    resp = httpx.delete(f"{base}/voices/profiles/{voice_id}", headers=_auth_headers())
     if resp.status_code == 200:
         rprint(f"[bold green]✅ Voice profile deleted:[/bold green] {voice_id}")
-    else:
-        rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
-
-
-def _normalize_instruct_item(value: str, valid: list[str], suffix: str = "") -> str:
-    """Validate one instruct item against the model vocabulary.
-
-    Accepts shorthand ("british" for "british accent") via the suffix.
-    """
-    item = value.strip().lower()
-    if suffix and not item.endswith(suffix):
-        item = f"{item} {suffix}"
-    if item not in valid:
-        rprint(f"[bold red]❌ Invalid value:[/bold red] {escape(value)}")
-        rprint(f"   Valid options: {', '.join(v.removesuffix(f' {suffix}') for v in valid)}")
-        raise typer.Exit(1)
-    return item
-
-
-@voice_app.command("design")
-def voice_design(
-    name: str = typer.Option(..., "--name", "-n", help="Display name for the voice"),
-    voice_id: str = typer.Option(None, "--id", help="Profile ID (default: slug of the name)"),
-    gender: str = typer.Option(None, "--gender", "-g", help="male | female"),
-    age: str = typer.Option(
-        None, "--age", "-a", help="teenager | young adult | middle-aged | elderly"
-    ),
-    accent: str = typer.Option(None, "--accent", help="e.g. british, american, australian"),
-    pitch: str = typer.Option(
-        None, "--pitch", "-p", help="very low | low | moderate | high | very high"
-    ),
-    whisper: bool = typer.Option(False, "--whisper", help="Whispering voice"),
-):
-    """Design an OmniVoice voice from attributes and save it as a profile."""
-    from agent_ptt.voicedesign import ACCENTS, AGES, GENDERS, PITCHES
-
-    items = []
-    if gender:
-        items.append(_normalize_instruct_item(gender, GENDERS))
-    if age:
-        items.append(_normalize_instruct_item(age, AGES))
-    if accent:
-        items.append(_normalize_instruct_item(accent, ACCENTS, suffix="accent"))
-    if pitch:
-        items.append(_normalize_instruct_item(pitch, PITCHES, suffix="pitch"))
-    if whisper:
-        items.append("whisper")
-
-    if not items:
-        rprint(
-            "[bold red]❌ Nothing to design.[/bold red] "
-            "Provide at least one of --gender/--age/--accent/--pitch/--whisper"
-        )
-        raise typer.Exit(1)
-
-    instruct = ", ".join(items)
-    profile_id = voice_id or name.strip().lower().replace(" ", "-")
-
-    base = _get_base_url()
-    resp = httpx.post(
-        f"{base}/voices/profiles",
-        json={
-            "voice_id": profile_id,
-            "display_name": name,
-            "engine": "omnivoice",
-            "settings": {"instruct": instruct},
-        },
-    )
-    if resp.status_code == 200:
-        rprint(f"[bold green]🎨 Voice designed:[/bold green] {profile_id}")
-        rprint(f"   Instruct: [cyan]{escape(instruct)}[/cyan]")
-        rprint(f"   Preview:  [dim]agent-ptt voice preview {profile_id}[/dim]")
-        rprint(
-            f"   Use it:   [dim]agent-ptt join <channel-id> --handle You --voice {profile_id}[/dim]"
-        )
     else:
         rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
 
@@ -528,7 +700,7 @@ def voice_design(
 def voice_pinned():
     """List handles with auto-designed pinned voices."""
     base = _get_base_url()
-    resp = httpx.get(f"{base}/voices/pinned")
+    resp = httpx.get(f"{base}/voices/pinned", headers=_auth_headers())
     if resp.status_code != 200:
         rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
         return
@@ -559,13 +731,13 @@ def voice_redesign(handle: str = typer.Argument(help="Handle to redesign the voi
     """Design a fresh voice for a handle, replacing the pinned one."""
     base = _get_base_url()
 
-    old_resp = httpx.get(f"{base}/voices/pinned")
+    old_resp = httpx.get(f"{base}/voices/pinned", headers=_auth_headers())
     old_pins = old_resp.json() if old_resp.status_code == 200 else []
     old_settings = next(
         (p.get("settings") for p in old_pins if p["handle"] == handle.lower()), None
     )
 
-    resp = httpx.post(f"{base}/voices/pinned/{handle}/redesign")
+    resp = httpx.post(f"{base}/voices/pinned/{handle}/redesign", headers=_auth_headers())
     if resp.status_code != 200:
         rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
         raise typer.Exit(1)
@@ -583,22 +755,17 @@ def voice_clone(
     reference: Path = typer.Option(
         ..., "--reference", "-r", help="Reference audio clip (5-30s WAV)"
     ),
-    transcript: str = typer.Option(
-        ...,
-        "--transcript",
-        "-t",
-        help="Exact transcript of the reference clip (required — avoids the 1.6 GB ASR model)",
-    ),
     name: str = typer.Option(..., "--name", "-n", help="Display name for the cloned voice"),
     voice_id: str = typer.Option(None, "--id", help="Profile ID (default: slug of the name)"),
+    engine: str = typer.Option("pocket-tts", "--engine", "-e", help="pocket-tts"),
 ):
     """Clone a voice from a reference audio clip and save it as a profile."""
     ref_path = reference.expanduser().resolve()
     if not ref_path.is_file():
         rprint(f"[bold red]❌ Reference file not found:[/bold red] {ref_path}")
         raise typer.Exit(1)
-    if not transcript.strip():
-        rprint("[bold red]❌ Transcript must not be empty[/bold red]")
+    if engine != "pocket-tts":
+        rprint("[bold red]❌ Engine must be pocket-tts[/bold red]")
         raise typer.Exit(1)
 
     profile_id = voice_id or name.strip().lower().replace(" ", "-")
@@ -606,11 +773,12 @@ def voice_clone(
     base = _get_base_url()
     resp = httpx.post(
         f"{base}/voices/profiles",
+        headers=_auth_headers(),
         json={
             "voice_id": profile_id,
             "display_name": name,
-            "engine": "omnivoice",
-            "settings": {"ref_audio": str(ref_path), "ref_text": transcript},
+            "engine": engine,
+            "settings": {"voice": str(ref_path)},
         },
     )
     if resp.status_code == 200:
@@ -660,7 +828,7 @@ def voice_preview(
     from agent_ptt.tts import get_backend
 
     base = _get_base_url()
-    resp = httpx.get(f"{base}/voices/profiles/{voice_id}")
+    resp = httpx.get(f"{base}/voices/profiles/{voice_id}", headers=_auth_headers())
     if resp.status_code != 200:
         rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
         raise typer.Exit(1)
@@ -671,7 +839,7 @@ def voice_preview(
     except ValueError:
         rprint(
             f"[bold red]❌ Engine '{profile.engine}' not available.[/bold red] "
-            "Install it first: [cyan]uv sync --extra omnivoice[/cyan]"
+            "Only Pocket TTS is supported. Run [cyan]uv sync[/cyan]."
         )
         raise typer.Exit(1) from None
 
@@ -685,15 +853,15 @@ def voice_preview(
 # Model management (local neural TTS)
 # ---------------------------------------------------------------------------
 
-model_app = typer.Typer(help="Local TTS model management (omnivoice extra)")
+model_app = typer.Typer(help="Local TTS model management (Pocket TTS dependencies)")
 app.add_typer(model_app, name="model")
 
-_EXTRA_HINT = "Install the omnivoice extra first: [cyan]uv sync --extra omnivoice[/cyan]"
+_EXTRA_HINT = "Install the Pocket TTS dependencies first: [cyan]uv sync[/cyan]"
 
 
 @model_app.command("status")
 def model_status():
-    """Show whether the OmniVoice engine and model checkpoint are ready."""
+    """Show whether the Pocket TTS engine and model checkpoint are ready."""
     from agent_ptt.modelcache import (
         DEFAULT_CHECKPOINT,
         format_size,
@@ -702,9 +870,9 @@ def model_status():
     )
     from agent_ptt.tts import has_backend
 
-    engine_ready = has_backend("omnivoice")
+    engine_ready = has_backend("pocket-tts")
     engine_state = "[green]installed[/green]" if engine_ready else "[red]not installed[/red]"
-    rprint(f"Engine:     omnivoice {engine_state}")
+    rprint(f"Engine:     pocket-tts {engine_state}")
 
     if not hub_available():
         rprint(f"Model:      [red]unknown[/red] — {_EXTRA_HINT}")
@@ -717,7 +885,7 @@ def model_status():
         rprint(f"Path:       [dim]{cached.path}[/dim]")
     else:
         rprint(f"Model:      [yellow]not downloaded[/yellow] {DEFAULT_CHECKPOINT}")
-        rprint("Run [cyan]agent-ptt model download[/cyan] to fetch it (~2.4 GB),")
+        rprint("Run [cyan]agent-ptt model download[/cyan] to fetch it,")
         rprint("or it will download automatically on first synthesis.")
 
 
@@ -725,7 +893,7 @@ def model_status():
 def model_download(
     checkpoint: str = typer.Option(None, "--checkpoint", "-c", help="HF repo ID to download"),
 ):
-    """Pre-download the OmniVoice model so first synthesis doesn't block."""
+    """Pre-download the Pocket TTS model so first synthesis doesn't block."""
     from agent_ptt.modelcache import DEFAULT_CHECKPOINT, download_model, hub_available
 
     if not hub_available():

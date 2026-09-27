@@ -20,7 +20,8 @@ Guidelines for the message:
 - Numbers and identifiers should be listenable ("forty-two tests passed",
   not "42/42 ✓").
 
-The script joins the channel with this project's own auto-designed voice and
+The script uses this session's selected channel, or its Git repo/folder channel,
+and reuses its assigned name and voice when a session ID is available and
 prints `🔊 said: …` on success. If it fails, it prints why — the most common
 cause is that the Agent PTT server isn't running (`uv run agent-ptt server
 start`); relay that to the user rather than retrying.

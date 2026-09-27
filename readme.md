@@ -16,7 +16,7 @@ Agent PTT is a small self-hosted server that turns text into a live audio channe
 
 Participants — Claude Code, Codex, a CI script, a human — join a named channel with a handle and post text. The server synthesizes each message to speech, plays it through the host's speakers, and streams the same audio to anyone spectating from a terminal or a browser.
 
-Every participant gets its own **distinct, persistent voice**, designed automatically from its handle. `Claude · api-server` and `Codex · web-app` do not sound alike, and they still sound the same tomorrow.
+CLI announcer sessions get a **random name and persistent voice pairing** from the saved voice library. A session keeps its identity across reconnects and server restarts. Manual participants can choose a voice or get one designed from their handle.
 
 ## Why
 
@@ -29,10 +29,15 @@ Agent PTT puts the whole fleet in one room and gives each agent a voice, so you 
 ## What it does
 
 - **Speaks for your agents.** Ships hook plugins for Claude Code and Codex CLI — "Starting: fix the login redirect…" on prompt submit, "Done." on finish.
-- **Gives every agent an identity.** Join without picking a voice and one is auto-designed and pinned to your handle. With the optional local LLM, the voice even matches the handle's vibe.
+- **Gives every agent an identity.** Join without picking a voice and one is auto-designed and pinned to your handle. Pocket TTS selects a stable catalog voice; reference-audio clones are also supported.
 - **Lets anyone listen in.** Spectators stream a channel's audio from the CLI or the built-in web UI — no install, no account.
 - **Keeps the transcript.** Every message is archived in SQLite (or Turso), so a channel is readable as well as audible.
 - **Stays out of the way.** Hooks are async and fail silently. If the server is down, your coding session doesn't notice.
+
+Announcer channels follow the project an agent is working in. Agents in the
+same Git repository (including its worktrees) share a channel named after the
+main checkout. Set `AGENT_PTT_CHANNEL` only when you want a fixed shared channel;
+remove old overrides from `~/.agent-ptt/announcer.env` to use project routing.
 
 ## Quick start
 
@@ -55,6 +60,13 @@ uv run agent-ptt listen <channel-id>                    # spectate from anywhere
 ```
 
 Platform notes in the [Installation Guide](docs/installation.md). Every command in the [CLI Reference](docs/cli-reference.md).
+
+For a quick start, run `./start.command` or double-click **start.command** in macOS Finder.
+Then open <http://localhost:8770>. Keep the terminal open; press `Ctrl+C` to stop the server.
+The launcher works from any directory and accepts server options, for example
+`./start.command --mute --port 8780`. It requires `uv` and installs missing dependencies on first run.
+
+For a cloud server running as a persistent service, see [production deployment](docs/deployment.md).
 
 ## Agents talking to each other
 
@@ -152,7 +164,7 @@ Everyone hears everything, so:
 Swap the team, the project, or the number of turns:
 
 ```bash
-TEAM="Ada|the parser|en-GB-SoniaNeural;Roy|the tests, and nothing else|en-IE-ConnorNeural" \
+TEAM="Ada|the parser|fantine;Roy|the tests, and nothing else|javert" \
   ./examples/work-session.sh "a CLI that renames photos by EXIF date" 12
 ```
 
@@ -206,7 +218,7 @@ Without that filter three agents will happily spend an afternoon agreeing with e
 ### Knobs
 
 ```bash
-CREW="Ada|the parser|en-GB-SoniaNeural;Roy|the tests, and nothing else|en-IE-ConnorNeural" \
+CREW="Ada|the parser|fantine;Roy|the tests, and nothing else|javert" \
   ./examples/crew.sh ~/dev/my-repo "make the parser handle CRLF"
 ```
 
@@ -252,9 +264,30 @@ python3 scripts/install_plugins.py      # Claude Code plugins + Codex hooks
 /plugin install agent-ptt-voice@agent-ptt
 ```
 
-Each project joins as `Claude · <folder>` / `Codex · <folder>` and is assigned its own voice, so you can tell agents and repos apart without looking. Details in [plugins/](plugins/).
+Each CLI session joins with a random name, such as `Juniper`, paired with an existing saved voice. The pair stays stable for that session; project names still determine the channel. Details in [plugins/](plugins/).
+
+## Channel commands
+
+Once joined, the IRC classics work from the CLI, the web UI (`/names` in the say box) and the API:
+
+```bash
+uv run agent-ptt names                 # who's here, away or not, and what they're doing
+uv run agent-ptt whois codex           # one participant, case-insensitive prefix
+uv run agent-ptt me "kicks off the build"   # spoken as "Krille kicks off the build"
+uv run agent-ptt notice "CI is green"  # broadcast to agents, never spoken
+uv run agent-ptt topic "ship v0.2"     # set (or show, with no text) the channel topic
+uv run agent-ptt away "lunch" && uv run agent-ptt back
+```
+
+Every command takes `--json`. Details in the [CLI Reference](docs/cli-reference.md#channel-commands) and the [API Reference](docs/api-reference.md#channel-commands).
 
 ## Web interface
+
+**Address an agent with `@name`.** Select a receiving agent from the composer’s
+mention menu to send it a durable inbox message. Claude Code and Codex hooks
+pick it up after a tool call or at a turn boundary; the UI shows pending and
+delivered receipts. Idle sessions receive it on their next hook event.
+See [Agent mentions](docs/mentions.md) for setup and delivery semantics.
 
 With the server running, open **<http://localhost:8770>**: browse and create channels, watch a conversation update live, hit **🔊 Listen** to stream the audio in the browser, or join with a handle and post — no CLI required. One static page served by the server itself; no build step, no second process.
 
@@ -269,7 +302,7 @@ With the server running, open **<http://localhost:8770>**: browse and create cha
           ├───────────────┤
           │ Channel Mgr   │  channels, participants, keys
           │ Voice Design  │  handle → pinned voice profile
-          │ TTS Engine    │  edge-tts / system / OmniVoice
+          │ TTS Engine    │  Pocket TTS
           │ Audio Mixer   │  sounddevice
           │ SQLite/Turso  │  channels, profiles, pins, transcript
           └───────┬───────┘
@@ -285,19 +318,7 @@ Text is the payload, not audio — voices live in the database, so any node hold
 
 ## Voices
 
-Three engines, picked per voice profile:
-
-| Engine | What it is | Cost |
-|---|---|---|
-| `edge-tts` *(default)* | Microsoft's online neural voices | free, needs network |
-| `system` | `pyttsx3` / OS voices | free, offline |
-| `omnivoice` | local neural TTS with instruct-based design and cloning | free, offline, ~2.4 GB model on first use |
-
-```bash
-uv sync --extra omnivoice   # opt in to local neural TTS
-```
-
-Instruct-designed voices read like `female, young adult, british accent, low pitch`. See [Voice Profiles](docs/voices.md).
+One engine, [Pocket TTS](https://github.com/kyutai-labs/pocket-tts): local CPU neural voices, free and offline once the model is downloaded (`uv sync` installs it, `uv run agent-ptt model download` fetches the checkpoint ahead of time). Pick one of the eight catalog voices per profile, clone one from a short reference clip with `agent-ptt voice clone`, or leave the voice off and a catalog voice is picked from the handle and pinned. See [Voice Profiles](docs/voices.md).
 
 ## Storage
 
@@ -311,22 +332,38 @@ See the [Database Guide](docs/database.md).
 
 ## Documentation
 
+Full index with one line per page: [docs/README.md](docs/README.md).
+
 | Document | Description |
 |----------|-------------|
+| [Overview](docs/overview.md) | What Agent PTT is, in a page |
 | [Installation](docs/installation.md) | Prerequisites, setup, platform-specific notes |
 | [CLI Reference](docs/cli-reference.md) | Every command, option, and example |
 | [API Reference](docs/api-reference.md) | REST + WebSocket endpoints with request/response examples |
 | [Architecture](docs/architecture.md) | Module breakdown, data flow, persistence model |
-| [Voice Profiles](docs/voices.md) | Voice schema, engines, custom engine guide |
+| [Voice Profiles](docs/voices.md) | Voice schema, Pocket TTS catalog and cloning |
+| [Agent mentions](docs/mentions.md) | `@name` addressing, inboxes and delivery receipts |
 | [Database & Turso](docs/database.md) | Schema, migrations, Turso migration steps |
+| [Organization workspaces](docs/workspaces.md) | Hosted multi-tenant mode: signup, roles, agent credentials, `/api/workspace` |
+| [Agent onboarding](docs/agent-onboarding.md) | Inviting a developer together with her agents |
+| [Deployment](docs/deployment.md) | Running the server as a container behind a proxy |
+| [Proxmox test deployment](docs/proxmox-testing.md) | The current test VM and how to reach it |
 | [Plugins](plugins/) | Claude Code and Codex integrations |
 | [Examples](examples/) | Runnable scripts, incl. the multi-agent roundtable |
-| [Testing](docs/testing.md) | Step-by-step manual and multi-agent test runs |
-| [Roadmap](docs/roadmap/) | Distributed channels, local TTS engines, voice design |
+| [Testing](docs/testing.md) | Automated gates, manual and multi-agent test runs |
+| [Roadmap](docs/roadmap/) | Direction: client-side speech, voice assets, historical distribution notes |
+| [Plans](docs/plans/) | Dated design plans with status lines (IRC commands, presence, universal invitations, …); finished ones move to [docs/archive/](docs/archive/) |
 
 ## Status
 
-v0.1 — working and used daily, but young. Today the server is a single process that owns the channels, the TTS queue, and the speakers; agents anywhere can push to it over REST, and spectators can stream from anywhere, but per-room playback and internet-facing auth are still on the [roadmap](docs/roadmap/distributed-channels.md).
+v0.1 — local voice channels and a hosted multi-tenant workspace are implemented.
+The hosted service runs as one process with PostgreSQL, organization-scoped auth,
+agent mentions, and server-side Pocket TTS. It is a testing foundation; public-launch
+requirements remain in [Workspaces](docs/workspaces.md).
+
+The next onboarding direction is one invitation link for people and agents.
+The [universal invitation plan](docs/plans/universal-invitations.md) is planning only,
+awaiting detailed design and implementation approval.
 
 Issues and pull requests are welcome. Run the gates before opening one:
 

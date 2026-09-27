@@ -17,8 +17,7 @@ dependencies = [
     "uvicorn[standard]",
     "websockets",
     "httpx",
-    "edge-tts",
-    "pyttsx3",
+    "pocket-tts>=1.0,<2",
     "sounddevice",
     "soundfile",
     "numpy",
@@ -32,10 +31,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local neural TTS (~2-3 GB of deps; the model downloads ~2.4 GB on first use)
-omnivoice = ["omnivoice>=0.1.5"]
-# LLM voice designer (~1 GB model on first use; already satisfied by omnivoice)
-voice-designer = ["transformers>=4.45", "torch>=2.4"]
+# Hosted PostgreSQL storage (optional; local SQLite remains the default)
+postgres = ["psycopg[binary]>=3.2,<4"]
 
 [project.scripts]
 agent-ptt = "agent_ptt.cli:app"
@@ -43,12 +40,21 @@ agent-ptt = "agent_ptt.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["agent_ptt"]
 
-[tool.uv]
-# Keep resolution from backtracking numba to pre-3.11-compatible versions
-# (pulled in via omnivoice -> librosa -> numba)
-constraint-dependencies = ["numba>=0.59"]
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [dependency-groups]
+# Hosted source install includes Pocket TTS, without local speaker drivers.
+server = [
+    "fastapi", "uvicorn[standard]", "websockets", "pydantic>=2",
+    "sqlalchemy>=2", "alembic", "psycopg[binary]>=3.2,<4",
+    "pocket-tts>=1.0,<2", "soundfile", "numpy", "torch>=2.5",
+]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

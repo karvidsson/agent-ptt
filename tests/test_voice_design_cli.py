@@ -1,4 +1,4 @@
-"""The `voice design` and `voice preview` CLI commands.
+"""Pocket TTS voice cloning and preview CLI.
 
 httpx and playback are faked — no server, network, or speakers needed.
 """
@@ -32,161 +32,14 @@ def fake_post(monkeypatch):
     return calls
 
 
-# ---------------------------------------------------------------------------
-# voice design
-# ---------------------------------------------------------------------------
-
-
-def test_design_full_instruct(fake_post):
-    result = runner.invoke(
-        cli.app,
-        [
-            "voice",
-            "design",
-            "--name",
-            "Aussie Agent",
-            "--gender",
-            "female",
-            "--age",
-            "young adult",
-            "--accent",
-            "australian",
-            "--pitch",
-            "high",
-        ],
-    )
-    assert result.exit_code == 0
-    payload = fake_post[0]["json"]
-    assert payload["voice_id"] == "aussie-agent"
-    assert payload["display_name"] == "Aussie Agent"
-    assert payload["engine"] == "omnivoice"
-    assert payload["settings"] == {"instruct": "female, young adult, australian accent, high pitch"}
-    assert "voice preview aussie-agent" in _flat(result.output)
-
-
-def test_design_normalizes_shorthand(fake_post):
-    result = runner.invoke(
-        cli.app,
-        ["voice", "design", "--name", "Brit", "--accent", "British", "--pitch", "LOW"],
-    )
-    assert result.exit_code == 0
-    assert fake_post[0]["json"]["settings"]["instruct"] == "british accent, low pitch"
-
-
-def test_design_explicit_id_and_whisper(fake_post):
-    result = runner.invoke(
-        cli.app,
-        ["voice", "design", "--name", "Spooky", "--id", "ghost", "--whisper"],
-    )
-    assert result.exit_code == 0
-    assert fake_post[0]["json"]["voice_id"] == "ghost"
-    assert fake_post[0]["json"]["settings"]["instruct"] == "whisper"
-
-
-def test_design_rejects_invalid_value(fake_post):
-    result = runner.invoke(
-        cli.app,
-        ["voice", "design", "--name", "Nope", "--accent", "martian"],
-    )
-    assert result.exit_code == 1
-    assert not fake_post
-    assert "Valid options" in result.output
-    assert "british" in result.output
-
-
-def test_design_requires_at_least_one_attribute(fake_post):
-    result = runner.invoke(cli.app, ["voice", "design", "--name", "Empty"])
-    assert result.exit_code == 1
-    assert not fake_post
-
-
-# ---------------------------------------------------------------------------
-# voice clone
-# ---------------------------------------------------------------------------
-
-
-def test_clone_saves_profile_with_absolute_ref(fake_post, tmp_path):
-    ref = tmp_path / "sample.wav"
-    ref.write_bytes(b"RIFF fake wav")
-
-    result = runner.invoke(
-        cli.app,
-        [
-            "voice",
-            "clone",
-            "--reference",
-            str(ref),
-            "--transcript",
-            "This is what I said in the clip.",
-            "--name",
-            "My Clone",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = fake_post[0]["json"]
-    assert payload["voice_id"] == "my-clone"
-    assert payload["engine"] == "omnivoice"
-    assert payload["settings"] == {
-        "ref_audio": str(ref.resolve()),
-        "ref_text": "This is what I said in the clip.",
-    }
-    assert "voice preview my-clone" in _flat(result.output)
-
-
-def test_clone_missing_reference_file(fake_post, tmp_path):
-    result = runner.invoke(
-        cli.app,
-        [
-            "voice",
-            "clone",
-            "--reference",
-            str(tmp_path / "nope.wav"),
-            "--transcript",
-            "hello",
-            "--name",
-            "Ghost",
-        ],
-    )
-    assert result.exit_code == 1
-    assert not fake_post
-
-
-def test_clone_requires_transcript(fake_post, tmp_path):
-    ref = tmp_path / "sample.wav"
-    ref.write_bytes(b"RIFF fake wav")
-    result = runner.invoke(
-        cli.app,
-        ["voice", "clone", "--reference", str(ref), "--name", "No Transcript"],
-    )
-    assert result.exit_code != 0
-    assert not fake_post
-
-
-def test_clone_rejects_blank_transcript(fake_post, tmp_path):
-    ref = tmp_path / "sample.wav"
-    ref.write_bytes(b"RIFF fake wav")
-    result = runner.invoke(
-        cli.app,
-        ["voice", "clone", "--reference", str(ref), "--transcript", "   ", "--name", "Blank"],
-    )
-    assert result.exit_code == 1
-    assert not fake_post
-
-
-# ---------------------------------------------------------------------------
-# voice preview
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def fake_profile_get(monkeypatch):
-    """Serve a stored omnivoice profile over fake httpx.get."""
+    """Serve a stored Pocket TTS profile over fake httpx.get."""
     profile = VoiceProfile(
         voice_id="aussie-agent",
         display_name="Aussie Agent",
-        engine="omnivoice",
-        settings={"instruct": "female, australian accent"},
+        engine="pocket-tts",
+        settings={"voice": "alba"},
     )
 
     def get(url, **kwargs):
@@ -209,7 +62,7 @@ def test_preview_synthesizes_and_plays(monkeypatch, fake_profile_get):
     assert result.exit_code == 0, result.output
     text, profile = backend.calls[0]
     assert text == "G'day!"
-    assert profile.settings == {"instruct": "female, australian accent"}
+    assert profile.settings == {"voice": "alba"}
     assert played == [FAKE_AUDIO]
 
 
@@ -225,4 +78,33 @@ def test_preview_engine_not_installed(monkeypatch, fake_profile_get):
     monkeypatch.setattr("agent_ptt.tts.get_backend", raise_unknown)
     result = runner.invoke(cli.app, ["voice", "preview", "aussie-agent"])
     assert result.exit_code == 1
-    assert "uv sync --extra omnivoice" in _flat(result.output)
+    assert "uv sync" in _flat(result.output)
+
+
+def test_clone_defaults_to_pocket_without_transcript(fake_post, tmp_path):
+    ref = tmp_path / "sample.wav"
+    ref.write_bytes(b"RIFF fake wav")
+    result = runner.invoke(cli.app, ["voice", "clone", "--reference", str(ref), "--name", "Pocket"])
+    assert result.exit_code == 0, result.output
+    assert fake_post[0]["json"]["engine"] == "pocket-tts"
+    assert fake_post[0]["json"]["settings"] == {"voice": str(ref.resolve())}
+
+
+def test_description_design_command_removed(fake_post):
+    result = runner.invoke(cli.app, ["voice", "design", "--name", "Old voice"])
+    assert result.exit_code != 0
+    assert not fake_post
+
+
+def test_removed_engine_rejected_by_api(client):
+    response = client.post(
+        "/voices/profiles",
+        json={
+            "voice_id": "unsupported",
+            "display_name": "Unsupported",
+            "engine": "omnivoice",
+            "settings": {"instruct": "male"},
+        },
+    )
+    assert response.status_code == 400
+    assert client.get("/voices?engine=omnivoice").status_code == 400

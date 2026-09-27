@@ -1,5 +1,11 @@
 # Roadmap: Distributed Channels (Supabase / Global Storage)
 
+> Archived 2026-09-27: historical implementation/design record. Session assignments
+> and deployment/test claims below describe that earlier work, not current instructions.
+> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+
+> Historical design notes: Pocket TTS is now the default; Edge TTS and system TTS have been removed. See [current voice documentation](../../voices.md).
+
 ## Problem
 
 Today one server process owns everything live: channels, message queues, TTS,
@@ -72,8 +78,7 @@ Make it official:
 - Replace the in-process `asyncio.Queue` with pub/sub: Supabase Realtime
   (channel per PTT channel) or plain Postgres `LISTEN/NOTIFY`.
 - New `agent-ptt node start [--channels a,b]` — subscribes to channels,
-  resolves voice profiles from the shared DB, synthesizes locally (edge-tts
-  or omnivoice per node capability), plays through local speakers. The
+  resolves voice profiles from the shared DB, synthesizes locally with Pocket TTS, plays through local speakers. The
   AudioMixer + TTS worker code moves nearly unchanged; only the queue source
   changes.
 - The hub shrinks to a channel API: create/join/say/history, all backed by
@@ -81,6 +86,12 @@ Make it official:
   channels gain a table + heartbeat/TTL for liveness).
 
 ### Phase 4: Auth for the public internet — ~1 day
+
+See the expanded [organization auth plan](org-auth.md) for identity,
+tenancy, permissions, and deployment. It supersedes this auth outline and its
+estimate. Auth must precede public organization deployment and can ship before
+the message bus or audio nodes.
+
 - UUID keys stay as the participant identity, but API access needs a bearer
   token (Supabase auth JWT or static API keys) once the hub leaves the LAN.
 - Spectator audio/WS endpoints get read tokens per channel.
@@ -93,16 +104,15 @@ Make it official:
 - **Ordering**: pub/sub delivery order per channel must be preserved; sequence
   numbers on messages (already have timestamps + message_id) let nodes reorder
   or at least detect gaps.
-- **Synth capability drift**: a node without the omnivoice extra can't render
-  omnivoice profiles — define a fallback (edge-tts approximation or skip with
-  a logged warning) so channels never go silent.
+- **Synth capability drift**: nodes must share compatible Pocket model and voice asset versions;
+  report unavailable speech without blocking text.
 - **Realtime payload limits**: text messages are tiny; never ship audio bytes
   through Realtime — spectators connect to a node, not the bus.
-- **LLM voice design location**: pin design should happen in exactly one place
+- **Voice assignment location**: pin design should happen in exactly one place
   (the hub) so two nodes don't race to design the same handle.
 
 ## Relation to existing docs
 
-- [Database & Turso](../database.md) — Phase 2 extends this to Supabase.
-- [Architecture](../architecture.md) — Phases 3 splits "server" into
+- [Database & Turso](../../database.md) — Phase 2 extends this to Supabase.
+- [Architecture](../../architecture.md) — Phases 3 splits "server" into
   channel API + audio nodes; update when implemented.
