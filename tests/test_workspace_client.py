@@ -266,3 +266,16 @@ def test_old_server_without_policy_still_delivers_mentions(transport, monkeypatc
     )
     client.deliver(event, directory, save)
     assert "Still works" in capsys.readouterr().out
+
+
+def test_explicit_profile_follows_channel_changes_and_never_falls_back(monkeypatch, tmp_path):
+    path = tmp_path / "agent.json"
+    monkeypatch.setenv("AGENT_PTT_WORKSPACE_PROFILE", str(path))
+    monkeypatch.setenv("AGENT_PTT_WORKSPACE_TOKEN", "another-agents-token")
+    path.write_text(json.dumps({"channel": "first", "token": "own-token"}))
+    assert client.routing.setting("AGENT_PTT_WORKSPACE_TOKEN", "") == "own-token"
+    assert client.routing.setting("AGENT_PTT_WORKSPACE_CHANNEL", "") == "first"
+    path.write_text(json.dumps({"channel": "second", "token": "own-token"}))
+    assert client.routing.setting("AGENT_PTT_WORKSPACE_CHANNEL", "") == "second"
+    path.unlink()
+    assert client.routing.setting("AGENT_PTT_WORKSPACE_TOKEN", "") == ""

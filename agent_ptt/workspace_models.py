@@ -103,6 +103,25 @@ class Room(Base):
     created_at = Column(DateTime, default=now, nullable=False)
 
 
+class JoinLink(Base):
+    __tablename__ = "workspace_join_links"
+    org_id = Column(String, ForeignKey("workspace_organizations.id"), primary_key=True)
+    digest = Column(String(64), unique=True, nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(String, ForeignKey("workspace_users.id"), nullable=False)
+    created_at = Column(DateTime, default=now, nullable=False)
+
+
+class AgentEnrollment(Base):
+    __tablename__ = "workspace_agent_enrollments"
+    # Keep the enrollment even after credential revocation/expiry, so retrying
+    # cannot recreate a revoked identity or silently renew its access.
+    credential_digest = Column(String(64), primary_key=True)
+    agent_id = Column(String, ForeignKey("workspace_agents.id"), nullable=False, unique=True)
+    link_digest = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=now, nullable=False)
+
+
 class ChatMessage(Base):
     __tablename__ = "workspace_messages"
     __table_args__ = (

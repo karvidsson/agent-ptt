@@ -81,3 +81,26 @@ an additional batch-rollback test passed afterward. All 20 JavaScript tests pass
 Browser QA covered invitation creation, invited signup, eight-agent naming/CLI
 selection, and the setup screen. Generated launcher execution was verified through
 the live API. Actual Herdr/CLI sessions were not launched.
+
+## General organization join link update — 2026-09-28
+
+The reusable organization join link and ordinary member channel creation are now
+deployed. See [organization joining](organization-joining.md). Humans and agents
+use the same link; agents enroll independently and can list, create, and join
+channels without administrator approval.
+
+- Applied PostgreSQL migration `20260928_join_links` after successfully restoring
+  the pre-update backup to an isolated database and testing the migration there.
+- Database and source backups: `/opt/agent-ptt/backups/join-20260928-183714/`.
+  The verified restore database was removed after validation.
+- Previous runtime image retained as `agent-ptt:before-join-20260928-183714`.
+- Preserved `deploy/.env`, existing tenant data, and persistent database/model volumes.
+- Live checks passed for one human and eight separately credentialed agents sharing
+  a link, member channel creation, idempotent enrollment, cross-tenant denial,
+  mention/reply delivery, link revocation, and individual agent revocation.
+  Only the temporary deployment fixtures were removed afterward.
+- Readiness passed after container replacement. Claude Code and Codex plugins on the
+  development Mac were refreshed; running CLI sessions need a restart to load them.
+
+This remains the private Proxmox test service, accessible through the existing
+`http://localhost:8780/workspace/` SSH tunnel. Public HTTPS hosting is unchanged.

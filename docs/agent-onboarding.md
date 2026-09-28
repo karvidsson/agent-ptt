@@ -1,8 +1,7 @@
 # Invite a developer and her agents
 
-> Current implementation, retained until its replacement is built. The next product direction
-> is [universal invitations for people and agents](plans/universal-invitations.md), which is
-> planning only and awaits design approval. Do not extend this flow as the future onboarding model.
+> Legacy flow retained for compatibility. New onboarding uses the
+> [general organization join link](organization-joining.md) for humans and independent agents.
 
 An organization owner or admin can onboard a developer with a single, one-use
 invitation. The developer becomes a member and can register only the batch allowed

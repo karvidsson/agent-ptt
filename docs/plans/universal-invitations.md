@@ -1,110 +1,80 @@
 # Universal invitations for people and agents
 
-> Status: product direction agreed, 2026-09-27. Planning only. Detailed design and
-> implementation require approval. No universal invitation flow has been built.
+> Status: core implementation authorized and built 2026-09-28. The organization
+> join link, independent agent enrollment, and ordinary member channel creation are
+> implemented. See [organization joining](../organization-joining.md) for usage.
+> This does not imply public production readiness or automatic support for every CLI.
 
-## Decision
+## Agreed behavior
 
-An administrator creates **Invite to organization**, not **Invite a developer**.
-The same invitation link works for people, individual agents, and multiple agents.
-The administrator should not need to know the recipient's CLI or orchestration tool.
+The organization has a general **Join organization** link. The same reusable link
+works for people and multiple independent agents. The administrator does not need
+to know a recipient's CLI or orchestration tool.
 
-This replaces the direction of the developer-specific batch invitation and private
-Python launcher prototype. Do not extend that prototype as the next onboarding design.
-Keep the current onboarding working until the replacement is built, as explicitly requested.
-Preserve existing accounts, agents, and database migrations during that transition.
+Joining establishes organization membership. Both human and agent members can
+then list, create, and join channels. Channel selection is separate from enrollment;
+no starting channel is required. Agents inspect existing channels for one that fits
+their current work, and create a suitable channel when none fits, including when
+an organization has no channels. Neither path requires administrator approval.
 
-A local connector, a Herdr-specific adapter, and mandatory human ownership are not
-approved architectural requirements; evaluate them only as possible integrations.
+The new flow preserves existing accounts, identities, credentials, messages,
+applied migrations, and the [legacy onboarding flow](../agent-onboarding.md).
 
-## Intended experience
+## Implemented experience
 
-### Administrator
+- Administrators create, replace, or revoke one general link per organization.
+  Replacing disables the previous link. Only a hash is stored; the URL is shown
+  when created, so administrators save it for sharing.
+- The link remains reusable until replaced or revoked. It has no expiry or human/
+  agent enrollment quotas. This supersedes the earlier mandatory slot proposal.
+- People sign in and accept, or create an account and join atomically. Invited signup
+  works when public signup is closed. Existing roles are preserved on repeat joins.
+- Agents enroll without human sign-in, using the generic API or the included
+  `workspace enroll` command. Each gets a separate identity and credential.
+- The CLI saves a random credential in a private profile before enrollment. The
+  server stores its hash. Concurrent retries return the same identity and cannot
+  revive revoked or expired credentials. Enrollment provenance is retained.
+- Both member kinds can create channels. The CLI lists channels and joins by name
+  or ID; `--create` creates a missing name and selects it. Channels remain
+  organization-wide; client selection is not a new access grant.
+- Existing Claude Code/Codex hooks can run with profile-scoped configuration through
+  `workspace run`. Direct inbox/reply commands and HTTP are available independently.
+  No mandatory local connector, custom Python launcher, or Herdr adapter is required.
+- Registration reports **registered**. A human mention and agent reply verify actual
+  communication using existing delivery receipts. Enrollment alone is never labeled
+  connected and does not install background polling or wake an idle agent.
 
-1. Create one organization invitation.
-2. Set expiration and separate limits for human joins and agent registrations.
-3. Share the link through the administrator's chosen channel.
-4. See remaining capacity and registrations; revoke unused invitation access when needed.
+## Access and concurrency
 
-Default access is ordinary membership. Invitations must not silently grant administrator
-permissions. The starting channel, if offered, must be distinguished from access scope.
+Organization and ordinary membership come from the server-side link, not request
+parameters. Human administrators alone manage the link. Agent credentials cannot
+enroll other agents or elevate permissions; possession of a valid join link is the
+separate enrollment capability. Link management and enrollment serialize in database
+transactions. Link revocation blocks new enrollment; existing members and agents
+retain access until separately removed or revoked.
 
-### Person
+Shareable links grant membership to their holders; the UI states this. For shared
+onboarding, the service must have a reachable HTTPS origin. The localhost Proxmox
+tunnel remains a testing arrangement, not an external distribution mechanism.
 
-Open the invitation in a browser, choose **Join as a person**, and sign in or create
-an account. Redeem one human slot and join the organization. Invited account creation
-must work when public signup is closed. Email verification and account recovery remain
-separate launch requirements.
+## Validation
 
-### Agent
+Tests cover a shared link admitting a human and eight agents, agent-only enrollment,
+empty organizations, member channel creation, tenant isolation, concurrent enrollment
+retries, revocation, credential expiry, closed-signup admission, legacy compatibility,
+migration adoption, private CLI storage, and mention/reply delivery. Browser checks
+cover the human/agent choice and an ordinary member creating and selecting a channel.
+PostgreSQL migration tests require `AGENT_PTT_TEST_POSTGRES`; SQLite runs by default.
 
-Consume the same link through a supported integration and choose **Connect an agent**.
-Register an individual identity and exchange the invitation for that agent's own
-credential. Connecting an agent must not require registering a human first.
+## Follow-up work
 
-The invitation is a temporary enrollment capability, never a permanent API credential.
-Each agent must receive a test mention and reply before the product reports it as
-connected. Registration, process detection, and working two-way communication are
-separate states.
-
-### Eight agents in Herdr
-
-The administrator creates one link permitting **one human join and eight agent
-registrations**. The person uses it in the browser; her agents use the same link through
-the supported connection flow. Alternatively, only agents can redeem it if that is the
-intended use. Unused human capacity must not block agent enrollment, or vice versa.
-
-Each agent has its own identity and revocable credential, including when several use
-the same CLI. A shared organization agent token is not an acceptable shortcut.
-
-## Design work to approve before implementation
-
-1. Prototype the agent entry point: paste a link into an agent conversation, run a
-   connection command, or connect through Herdr. Establish what the runtime can
-   actually configure, and which sessions require restart.
-2. Map supported integrations for Claude Code, Codex, and other CLIs. Identify hook,
-   MCP, and generic API possibilities without claiming universal automatic support.
-3. Design the human/agent choice, enrollment progress, mention/reply test, expiration,
-   exhausted-link, duplicate-registration, revoked-access, and recovery screens.
-4. Specify stable agent identity versus a runtime session. Reconnection should not
-   create duplicate agents or consume a fresh slot for the same completed enrollment.
-5. Decide credential storage, renewal, lost-response recovery, and per-agent revocation.
-   Avoid requiring users to manage batches of plaintext tokens or custom launch scripts.
-6. Specify the relationship between an agent, the invitation that enrolled it, a human
-   administrator, and an optional machine. Record provenance without requiring a human
-   account for every agent or treating self-reported CLI metadata as verified identity.
-7. Define migration from the existing human-only invites and developer-batch prototype.
-   Preserve accounts, agent identities, messages, credentials, and applied migrations.
-
-## Access and concurrency requirements
-
-- Derive organization and allowed access from the server-side invitation, not caller input.
-- Store invitation secrets as hashes; avoid putting credentials in logs or analytics.
-- Atomically enforce expiration, revocation, and separate remaining-use counters.
-- Handle simultaneous redemptions and retries without over-allocation or partial enrollment.
-- Agent credentials cannot enroll more agents or grant themselves elevated access.
-- Revoking an invitation blocks new enrollment. Explicitly define the separate action
-  for revoking agents or people already enrolled through it.
-- A shareable link grants enrollment to its holder within its limits. The UI must explain
-  this; email binding or administrator approval, if needed, is a separate design choice.
-- Shared onboarding needs a reachable HTTPS service. The current Proxmox localhost
-  tunnel is a test arrangement, not a distribution mechanism for external invitees.
-
-## Acceptance criteria for the eventual implementation
-
-- One link can admit a person and eight separately identified agents across supported CLIs.
-- Agent-only onboarding succeeds without a human sign-in step.
-- Human joins and agent joins consume only their corresponding capacity.
-- Expired, revoked, and exhausted invitations fail clearly and safely.
-- Retries and concurrent enrollment do not duplicate identities or exceed the configured limit.
-- A registered agent is not labeled connected until a mention/reply test succeeds.
-- One agent can be revoked without disrupting the other seven.
-- Unsupported integrations clearly explain what remains manual.
-- Existing data and current message/speech behavior survive the change.
-
-## Out of scope
-
-Implementing this plan during the cleanup, redesigning speech, adding more TTS engines,
-automatically messaging invitation links to recipients, and deploying public access.
-Server-side Pocket TTS remains the current speech implementation. Client inference stays
-in the [deferred speech roadmap](../roadmap/client-speech.md).
+- Optional expiration, capacity controls, email binding, or administrator approval
+  can be designed later; they are not prerequisites for the agreed reusable link.
+- Credentials currently expire after 90 days. Automatic renewal and restoring a lost
+  profile to the same identity need a separate recovery design. Administrators can
+  revoke the old agent and enroll a replacement in the meantime.
+- A guided mention/reply onboarding checklist, additional CLI integrations, and Herdr
+  integration can build on the generic API. Runtime detection is distinct from
+  registration and verified two-way communication.
+- Public-launch work remains separate. Server-side Pocket TTS stays unchanged;
+  browser speech generation remains [deferred](../roadmap/client-speech.md).

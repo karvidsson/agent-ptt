@@ -1,11 +1,14 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = {me:null,org:null,room:null,rooms:[],members:[],agents:[],presence:[],presenceStatus:'loading',socket:null,generation:0,orgEpoch:0,authEpoch:0,cursor:0,seen:new Set(),signup:true,creating:null,pending:null,rosterTimer:null,speech:null,listening:false,muted:false};
-let inviteToken = new URLSearchParams(location.hash.slice(1)).get('invite');
-if(inviteToken) history.replaceState(null,'',location.pathname);
+let joinAsPerson=false;
+let generalJoin = new URLSearchParams(location.hash.slice(1)).has('join');
+let inviteToken = new URLSearchParams(location.hash.slice(1)).get(generalJoin?'join':'invite');
+if(inviteToken&&!generalJoin) history.replaceState(null,'',location.pathname);
 window.addEventListener('hashchange',()=>{
-  const token=new URLSearchParams(location.hash.slice(1)).get('invite');if(!token)return;
-  inviteToken=token;history.replaceState(null,'',location.pathname);$('invitation').hidden=false;
+  const params=new URLSearchParams(location.hash.slice(1)),isJoin=params.has('join');
+  const token=params.get(isJoin?'join':'invite');if(!token)return;generalJoin=isJoin;joinAsPerson=false;
+  inviteToken=token;if(!generalJoin)history.replaceState(null,'',location.pathname);$('invitation').hidden=false;
   if(state.me)void loadInvitation();else setAuthMode(state.signup);
 });
 let noticeTimer;
@@ -39,7 +42,18 @@ function clearTenant(){
   $('channel-name').textContent='Welcome';$('channel-description').textContent='Choose or create an organization to get started.';
   $('connection').textContent='Offline';$('connection').classList.remove('live');$('notice').hidden=true;clearTimeout(noticeTimer);
 }
+function renderJoinChoice(){
+  $('join-choice').hidden=!generalJoin||!inviteToken;
+  $('auth-card').hidden=generalJoin&&!!inviteToken&&!joinAsPerson;
+  $('join-agent-help').hidden=true;
+  $('join-agent-command').textContent=generalJoin&&/^[A-Za-z0-9_-]{43}$/.test(inviteToken||'')?`agent-ptt workspace --profile my-agent enroll '${location.protocol}//${location.host}/workspace/#join=${inviteToken}' --name 'My agent'
+agent-ptt workspace --profile my-agent channels
+agent-ptt workspace --profile my-agent join 'work-channel' --create`:'';
+}
+$('join-person').onclick=()=>{joinAsPerson=true;$('auth-card').hidden=false;$('join-agent-help').hidden=true;};
+$('join-agent').onclick=()=>{joinAsPerson=false;$('join-agent-help').hidden=false;$('auth-card').hidden=true;};
 function setAuthMode(signup){
+  renderJoinChoice();
   state.signup=signup;$('name-label').hidden=!signup;$('auth-form').elements.name.required=signup;
   $('organization-label').hidden=!signup||!!inviteToken;$('auth-form').elements.organization.required=signup&&!inviteToken;
   $('password-hint').hidden=!signup;$('auth-form').elements.password.minLength=signup?15:1;$('auth-form').elements.password.autocomplete=signup?'new-password':'current-password';
@@ -50,8 +64,8 @@ $('signup-tab').onclick=()=>setAuthMode(true);$('login-tab').onclick=()=>setAuth
 $('auth-form').onsubmit=async event=>{
   event.preventDefault();$('auth-submit').disabled=true;$('auth-error').textContent='';
   const data=new FormData(event.target),body={email:data.get('email'),password:data.get('password')};
-  if(state.signup){body.name=data.get('name');if(!inviteToken)body.organization=data.get('organization');else body.invitation_token=inviteToken;}
-  try{await api(state.signup?'/signup':'/login','POST',body);event.target.reset();await boot();}
+  if(state.signup){body.name=data.get('name');if(!inviteToken)body.organization=data.get('organization');else body[generalJoin?'join_token':'invitation_token']=inviteToken;}
+  try{const joined=state.signup&&generalJoin;await api(state.signup?'/signup':'/login','POST',body);if(joined){inviteToken=null;generalJoin=false;history.replaceState(null,'',location.pathname);}event.target.reset();await boot();if(joined)notice('You joined the organization. Choose or create a channel for your work.');}
   catch(error){$('auth-error').textContent=error.message;}finally{$('auth-submit').disabled=false;}
 };
 async function boot(preferredOrg){
@@ -74,7 +88,7 @@ async function switchOrg(id){
   clearTenant();state.org=state.me?.organizations.find(org=>org.id===id)||null;
   $('org-name').textContent=state.org?.name||'';$('user-role').textContent=state.org?.role||'';
   $('status-org').textContent=state.org?.name||'No organization';$('status-room').textContent='No channel';$('status-role').textContent=state.org?.role||'';
-  $('new-channel').hidden=!isAdmin();$('people').disabled=!state.org;renderSpeech();
+  $('new-channel').hidden=!state.org;$('people').disabled=!state.org;renderSpeech();
   if(!state.org)return;
   const ctx=context();
   try{
@@ -152,8 +166,8 @@ $('name-form').onsubmit=async event=>{
 async function loadInvitation(){
   const token=inviteToken,epoch=state.authEpoch;
   $('accept-invite').disabled=true;onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('onboarding-fields').hidden=true;$('invitation-error').textContent='';
-  try{const info=await api('/invitations/inspect','POST',{token});if(token!==inviteToken||epoch!==state.authEpoch)return;
-    onboardingInfo=info;$('invitation-description').textContent=`Join ${info.organization} as ${info.role}${info.agent_limit?` and register up to ${info.agent_limit} agents, starting in #${info.channel}`:''}. This link can be used once.`;
+  try{const info=await api(generalJoin?'/join/inspect':'/invitations/inspect','POST',{token});if(token!==inviteToken||epoch!==state.authEpoch)return;
+    renderJoinChoice();$('invite-agent-option').hidden=!generalJoin;$('invite-agent-command').textContent=$('join-agent-command').textContent;onboardingInfo=info;$('invitation-description').textContent=generalJoin?`Join ${info.organization} as a member. Then list, create, and join channels for your work.`:`Join ${info.organization} as ${info.role}${info.agent_limit?` and register up to ${info.agent_limit} agents, starting in #${info.channel}`:''}. This link can be used once.`;
     $('onboarding-fields').hidden=!info.agent_limit;$('onboard-count').max=info.agent_limit;$('onboard-count').value=info.agent_limit;
     onboardingRows=[];renderOnboardingAgents();$('accept-invite').disabled=false;
   }catch(error){if(token===inviteToken&&epoch===state.authEpoch)$('invitation-error').textContent=error.message;}
@@ -175,8 +189,8 @@ $('accept-invite').onclick=async()=>{
   try{
     const agents=onboardingRows.map(row=>({name:row.name.value.trim(),harness:row.harness.value}));
     if(agents.some(agent=>!agent.name)||new Set(agents.map(agent=>agent.name.toLowerCase())).size!==agents.length)throw new Error('Give each agent a distinct, non-empty name.');
-    const result=await api('/invitations/accept','POST',{token,agents});if(token!==inviteToken||epoch!==state.authEpoch)return;
-    inviteToken=null;onboardingRows=[];onboardingInfo=null;await boot(result.org_id);
+    const result=await api(generalJoin?'/join/person':'/invitations/accept','POST',generalJoin?{token}:{token,agents});if(token!==inviteToken||epoch!==state.authEpoch)return;
+    inviteToken=null;generalJoin=false;history.replaceState(null,'',location.pathname);onboardingRows=[];onboardingInfo=null;await boot(result.org_id);
     if(state.me?.id!==user||state.org?.id!==result.org_id)return;
     if(result.launcher)showAgentSetup(result);else notice('You joined the organization.');
   }catch(error){if(token===inviteToken&&epoch===state.authEpoch)$('invitation-error').textContent=error.message;}
@@ -193,7 +207,7 @@ $('download-setup').onclick=()=>{
   const link=el('a');link.href=url;link.download='agent-ptt-team.py';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 $('setup-dialog').addEventListener('close',()=>{setupResult=null;$('setup-commands').replaceChildren();});
-$('dismiss-invite').onclick=()=>{inviteToken=null;onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('invitation').hidden=true;};
+$('dismiss-invite').onclick=()=>{inviteToken=null;generalJoin=false;history.replaceState(null,'',location.pathname);onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('invitation').hidden=true;};
 async function refreshRoster(ctx){
   if(!current(ctx))return;
   const presence=fetchPresence(ctx).then(rows=>({rows,status:'ready'}),()=>({rows:[],status:'unavailable'}));
@@ -266,10 +280,27 @@ async function loadPeople(ctx=context()){
   }
   for(const agent of agents){const row=el('div',undefined,'member');row.append(el('strong',agent.name),el('small',agent.active?'Agent · '+(agent.harness||'CLI not specified')+(agent.onboarded_by?' · '+(members.find(person=>person.id===agent.onboarded_by)?.name||'Former member'):''):'Revoked'));if(admin&&agent.active){const revoke=el('button','Revoke');revoke.onclick=()=>{if(confirm('Revoke access for '+agent.name+'?'))action('/agents/'+agent.id,'DELETE');};row.append(revoke);}$('agents').append(row);}
   if(!agents.length)$('agents').append(el('p','No agents registered yet.','muted'));
-  $('team-invite-form').hidden=!admin;$('team-channel').replaceChildren();for(const room of state.rooms)$('team-channel').add(new Option('#'+room.name,room.id));$('team-channel').value=state.room?.id||state.rooms[0]?.id||'';$('invite-form').hidden=!admin;$('agent-form').hidden=!admin;$('invite-role').querySelector('[value="admin"]').disabled=ctx.role!=='owner';$('invite-role').value='member';return true;
+  $('join-link-controls').hidden=!admin;$('team-invite-form').hidden=!admin;$('team-channel').replaceChildren();for(const room of state.rooms)$('team-channel').add(new Option('#'+room.name,room.id));$('team-channel').value=state.room?.id||state.rooms[0]?.id||'';$('invite-form').hidden=!admin;$('agent-form').hidden=!admin;$('invite-role').querySelector('[value="admin"]').disabled=ctx.role!=='owner';$('invite-role').value='member';return true;
 }
-$('people').onclick=async()=>{const ctx=context();try{if(await loadPeople(ctx)&&current(ctx))$('manage').showModal();}catch(error){if(current(ctx))notice(error.message);}};
+$('people').onclick=async()=>{const ctx=context();try{if(await loadPeople(ctx)&&current(ctx)){$('manage').showModal();await loadJoinLink(ctx);}}catch(error){if(current(ctx))notice(error.message);}};
 function showSecret(ctx,title,description,value){if(!current(ctx))return;$('secret-title').textContent=title;$('secret-description').textContent=description;$('secret-value').value=value;$('secret-dialog').showModal();}
+async function loadJoinLink(ctx){
+  if(!['owner','admin'].includes(ctx.role))return;
+  const info=await api(orgPath(ctx,'/join-link'));if(!current(ctx))return;
+  $('join-link-status').textContent=info.active?'Active. Replacing the link disables the old link; existing members and agents keep their access.':'No active join link.';
+  $('create-join-link').textContent=info.active?'Replace join link':'Create join link';
+  $('revoke-join-link').disabled=!info.active;$('create-join-link').dataset.active=String(info.active);
+}
+$('create-join-link').onclick=async()=>{
+  const ctx=context();if($('create-join-link').dataset.active==='true'&&!confirm('Replace the join link? The old link will stop accepting new members.'))return;
+  $('create-join-link').disabled=true;
+  try{const result=await api(orgPath(ctx,'/join-link'),'POST',{});if(!current(ctx))return;await loadJoinLink(ctx);showSecret(ctx,'Organization join link','Save and share this link with people or agents. It is shown only now and remains reusable until replaced or revoked.',result.url);}
+  catch(error){if(current(ctx))notice(error.message);}finally{$('create-join-link').disabled=false;}
+};
+$('revoke-join-link').onclick=async()=>{
+  const ctx=context();if(!confirm('Revoke the join link? Existing members and agents keep their access.'))return;
+  try{await api(orgPath(ctx,'/join-link'),'DELETE');if(current(ctx))await loadJoinLink(ctx);}catch(error){if(current(ctx))notice(error.message);}
+};
 $('invite-form').onsubmit=async event=>{event.preventDefault();const ctx=context(),button=event.target.querySelector('button');button.disabled=true;try{const result=await api(orgPath(ctx,'/invitations'),'POST',{role:$('invite-role').value});if(!current(ctx))return;await loadPeople(ctx);showSecret(ctx,'Invite someone','Share this one-use link with its intended recipient. It expires in 7 days.',result.url);}catch(error){if(current(ctx))notice(error.message);}finally{button.disabled=false;}};
 $('team-invite-form').onsubmit=async event=>{
   event.preventDefault();const ctx=context(),button=event.target.querySelector('button');button.disabled=true;

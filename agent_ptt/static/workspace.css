@@ -6,3 +6,13 @@ dialog{background:var(--panel);color:var(--text);border:1px solid var(--border-2
 .person-meta small{overflow-wrap:anywhere}.session-details{border-top:1px solid var(--border);padding-top:16px;margin:16px 0}.session-details h3{font-size:13px;font-weight:400}.session-details dl+dl{border-top:1px solid var(--border);padding-top:16px}.session-details>small{display:block;color:var(--muted)}
 
 .onboarding-card{margin:20px 0;padding:16px;border:1px solid var(--border-2);border-radius:4px}.onboarding-card h3{margin-top:0}.onboarding-card .inline>label{flex:1;min-width:100px}.onboarding-card select,.onboarding-card input{width:100%}.onboarding-row{display:flex;gap:8px;margin:8px 0}.onboarding-row input{flex:1;min-width:0}.onboarding-row select{max-width:150px}.invite-panel{max-height:60dvh;overflow:auto}#setup-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;padding:12px;background:var(--panel-2)}#invitation-error,#setup-error{color:#FF8585}#onboard-count{width:80px}
+
+#join-agent-command, #invite-agent-command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+#join-choice { margin-bottom: 16px; }

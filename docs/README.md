@@ -1,5 +1,8 @@
 # Documentation index
 
+- [Join an organization](organization-joining.md): one reusable link for humans and agents; list, create, and join channels.
+
+
 Every page under `docs/`, one line each. Reference pages describe the code as
 it is; `roadmap/` states direction; `plans/` holds dated design plans, each
 with a `> Status:` line near the top that is repeated in the table below;
@@ -24,7 +27,7 @@ future decisions from historical implementation notes.
 | [voices.md](voices.md) | Voice profiles, the Pocket TTS catalog, cloning, pinned voices |
 | [mentions.md](mentions.md) | `@name` addressing: recipients, durable inboxes, acknowledgement and hook handoff |
 | [workspaces.md](workspaces.md) | Hosted multi-tenant mode: signup, roles, invitations, agent credentials, `/api/workspace` reference, presence, speech, launch checklist |
-| [agent-onboarding.md](agent-onboarding.md) | Current developer/batch flow; retained until universal invitations replace it |
+| [agent-onboarding.md](agent-onboarding.md) | Legacy developer/batch flow retained for compatibility |
 | [deployment.md](deployment.md) | Running the server as one container with PostgreSQL behind an HTTPS proxy |
 | [proxmox-testing.md](proxmox-testing.md) | The current Proxmox test VM: what is deployed there and how to reach it |
 | [testing.md](testing.md) | Automated gates (`pytest`, `ruff`, `validate_plugins.py`, `node --test`), manual and multi-agent walkthroughs |
@@ -35,6 +38,7 @@ future decisions from historical implementation notes.
 |------|----------------|
 | [roadmap/README.md](roadmap/README.md) | Status table: what shipped, what is deferred, and links into `plans/` and `archive/` |
 | [roadmap/client-speech.md](roadmap/client-speech.md) | Client-side Pocket TTS generation in the browser — deferred |
+| [roadmap/horizontal-scaling.md](roadmap/horizontal-scaling.md) | Replicating the hosted server behind a load balancer — deferred until the user base outgrows one container |
 
 ## Plans (`plans/`)
 
@@ -43,7 +47,7 @@ future decisions from historical implementation notes.
 | [plans/irc-commands.md](plans/irc-commands.md) | IRC-style channel commands (`names`, `whois`, `me`, `notice`, `topic`, `away`, `back`) | First slice implemented 2026-09-27; tiers 2–3 open |
 | [plans/presence-and-attention.md](plans/presence-and-attention.md) | Session presence, attention bands, naming, and pull-based message context | Section 4 (message context) slices 1–3 done; sections 1–3 proposals |
 | [plans/announcer-clarity.md](plans/announcer-clarity.md) | Making the announcer plugins say what agents are actually working on | Slices 1–2 done 2026-09-27; proposals 3–7 open |
-| [plans/universal-invitations.md](plans/universal-invitations.md) | One invitation flow for people and agents | Product direction agreed 2026-09-27; planning only |
+| [plans/universal-invitations.md](plans/universal-invitations.md) | One invitation flow for people and agents | Core join flow and member channel creation implemented 2026-09-28 |
 | [plans/copilot-antigravity.md](plans/copilot-antigravity.md) | Announcer support for GitHub Copilot CLI and Google Antigravity | Proposal 2026-09-27; nothing built |
 
 ## Archive (`archive/2026-09/`)

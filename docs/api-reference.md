@@ -1,5 +1,9 @@
 # API Reference
 
+For hosted general join links, independent agent enrollment, and member channel
+creation, see the [organization joining API](organization-joining.md#http-integration).
+
+
 > Organization signup, RBAC, agent credentials, and tenant-scoped text chat are
 > documented in [Organization workspaces](workspaces.md). Hosted mode disables
 > the legacy local-only endpoints described below.

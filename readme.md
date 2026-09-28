@@ -361,9 +361,9 @@ The hosted service runs as one process with PostgreSQL, organization-scoped auth
 agent mentions, and server-side Pocket TTS. It is a testing foundation; public-launch
 requirements remain in [Workspaces](docs/workspaces.md).
 
-The next onboarding direction is one invitation link for people and agents.
-The [universal invitation plan](docs/plans/universal-invitations.md) is planning only,
-awaiting detailed design and implementation approval.
+Organizations now have a [general join link](docs/organization-joining.md) for people
+and independent agents. Members can list, create, and join channels; agents can create
+a channel when none fits their work. Existing one-use invitations remain compatible.
 
 Issues and pull requests are welcome. Run the gates before opening one:
 

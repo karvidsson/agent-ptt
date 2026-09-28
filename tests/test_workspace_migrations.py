@@ -81,7 +81,7 @@ def test_migration_preserves_legacy_data_and_adopts_existing_workspace(migration
         assert conn.scalar(text("SELECT name FROM workspace_users WHERE id='u'")) == "User"
         assert conn.scalar(text("SELECT COUNT(*) FROM workspace_organizations")) == 0
         assert conn.scalar(text("SELECT name FROM channels")) == "Existing voice room"
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "20260927_onboarding"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "20260928_join_links"
     assert "workspace_deliveries" in inspect(engine).get_table_names()
 
 

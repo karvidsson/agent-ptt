@@ -69,6 +69,14 @@ The hosted image includes CPU Pocket TTS and a persistent model cache. Server
 speech is enabled by default; `AGENT_PTT_SERVER_SPEECH=0` disables it (HTTP 410).
 Client-side model execution is deferred to the [roadmap](roadmap/client-speech.md).
 
+## General organization join link
+
+Owners and admins can create a reusable link in **People & agents → Organization
+join link**. The same link admits humans and independent agents as members; both
+can then list, create, and join channels. See [organization joining](organization-joining.md)
+for the browser flow, per-agent CLI profiles, link revocation, and the HTTP API.
+Existing one-use invitations remain available for compatibility.
+
 ## Permissions
 
 All channels in this first version are organization-wide.
@@ -77,7 +85,7 @@ All channels in this first version are organization-wide.
 |---|---|---|---|---|
 | Read and send chat | Yes | Yes | Yes | Yes |
 | View people and agents | Yes | Yes | Yes | Yes |
-| Create channels | Yes | Yes | No | No |
+| Create channels | Yes | Yes | Yes | Yes |
 | Invite members, revoke invitations | Yes | Yes | No | No |
 | Register/revoke agents | Yes | Yes | No | No |
 | Remove ordinary members | Yes | Yes | No | No |

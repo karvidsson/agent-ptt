@@ -164,7 +164,7 @@ def test_invitation_one_use_and_member_permissions(hosted_client):
     assert member.get(API + "/me").json()["organizations"][0]["role"] == "member"
     base = f"{API}/organizations/{org_id}"
     assert member.post(base + "/agents", json={"name": "Bot"}).status_code == 403
-    assert member.post(base + "/channels", json={"name": "private"}).status_code == 403
+    assert member.post(base + "/channels", json={"name": "work"}).status_code == 201
     assert member.post(base + "/invitations", json={"role": "admin"}).status_code == 403
     assert member.patch(base + "/members/" + user_id, json={"role": "admin"}).status_code == 403
     assert owner.patch(base + "/members/" + user_id, json={"role": "admin"}).status_code == 200

@@ -88,6 +88,7 @@ class Signup(Login):
     password: str = Field(min_length=15, max_length=128)
     organization: str | None = Field(default=None, min_length=1, max_length=80)
     invitation_token: str | None = Field(default=None, min_length=20, max_length=100)
+    join_token: str | None = Field(default=None, min_length=20, max_length=100)
 
 
 class RoleChange(Input):
@@ -159,13 +160,22 @@ def auth_limit(request):
 @router.post("/signup", status_code=201)
 def signup(req: Signup, request: Request, response: Response, db: Session = Depends(get_db)):
     auth_limit(request)
-    if os.environ.get("AGENT_PTT_SIGNUP", "1") != "1" and not req.invitation_token:
+    if req.join_token and (req.invitation_token or req.organization):
+        raise HTTPException(400, "Use the join link without another invitation or organization")
+    if os.environ.get("AGENT_PTT_SIGNUP", "1") != "1" and not (
+        req.invitation_token or req.join_token
+    ):
         raise HTTPException(403, "Account signup is disabled")
     user = User(email=req.email, name=req.name, password_hash=hash_password(req.password))
     db.add(user)
     try:
         db.flush()
-        if req.invitation_token:
+        if req.join_token:
+            from agent_ptt.workspace_join import join_human, lock_link
+
+            link = lock_link(db, req.join_token)
+            join_human(db, link, user.id)
+        elif req.invitation_token:
             # Reserve this one-use invitation for this account in the same transaction.
             # This also permits invited signup when public registration is closed.
             claimed = db.execute(
@@ -530,9 +540,9 @@ def channels(org_id: str, identity: Principal = Depends(principal), db: Session 
 
 @router.post("/organizations/{org_id}/channels", status_code=201)
 def new_channel(
-    org_id: str, req: Named, identity: Principal = Depends(human), db: Session = Depends(get_db)
+    org_id: str, req: Named, identity: Principal = Depends(principal), db: Session = Depends(get_db)
 ):
-    require_admin(org_id, identity, db)
+    role_for(org_id, identity, db)
     rate_limit("channel:" + identity.id, 30, 3600)
     room = Room(org_id=org_id, name=req.name)
     db.add(room)
@@ -712,9 +722,10 @@ async def stream(websocket: WebSocket, org_id: str, room_id: str, after: int = 0
 
 
 def install(app):
-    from agent_ptt import workspace_presence, workspace_speech
+    from agent_ptt import workspace_join, workspace_presence, workspace_speech
 
     app.include_router(router)
+    app.include_router(workspace_join.router)
     app.include_router(delivery.router)
     workspace_presence.install(app)
     workspace_speech.install(app)

@@ -28,7 +28,7 @@ test('late organization channel response never overwrites current tenant',async(
  const h=harness();const a=h.run('switchOrg("a")');const b=h.run('switchOrg("b")');
  h.waiters[1]([]);await b;h.waiters[0]([{id:'private-a',name:'Private Alpha'}]);await a;
  assert.equal(h.run('state.org.id'),'b');assert.equal(h.run('state.rooms.length'),0);assert.equal(h.get('channels').children.length,0);
- assert.equal(h.get('new-channel').hidden,true);
+ assert.equal(h.get('new-channel').hidden,false);
 });
 test('switching tenant immediately clears credentials, modal content, recipients and pending sends',()=>{
  const h=harness();h.run(`state.org=state.me.organizations[0];state.pending={text:'private'};state.agents=[{id:'secret-agent'}];state.seen.add(9);state.cursor=9;`);
@@ -104,4 +104,30 @@ test('an invitation opened in the same tab is recognized without reloading',asyn
  assert.equal(h.run('inviteToken'),'new-invitation');assert.equal(h.requests[0].path,'/api/workspace/invitations/inspect');
  h.waiters[0]({organization:'Invited org',role:'member',agent_limit:0});await tick();
  assert.match(h.get('invitation-description').textContent,/Invited org/);assert.equal(h.get('accept-invite').disabled,false);
+});
+test('general join link uses organization enrollment without a channel or agent batch',async()=>{
+ const h=harness();h.run("generalJoin=true;inviteToken='"+'a'.repeat(43)+"'");
+ const info=h.run('loadInvitation()');assert.equal(h.requests[0].path,'/api/workspace/join/inspect');
+ h.waiters.shift()({organization:'Team',role:'member'});await info;
+ assert.match(h.get('invitation-description').textContent,/list, create, and join channels/);
+ assert.equal(h.get('onboarding-fields').hidden,true);
+ assert.match(h.get('invite-agent-command').textContent,/workspace --profile my-agent enroll/);
+ const accept=h.get('accept-invite').onclick();
+ assert.equal(h.requests[1].path,'/api/workspace/join/person');
+ assert.deepEqual(JSON.parse(h.requests[1].options.body),{token:'a'.repeat(43)});
+ h.waiters.shift()({org_id:'a'});await tick();h.waiters.shift()({name:'Test',organizations:[]});await accept;
+ assert.equal(h.run('inviteToken'),null);
+});
+test('human and agent choices are explicit and malformed links never produce shell commands',()=>{
+ const h=harness();h.run("generalJoin=true;inviteToken='"+'b'.repeat(43)+"';renderJoinChoice()");
+ assert.equal(h.get('auth-card').hidden,true);h.get('join-person').onclick();
+ assert.equal(h.get('auth-card').hidden,false);h.run('renderJoinChoice()');assert.equal(h.get('auth-card').hidden,false);
+ h.get('join-agent').onclick();assert.equal(h.get('join-agent-help').hidden,false);
+ h.run(`inviteToken="invalid'$(command)";renderJoinChoice()`);assert.equal(h.get('join-agent-command').textContent,'');
+});
+test('late general link creation cannot expose another organization secret',async()=>{
+ const h=harness();h.run('state.org=state.me.organizations[0]');
+ const pending=h.get('create-join-link').onclick();assert.equal(h.requests[0].path,'/api/workspace/organizations/a/join-link');
+ h.run('switchOrg("b")');h.waiters[0]({url:'secret-link-a'});await pending;
+ assert.equal(h.get('secret-value').value,'');assert.equal(h.get('secret-dialog').open,false);
 });

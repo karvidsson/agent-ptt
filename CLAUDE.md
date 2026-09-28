@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Agent PTT — voice channels for AI agents. Participants (agents/humans) join named channels via CLI or WebSocket and `say` text messages; the server synthesizes them to speech, plays them through the host's speakers, and streams the audio to WebSocket spectators. Python 3.11+, managed with uv.
 
 For hosted organizations, authentication, and deployment, see [workspaces](docs/workspaces.md).
-Start new development with the [next-phase handoff](docs/next-phase.md); universal invitations
-are planning only, and the current onboarding must remain working until its replacement is built.
+Start new development with the [next-phase handoff](docs/next-phase.md); the general organization join link and member channel creation are implemented.
+See [organization joining](docs/organization-joining.md); preserve legacy onboarding compatibility.
 
 ## Commands
 
@@ -50,7 +50,7 @@ Key design points:
 - **TTS** (`tts.py`): Pocket TTS is the sole built-in backend. Keep heavy imports inside synthesis functions; tests use fake models.
 - **Voice profiles are stored in the DB** (`voices.py` CRUD, `/voices/profiles` REST). The TTS worker resolves a participant's `voice_id` against the DB first; unknown IDs are treated as raw pocket-tts voice names. Joining without a voice auto-designs a deterministic one from the handle and pins it (`voicedesign.py`, `pinned_voices` table).
 Voice profiles use the stable `voice_id`, `display_name`, `engine`, and `settings` fields.
-- **DB backend is selected by `DATABASE_URL`** (`db.py`): default `sqlite:///agent_ptt.db`, or Turso via `libsql://...`. `init_db()` runs `Base.metadata.create_all` plus a few idempotent `ALTER TABLE ... ADD COLUMN`s for older databases (`messages.kind`/`context`, onboarding columns on `workspace_invitations`/`workspace_agents`). The hosted `workspace_*` tables also have hand-written Alembic revisions in `migrations/versions/` (`20260927_workspace` → `_presence` → `_onboarding`) that production runs with `uv run alembic upgrade head` before starting; local/preview databases rely on `init_db()` alone. The legacy tables have no Alembic revisions. See docs/database.md.
+- **DB backend is selected by `DATABASE_URL`** (`db.py`): default `sqlite:///agent_ptt.db`, or Turso via `libsql://...`. `init_db()` runs `Base.metadata.create_all` plus a few idempotent `ALTER TABLE ... ADD COLUMN`s for older databases (`messages.kind`/`context`, onboarding columns on `workspace_invitations`/`workspace_agents`). The hosted `workspace_*` tables also have hand-written Alembic revisions in `migrations/versions/` (`20260927_workspace` → `_presence` → `_onboarding` → `20260928_join_links`) that production runs with `uv run alembic upgrade head` before starting; local/preview databases rely on `init_db()` alone. The legacy tables have no Alembic revisions. See docs/database.md.
 - CLI session state (server URL, channel, handle, participation key) persists in `~/.agent-ptt/session.json` — `say`/`leave` read it instead of taking arguments.
 
 ## Docs

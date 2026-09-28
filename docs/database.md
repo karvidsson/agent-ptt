@@ -155,6 +155,7 @@ a new server version (see [workspaces.md](workspaces.md#hosting-boundary-and-per
 | `20260927_workspace` | Baseline: the eleven workspace/delivery tables; adopts compatible pre-migration preview tables, refuses incompatible ones |
 | `20260927_presence` | `workspace_session_presence` |
 | `20260927_onboarding` | The invitation and agent onboarding columns listed above |
+| `20260928_join_links` | `workspace_join_links` (one active reusable link per organization) and `workspace_agent_enrollments` (retry identity and invitation provenance) |
 
 Downgrades are refused by design (they would destroy tenant data); restore a
 backup instead. The legacy tables (`channels`, `messages`, `voice_profiles`, …)
@@ -194,3 +195,7 @@ channel and message records remain intact. `revoked_participants` records revoke
 keys so automatic retries receive 403. Removed participant records have their
 channel association cleared. Both new tables are created by `init_db()` without
 altering existing tables. Archived channels restore as read-only with no workers.
+
+General join secrets and agent credentials are stored only as hashes. Enrollment
+records survive credential revocation so replay cannot mint replacement access.
+See [organization joining](organization-joining.md) for lifecycle semantics.

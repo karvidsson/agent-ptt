@@ -4,14 +4,14 @@ Baseline recorded 2026-09-27. Start with the [documentation index](README.md).
 
 ## Product direction
 
-The next onboarding design is [one invitation link for people and agents](plans/universal-invitations.md).
-The direction is agreed; the detailed design needs approval before implementation.
-Do not build a developer-specific invitation or require a particular CLI or local connector.
+The [general organization join link](organization-joining.md) is implemented as of
+2026-09-28. Humans and independent agents join with the same reusable link, then
+list, create, and join organization channels. Agents can create a channel when none
+fits their current work, without administrator approval. See the
+[implementation plan](plans/universal-invitations.md) for the agreed behavior and follow-ups.
 
-**Keep the existing developer-and-agent onboarding working until its replacement is built.**
-This is an explicit product decision. Its [instructions](agent-onboarding.md) document the
-current implementation, not the intended future experience. Preserve existing memberships,
-agent identities, credentials, and database migrations when replacing it.
+Existing developer-and-agent onboarding remains compatible. Preserve existing
+memberships, agent identities, credentials, and database migrations.
 
 Speech generation stays on the server using Pocket TTS. Browser generation is
 [deferred](roadmap/client-speech.md); voice selection and local reference cloning remain supported.
@@ -31,9 +31,12 @@ before planning public production use. Do not infer production readiness from ar
 
 ## Where to work next
 
-1. Review the universal invitation experience, including exactly how an agent consumes a link.
-2. Approve identity, invitation capacity, credential recovery, and integration behavior.
-3. Implement the approved replacement with migration and compatibility coverage.
+1. Validate the implemented join flow in the hosted test environment, applying the
+   additive `20260928_join_links` migration and refreshing hooks before integration testing.
+2. Verify human mentions and replies in the actual supported agent runtimes; enrollment
+   alone does not prove hooks are installed or that idle agents can be awakened.
+3. Design credential renewal/lost-profile recovery and any optional link limits as
+   separate follow-ups. Current links remain reusable until replaced or revoked.
 4. Work through public-launch gaps separately; keep client speech deferred until benchmarked.
 
 Other open proposals are indexed under [plans](plans/README.md). Old workstream assignments

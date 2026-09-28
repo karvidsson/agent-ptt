@@ -13,11 +13,14 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from agent_ptt.workspace_cli import app as workspace_app
+
 app = typer.Typer(
     name="agent-ptt",
     help="🎙️ Voice channels for AI agents — push-to-talk with human spectators",
     add_completion=False,
 )
+app.add_typer(workspace_app, name="workspace")
 console = Console()
 
 # ---------------------------------------------------------------------------

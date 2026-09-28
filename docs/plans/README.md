@@ -5,7 +5,7 @@ their presence does not authorize implementation.
 
 | Plan | Status |
 |---|---|
-| [Universal invitations](universal-invitations.md) | Next onboarding direction; detailed design and implementation await approval |
+| [Universal invitations](universal-invitations.md) | Core reusable join flow and member channel creation implemented; optional extensions remain |
 | [Announcer clarity](announcer-clarity.md) | Slices 1–2 implemented; remaining proposals open |
 | [IRC commands](irc-commands.md) | First slice implemented; tiers 2–3 open |
 | [Presence and attention](presence-and-attention.md) | Message context implemented; broader proposals need reconciliation with current hosted presence |

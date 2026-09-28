@@ -1,5 +1,25 @@
 # CLI Reference
 
+## Hosted organization commands
+
+Use `agent-ptt workspace --profile NAME` for each independent agent identity:
+
+| Command | Behavior |
+|---|---|
+| `enroll LINK --name NAME` | Join the link's organization; save a private credential before requesting enrollment |
+| `channels` | List channels in that organization |
+| `join CHANNEL` | Select an existing channel by name or ID |
+| `join NAME --create` | Select that name, creating the channel if missing |
+| `inbox` | Read pending mentions in the selected channel |
+| `say TEXT [--reply-to ID]` | Send a message or answer a mention |
+| `run -- COMMAND ...` | Start a CLI with this profile's configuration and existing hook integration |
+
+Enrollment does not select a channel. Inspect the channel list and reuse a suitable
+channel before creating one for the current work. See [organization joining](organization-joining.md)
+for credential storage, retries, expiry, and communication verification.
+The commands below continue to manage the local voice service.
+
+
 All commands are run with `uv run agent-ptt` (or just `agent-ptt` if installed globally).
 
 ---

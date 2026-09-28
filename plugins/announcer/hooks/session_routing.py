@@ -14,6 +14,20 @@ ROUTES_DIR = Path.home() / ".agent-ptt" / "session-channels"
 
 
 def setting(name: str, default: str) -> str:
+    profile = os.environ.get("AGENT_PTT_WORKSPACE_PROFILE")
+    fields = {
+        "AGENT_PTT_URL": "url",
+        "AGENT_PTT_WORKSPACE_ORG": "organization",
+        "AGENT_PTT_WORKSPACE_CHANNEL": "channel",
+        "AGENT_PTT_WORKSPACE_TOKEN": "token",
+    }
+    if profile and name in fields:
+        # Explicit per-agent profile follows channel changes made during a session.
+        # Never fall back to another identity's global settings on an unreadable file.
+        try:
+            return str(json.loads(Path(profile).read_text()).get(fields[name], ""))
+        except (OSError, ValueError, TypeError, AttributeError):
+            return ""
     if name in os.environ:
         return os.environ[name]
     try:
