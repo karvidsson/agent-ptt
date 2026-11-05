@@ -104,6 +104,7 @@ def clean_state():
     channel._channels.clear()
     channel._message_queues.clear()
     server._ws_clients.clear()
+    server._live_agent_sockets.clear()
     for task in server._tts_tasks.values():
         task.cancel()
     server._tts_tasks.clear()

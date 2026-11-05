@@ -7,6 +7,7 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import (
@@ -39,6 +40,7 @@ from agent_ptt.auth import (
 from agent_ptt.db import SessionLocal, get_db, init_db
 from agent_ptt.mention_policy import mention_policy
 from agent_ptt.models import (
+    HeartbeatRequest,
     Message,
     MessageContext,
     PinnedVoiceDB,
@@ -70,6 +72,9 @@ logger = logging.getLogger(__name__)
 
 _ws_clients: dict[str, list[WebSocket]] = {}
 _audio_clients: dict[str, list[WebSocket]] = {}
+# Open agent WebSockets per participation key (only sockets opened with a
+# valid ``key``). A participant holding one is never reaped as idle.
+_live_agent_sockets: dict[str, int] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +149,60 @@ def _stop_tts_worker(channel_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Idle reaper — removes participants that stopped showing signs of life
+# ---------------------------------------------------------------------------
+
+
+def _reap_interval(grace: float) -> float:
+    """How often the reaper scans: a quarter of the grace, within 5-60 s."""
+    return min(60.0, max(5.0, grace / 4))
+
+
+async def _reap_idle_once(grace: float, now: datetime | None = None) -> list[str]:
+    """One reaper pass: leave every idle participant and announce it.
+
+    Returns the reaped handles. A participant is idle when it holds no agent
+    WebSocket and hasn't been seen (join, say, command, inbox, heartbeat) for
+    more than ``grace`` seconds. Reaping is an ordinary leave: no ban, and a
+    rejoin (including a session_id rejoin) works as usual.
+    """
+    now = now or datetime.now(UTC)
+    stale = ch.idle_participants(now, grace, _live_agent_sockets.keys())
+    if not stale:
+        return []
+    reaped: list[str] = []
+    with SessionLocal() as db:
+        for participant in stale:
+            channel_id = participant.channel_id
+            if channel_id is None or not ch.leave_channel(channel_id, participant.key_id, db):
+                continue
+            reaped.append(participant.handle)
+            idle_for = int((now - participant.last_seen).total_seconds())
+            logger.info(
+                f"🧹 Reaped idle participant {participant.handle} "
+                f"({participant.participant_id}) from {channel_id} after {idle_for}s"
+            )
+            await _broadcast_to_channel(
+                channel_id,
+                {"type": "system", "text": f"{participant.handle} left the channel (idle)"},
+            )
+    return reaped
+
+
+async def _idle_reaper(grace: float) -> None:
+    """Background loop around ``_reap_idle_once``; cancelled on shutdown."""
+    interval = _reap_interval(grace)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await _reap_idle_once(grace)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"Idle reaper error: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
@@ -162,8 +221,19 @@ async def lifespan(app: FastAPI):
         logger.info(f"🎙️  Restored {len(restored)} channel(s) from the database")
     logger.info("🎙️  Agent PTT server started")
     logger.info(f"🔈 {speaker_mode_message()}")
+    reaper: asyncio.Task | None = None
+    # Hosted mode serves no legacy channels, so there is nothing to reap.
+    if not hosted():
+        grace = ch.idle_reap_seconds()
+        logger.info(f"🧹 {ch.idle_reap_message(grace)}")
+        if grace > 0:
+            reaper = asyncio.create_task(_idle_reaper(grace))
     yield
     # Cleanup
+    if reaper is not None:
+        reaper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reaper
     for channel_id in list(_tts_tasks.keys()):
         _stop_tts_worker(channel_id)
     logger.info("🎙️  Agent PTT server stopped")
@@ -245,6 +315,9 @@ Full API schema: {base}/openapi.json (Swagger: {base}/docs).
      GET  {base}/channels/<channel_id>/history
 5. Leave when done:
      POST {base}/channels/<channel_id>/leave  {{"key_id": "<key_id>"}}
+
+Idle participants are removed: no agent WebSocket and no say, command, inbox
+poll or heartbeat for 10 minutes. If your key then gets 404, join again.
 
 Keep lines short and spoken-friendly: no code, paths or markdown.
 
@@ -563,6 +636,7 @@ async def join_channel(
         if channel:
             for participant in channel.participants.values():
                 if participant.handle == handle and participant.voice_id == voice_id:
+                    ch.mark_seen(participant)
                     if req.receive_mentions:
                         mentions.register_receiver(participant, req.session_id, req.agent, db)
                     return {
@@ -615,10 +689,32 @@ async def leave_channel(
     key_id = req.key_id if req is not None else key_id
     if not key_id:
         raise HTTPException(422, "key_id is required")
+    participant = ch.get_participant(key_id)
     success = ch.leave_channel(channel_id, key_id, db)
     if not success:
         return JSONResponse({"error": "Participant not found"}, status_code=404)
+    await _broadcast_to_channel(
+        channel_id, {"type": "system", "text": f"{participant.handle} left the channel"}
+    )
     return {"status": "left"}
+
+
+@api.post("/channels/{channel_id}/heartbeat", tags=["Channels"])
+async def heartbeat(channel_id: str, req: HeartbeatRequest, db: Session = Depends(get_db)):
+    """Mark a participant as still here without saying anything.
+
+    For clients that hold no agent WebSocket (the web UI): a participant
+    with no socket and no say, command, inbox poll or heartbeat for the idle
+    grace period (``AGENT_PTT_IDLE_REAP_SECONDS``, default 600) is removed.
+    404 means the key isn't in the channel (rejoin); 403 that it was kicked.
+    """
+    if db.get(RevokedParticipantDB, req.key_id):
+        raise HTTPException(403, "Participant was removed; join explicitly to return")
+    participant = ch.get_participant(req.key_id)
+    if participant is None or participant.channel_id != channel_id:
+        return JSONResponse({"error": "Participant not found in channel"}, status_code=404)
+    ch.mark_seen(participant)
+    return {"status": "ok"}
 
 
 @api.post("/channels/{channel_id}/say", tags=["Channels"])
@@ -727,6 +823,7 @@ def inbox_recipient(channel_id: str, x_participant_key: str = Header()) -> str:
     participant = ch.get_participant(x_participant_key)
     if not participant or participant.channel_id != channel_id or not participant.mention_id:
         raise HTTPException(403, "Not a mention receiver in this channel")
+    ch.mark_seen(participant)
     return participant.mention_id
 
 
@@ -861,6 +958,9 @@ async def agent_websocket(
 
     participant = ch.get_participant(key) if key else None
     handle = participant.handle if participant else "anonymous"
+    if participant is not None:
+        _live_agent_sockets[key] = _live_agent_sockets.get(key, 0) + 1
+        ch.mark_seen(participant)
 
     # Announce join
     await _broadcast_to_channel(
@@ -924,6 +1024,14 @@ async def agent_websocket(
         if channel_id in _ws_clients:
             with contextlib.suppress(ValueError):
                 _ws_clients[channel_id].remove(websocket)
+        if participant is not None:
+            # The idle grace clock starts when the last socket closes.
+            remaining = _live_agent_sockets.get(key, 0) - 1
+            if remaining > 0:
+                _live_agent_sockets[key] = remaining
+            else:
+                _live_agent_sockets.pop(key, None)
+            ch.mark_seen(participant)
 
         # Announce leave
         await _broadcast_to_channel(

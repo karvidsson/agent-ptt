@@ -221,11 +221,14 @@
   .row.cmd .body .ln { display: grid; grid-template-columns: minmax(80px, max-content) 1fr; gap: 10px; }
   .row.cmd .body .ln .st { color: var(--muted); }
   .row.cmd .body .ln .st.away { color: var(--nick-yellow); }
+  .row.cmd .body .ln .st.offline { color: var(--dim); }
   .row.cmd .body .ln .st.active { color: var(--nick-green); }
   .row.err .nick, .row.err .body { color: var(--nick-red); }
   .topic.set { color: var(--text); }
   .topic.set .by { color: var(--dim); }
   .agent .sub.away { color: var(--nick-yellow); }
+  .agent.offline { opacity: .55; }
+  .agent .sub.offline { color: var(--dim); }
   .row .body code { color: var(--nick-cyan); background: var(--panel-2); border-radius: 3px; padding: 1px 5px; }
   .row .body pre {
     margin: 8px 0 2px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--border);
@@ -1154,18 +1157,19 @@ ___( o)&gt;
       const el = document.createElement("div");
       el.className = "agent" + (talking ? " speaking" : "");
       const voice = p.voice_id ? voiceName(p.voice_id) : "auto";
-      const away = p.state === "away";
+      // "offline": restored after a server restart and not seen since.
+      const idle = p.state === "away" || p.state === "offline" ? p.state : "";
       const bits = [];
       if (talking) bits.push("speaking");
       else if (mine) bits.push("you");
-      if (away) bits.push("away" + (p.away_reason ? ` · ${p.away_reason}` : ""));
+      if (idle) bits.push(stateLabel(p));
       if (p.doing) bits.push(`* ${p.doing}`);
-      el.className += away ? " away" : "";
-      el.title = `${p.handle} · ${voice}` + (away ? ` · away${p.away_reason ? ": " + p.away_reason : ""}` : "") + (p.doing ? ` · ${p.doing}` : "");
+      el.className += idle ? ` ${idle}` : "";
+      el.title = `${p.handle} · ${voice}` + (idle ? ` · ${idle}${p.away_reason ? ": " + p.away_reason : ""}` : "") + (p.doing ? ` · ${p.doing}` : "");
       el.innerHTML =
         `<div class="avatar" style="background:var(--panel-2);color:${nickColor(p.handle)}">${esc(initials(p.handle))}</div>` +
         `<div class="meta"><button class="h agent-name" aria-haspopup="dialog">${esc(p.handle)}</button>` +
-        `${bits.length ? `<div class="sub${away ? " away" : ""}">${esc(bits.join(" · "))}</div>` : ""}</div>` +
+        `${bits.length ? `<div class="sub${idle ? ` ${idle}` : ""}">${esc(bits.join(" · "))}</div>` : ""}</div>` +
         (talking ? icon("mic").replace('class="i"', 'class="i mic"') : "");
       el.querySelector(".agent-name").onclick = (event) => openAgentDetails(p, event.currentTarget);
       const kick = document.createElement("button");
@@ -1226,6 +1230,9 @@ ___( o)&gt;
   }
 
   // Fingerprint of the presence-related participant fields, to re-render the roster on change.
+  const stateLabel = (p) => p.state === "away"
+    ? "away" + (p.away_reason ? ` · ${p.away_reason}` : "")
+    : (p.state || "active");
   const presenceKey = (people) => people.map((p) => `${p.handle}|${p.state || "active"}|${p.away_reason || ""}|${p.doing || ""}`).sort().join("\n");
   function voiceName(id) {
     const v = state.voices.find((item) => item.voice_id === id);
@@ -1408,6 +1415,20 @@ ___( o)&gt;
     state.participantId = saved.participantId;
     state.handle = saved.handle;
     state.pickedVoice = saved.voice || "";
+    heartbeat();
+  }
+  // The web UI holds no agent WebSocket, so it tells the server it is still
+  // here; a participant silent for the idle grace period (10 min by default)
+  // is removed. If the key is gone, the roster poll notices and forgets it.
+  async function heartbeat() {
+    if (!state.keyId || !state.channelId || state.archived) return;
+    try {
+      await api(`${httpBase}/channels/${state.channelId}/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key_id: state.keyId }),
+      });
+    } catch {}
   }
 
   async function loadVoices() {
@@ -1611,12 +1632,12 @@ ___( o)&gt;
     }
   }
   function participantLine(p) {
-    const st = p.state === "away" ? "away" + (p.away_reason ? ` · ${p.away_reason}` : "") : "active";
+    const st = stateLabel(p);
     const sinceTs = p.since ? Date.parse(p.since) : NaN;
     const meta = [st, p.doing ? `* ${p.doing}` : "", Number.isFinite(sinceTs) ? `since ${fmtTime(sinceTs, false)} (${since(sinceTs)})` : ""]
       .filter(Boolean).join(" · ");
     return `<span class="ln"><span style="color:${nickColor(p.handle)}">${esc(p.handle)}</span>` +
-      `<span class="st ${p.state === "away" ? "away" : "active"}">${esc(meta)}</span></span>`;
+      `<span class="st ${p.state === "away" || p.state === "offline" ? p.state : "active"}">${esc(meta)}</span></span>`;
   }
   const kv = (k, v) => `<span class="kv"><span class="k">${esc(k)}</span><span>${esc(v)}</span></span>`;
   function renderCommandResult(name, result) {
@@ -1632,7 +1653,7 @@ ___( o)&gt;
         const p = result.participant || {};
         const rows = [
           kv("handle", p.handle || "?"),
-          kv("state", p.state === "away" ? "away" + (p.away_reason ? ` · ${p.away_reason}` : "") : (p.state || "active")),
+          kv("state", stateLabel(p)),
           p.doing ? kv("doing", p.doing) : "",
           p.voice_id ? kv("voice", voiceName(p.voice_id)) : "",
           p.since ? kv("since", `${fmtTime(p.since)} (${since(Date.parse(p.since))})`) : "",
@@ -1865,6 +1886,7 @@ ___( o)&gt;
     setInterval(checkServer, 5000);
     setInterval(loadChannels, 3000);
     setInterval(renderStatusbar, 15000);
+    setInterval(heartbeat, 60000);
     setInterval(() => { if (state.log.length) showFortune(); }, 45000);
   }
   init();

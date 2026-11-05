@@ -196,12 +196,17 @@ class ParticipantKey(BaseModel):
     channel_id: str | None = None
     mention_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    # Presence (IRC-style, in memory only)
-    state: Literal["active", "away"] = "active"
+    # Presence (IRC-style, in memory only). "offline" marks a participant
+    # restored after a server restart that hasn't been seen since.
+    state: Literal["active", "away", "offline"] = "active"
     away_reason: str | None = None
     since: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # Last time the participant said or did something (say, command).
     last_active: datetime = Field(default_factory=lambda: datetime.now(UTC))
     doing: str | None = None
+    # Last sign of life of any kind (join, say, command, inbox poll,
+    # heartbeat, agent WebSocket); the idle reaper reads it. Internal.
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), exclude=True)
 
     model_config = {"from_attributes": True}
 
@@ -259,6 +264,12 @@ class MessageContext(BaseModel):
                 f"context is {size} bytes serialized; at most {MESSAGE_CONTEXT_MAX_BYTES} allowed"
             )
         return self
+
+
+class HeartbeatRequest(BaseModel):
+    """Keeps a participant without an agent WebSocket from being reaped as idle."""
+
+    key_id: str = Field(min_length=1, description="Secret participation key returned by join")
 
 
 class Message(BaseModel):

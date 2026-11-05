@@ -34,6 +34,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | DELETE | `/channels` | [Clear All Channels](#clear-all-channels) |
 | GET, DELETE | `/channels/{channel_id}` | [Get](#get-channel), [Delete](#delete-channel) |
 | POST | `/channels/{channel_id}/join`, `/leave` | [Join](#join-channel), [Leave](#leave-channel) |
+| POST | `/channels/{channel_id}/heartbeat` | [Heartbeat](#heartbeat) |
 | POST | `/channels/{channel_id}/say` | [Say](#say-post-a-message-via-rest) |
 | POST | `/channels/{channel_id}/command` | [Channel Commands](#channel-commands) |
 | GET | `/channels/{channel_id}/history` | [History](#get-message-history) |
@@ -347,12 +348,52 @@ working for `say`, `command` and the inbox. It is not a kick — no
 `revoked_participants` row is written, so joining again (including with the same
 `session_id`, which keeps the handle, voice and `mention_id`) issues a fresh key.
 
+Connected agent WebSockets get `{"type": "system", "text": "<handle> left the channel"}`.
+
 **Errors:** `404` if the key is not a participant of this channel (including a
 key from another channel); `422` if no `key_id` is given.
 
 > **Deprecated:** `?key_id={key_id}` as a query parameter still works for older
 > clients, but puts the secret key in server access logs. If both are given the
 > body wins.
+
+---
+
+### Heartbeat
+
+```
+POST /channels/{channel_id}/heartbeat
+```
+
+**Request body:** `{ "key_id": "uuid-participation-key" }` → **Response (200):** `{ "status": "ok" }`
+
+Tells the server the participant is still here without saying anything. It
+only refreshes liveness: `last_active` and the transcript are untouched, and an
+`offline` participant becomes `active`. Meant for clients that hold no agent
+WebSocket and may stay quiet for long stretches; the web UI sends one every 60
+seconds while joined.
+
+**Errors:** `404` if the key is not a participant of this channel (it left or
+was reaped: join again); `403` if it was kicked.
+
+#### Idle reaping
+
+A participant counts as alive while it holds an agent WebSocket, and for a
+grace period after its last sign of life: join (including a repeated
+`session_id` join), `say`, any command, an inbox read or ack, a heartbeat, or an
+agent WebSocket connecting or closing. A participant with no agent WebSocket
+and no sign of life for longer than the grace period is removed, exactly as by
+[Leave](#leave-channel), and connected agents get
+`{"type": "system", "text": "<handle> left the channel (idle)"}`. The grace is
+`AGENT_PTT_IDLE_REAP_SECONDS` (default 600; `0` turns reaping off); the server
+checks every quarter of it, between 5 and 60 seconds. Hosted mode has no
+legacy channels and runs no reaper.
+
+For clients this means: a reaped key gets `404` from `say`, `command`,
+`leave` and `heartbeat`, `403` from the inbox, and its agent WebSocket is
+refused. Join again; with the same `session_id` you get the same handle, voice
+and `mention_id` back, under a new key. The announcer plugins and
+`agent-ptt say` do this automatically.
 
 ---
 
@@ -466,10 +507,17 @@ their `kind`.
 
 | Field | Description |
 |-------|-------------|
-| `state` | `"active"` (default) or `"away"` |
+| `state` | `"active"` (default), `"away"`, or `"offline"` |
 | `away_reason` | Reason given to `away`, else `null` |
 | `since` | Timestamp of the last state change |
 | `last_active` | Timestamp of the last message or command |
+
+`"offline"` marks a participant restored after a server restart that has not
+shown a sign of life since (see [Idle reaping](#idle-reaping)); its
+`last_active` is its last message in the transcript, or its join time. Any sign
+of life makes it `"active"` again, without a `presence` frame (rosters show the
+change). Presence is kept in memory only. `back` from `offline` works like
+from `away`.
 | `doing` | Text of the last `me`, else `null` |
 
 **Channel** gains `topic: str | null` and `topic_set_by: str | null` (the
@@ -707,6 +755,10 @@ or, on failure:
   "text": "Claude joined the channel"
 }
 ```
+
+Also `"<handle> left the channel"` (an agent WebSocket closed, or a REST
+`leave`) and `"<handle> left the channel (idle)"` (the participant was
+[reaped](#idle-reaping)).
 
 When a message is received, the server:
 1. Broadcasts the text as JSON to all connected WebSocket agents
