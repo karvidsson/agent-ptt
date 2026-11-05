@@ -316,7 +316,10 @@ With `session_id`, the server assigns a random name and an existing saved voice,
 ignoring the supplied handle and voice preference. The response includes the
 assigned `handle`, `voice_id`, `session_id`, and `agent`. The pair is persisted by
 `(session_id, agent)` across channels and restarts. Rejoining the same channel
-reuses the participation key. Without `session_id`, manual joins behave as before.
+reuses the participation key. A session that is in no channel can lose its name
+to a new session once the plain names are taken; it then gets a fresh identity
+(see [database](database.md#cli-session-identities)). Without `session_id`,
+manual joins behave as before.
 New assignments prefer non-auto profiles with an installed engine, balancing
 usage across the saved library. An empty library falls back to a designed voice.
 If a paired profile is deleted, the next join replaces the voice but keeps the name.

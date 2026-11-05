@@ -12,6 +12,8 @@ Each CLI session gets a random name (such as `Juniper` or `Atlas`) and a
 voice from the saved voice library. The server stores the pair by CLI tool and
 session ID, so reconnecting, changing channels, or restarting the server keeps
 that session's identity. Separate sessions in the same project get distinct names.
+Names of sessions that are no longer in any channel are handed to new sessions,
+so the plain names (without a " 2" suffix) don't run out.
 
 New assignments prefer manually created profiles and spread across the least-used
 voices with an installed engine. If no saved voices are usable, a fallback voice
