@@ -621,7 +621,7 @@ def test_stop_drops_unspoken_tool_intents(monkeypatch, tmp_path):
         io.StringIO(json.dumps({"hook_event_name": "Stop", "cwd": "/p", "session_id": "s1"})),
     )
     announce.main()
-    assert "read x.py" not in calls[0][2]
+    assert all("read x.py" not in c[2] for c in calls)
     assert "progress:s1:Claude" not in announce._load_state()
 
 
@@ -729,7 +729,7 @@ def test_stop_hook_active_is_skipped(monkeypatch):
     assert calls == []
 
 
-def test_stop_uses_conversational_completion(monkeypatch):
+def test_stop_without_readable_result_is_silent(monkeypatch):
     calls = []
     monkeypatch.setattr(announce, "announce", lambda *a: calls.append(a[:4]))
     monkeypatch.setattr(
@@ -747,14 +747,7 @@ def test_stop_uses_conversational_completion(monkeypatch):
     )
     monkeypatch.setenv("AGENT_PTT_FORK", "0")
     announce.main()
-    assert calls == [
-        (
-            "s1",
-            "Claude · my-project",
-            "The task ended, but I couldn't read its result.",
-            "my-project",
-        )
-    ]
+    assert calls == []  # no error-sounding line during a normal hand-off
 
 
 def test_stop_announces_transcript_summary(monkeypatch, tmp_path):
@@ -1149,21 +1142,11 @@ def test_prompt_and_stop_update_presence(monkeypatch, tmp_path):
         event.update({"session_id": "s1", "cwd": "/p"})
         monkeypatch.setattr(announce.sys, "stdin", io.StringIO(json.dumps(event)))
         announce.main()
-    assert [c[2] for c in calls] == [
-        "I'm going to fix it.",
-        "The task ended, but I couldn't read its result.",
-    ]
+    # Stop without a readable result says nothing but still marks the session away
+    assert [c[2] for c in calls] == ["I'm going to fix it."]
     assert commands == [
         ("POST", "/channels/c1/command", {"key_id": "k1", "name": "back", "args": ""}),
-        (
-            "POST",
-            "/channels/c1/command",
-            {
-                "key_id": "k1",
-                "name": "away",
-                "args": "The task ended, but I couldn't read its result.",
-            },
-        ),
+        ("POST", "/channels/c1/command", {"key_id": "k1", "name": "away", "args": ""}),
     ]
 
 
@@ -1353,3 +1336,199 @@ def test_message_context_has_host_and_collapsed_paths(monkeypatch, tmp_path):
     assert context["files"] == [{"path": "a.py", "op": "edit"}]
     assert context["host"] and context["branch"] == "main" and context["dirty"] == 0
     assert context["transcript"] == "~/t.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# SessionEnd: leave the channel and forget the session
+# ---------------------------------------------------------------------------
+
+ANNOUNCER_HOOKS = REPO_ROOT / "plugins" / "announcer" / "hooks" / "hooks.json"
+CODEX_TEMPLATE = REPO_ROOT / "plugins" / "codex-announcer" / "hooks.json.template"
+
+
+@pytest.fixture
+def ended_session(monkeypatch, tmp_path):
+    """A session with a cached identity, inbox state and status file; records requests."""
+    monkeypatch.setattr(announce, "INBOX_DIR", tmp_path / "inboxes")
+    monkeypatch.setattr(announce, "STATUS_DIR", tmp_path / "status")
+    monkeypatch.setattr(announce.routing, "CONFIG_FILE", tmp_path / "announcer.env")
+    monkeypatch.delenv("AGENT_PTT_URL", raising=False)
+    monkeypatch.delenv("AGENT_PTT_AGENT", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    identity = f"identity-v2:{announce.BASE_URL}:Claude:s1"
+    state = {
+        identity: {"channel_id": "c1", "key_id": "k1"},
+        "progress:s1:Claude": {"facts": []},
+        "trace:s1:Claude": "t",
+        "task:s1:Claude": "fix it",
+        "last_prompt:s1:Claude": ["fix it"],
+        f"identity-v2:{announce.BASE_URL}:Claude:other": {"channel_id": "c1", "key_id": "k9"},
+        "ended:stale:Claude": time.time() - 2 * announce.ENDED_TTL,
+    }
+    announce.STATE_FILE.write_text(json.dumps(state))
+    inbox = announce._inbox_path("s1")
+    inbox.parent.mkdir(parents=True)
+    inbox.write_text(json.dumps({"channel_id": "c1", "key_id": "k1", "name": "p"}))
+    inbox.with_suffix(".lock").write_text("")
+    (tmp_path / "status").mkdir()
+    (tmp_path / "status" / "s1.json").write_text("{}")
+    requests = []
+    return {"identity": identity, "inbox": inbox, "requests": requests, "tmp": tmp_path}
+
+
+def _session_end(monkeypatch, fake_request, session_id="s1"):
+    monkeypatch.setattr(announce, "_request", fake_request)
+    event = {"hook_event_name": "SessionEnd", "session_id": session_id, "reason": "other"}
+    monkeypatch.setattr(announce.sys, "stdin", io.StringIO(json.dumps(event)))
+    announce.main()
+
+
+def test_session_end_leaves_with_body_and_clears_cache(monkeypatch, ended_session):
+    spoken = []
+    monkeypatch.setattr(announce, "announce", lambda *a: spoken.append(a))
+    requests = ended_session["requests"]
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append((method, path, payload, timeout))
+        return {"status": "left"}
+
+    _session_end(monkeypatch, fake_request)
+
+    # one leave: the inbox participant is the same key, so it isn't left twice
+    assert requests == [("POST", "/channels/c1/leave", {"key_id": "k1"}, 2.0)]
+    assert spoken == []  # nothing is said on exit
+    state = json.loads(announce.STATE_FILE.read_text())
+    for gone in (
+        ended_session["identity"],
+        "progress:s1:Claude",
+        "trace:s1:Claude",
+        "task:s1:Claude",
+        "last_prompt:s1:Claude",
+        "ended:stale:Claude",
+    ):
+        assert gone not in state
+    assert f"identity-v2:{announce.BASE_URL}:Claude:other" in state  # other sessions stay
+    assert "ended:s1:Claude" in state
+    assert not ended_session["inbox"].exists()
+    assert not ended_session["inbox"].with_suffix(".lock").exists()
+    assert not (ended_session["tmp"] / "status" / "s1.json").exists()
+
+
+def test_session_end_also_leaves_a_different_inbox_participant(monkeypatch, ended_session):
+    ended_session["inbox"].write_text(json.dumps({"channel_id": "c2", "key_id": "k2"}))
+    requests = ended_session["requests"]
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append((path, payload))
+        return {"status": "left"}
+
+    _session_end(monkeypatch, fake_request)
+    assert requests == [
+        ("/channels/c1/leave", {"key_id": "k1"}),
+        ("/channels/c2/leave", {"key_id": "k2"}),
+    ]
+
+
+@pytest.mark.parametrize("code", [422, 405])
+def test_session_end_falls_back_to_query_param_on_older_servers(monkeypatch, ended_session, code):
+    requests = ended_session["requests"]
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append((path, payload))
+        if payload is not None:
+            raise urllib.error.HTTPError(path, code, "old server", {}, None)
+        return {"status": "left"}
+
+    _session_end(monkeypatch, fake_request)
+    assert requests == [
+        ("/channels/c1/leave", {"key_id": "k1"}),
+        ("/channels/c1/leave?key_id=k1", None),
+    ]
+    assert ended_session["identity"] not in json.loads(announce.STATE_FILE.read_text())
+
+
+def test_session_end_stops_after_the_server_is_unreachable(monkeypatch, ended_session):
+    ended_session["inbox"].write_text(json.dumps({"channel_id": "c2", "key_id": "k2"}))
+    requests = ended_session["requests"]
+
+    def fake_request(method, path, payload=None, timeout=None):
+        requests.append(path)
+        raise urllib.error.URLError("connection refused")
+
+    _session_end(monkeypatch, fake_request)  # must not raise
+    assert requests == ["/channels/c1/leave"]  # no retries against a dead server
+    assert ended_session["identity"] not in json.loads(announce.STATE_FILE.read_text())
+
+
+def test_session_end_without_cached_identity_is_a_no_op(monkeypatch, tmp_path):
+    monkeypatch.setattr(announce, "INBOX_DIR", tmp_path / "inboxes")
+    monkeypatch.setattr(announce, "STATUS_DIR", tmp_path / "status")
+    requests = []
+    _session_end(monkeypatch, lambda *a, **k: requests.append(a))
+    assert requests == []
+
+
+def test_session_end_from_a_subagent_is_ignored(monkeypatch, ended_session):
+    requests = ended_session["requests"]
+    monkeypatch.setattr(announce, "_request", lambda *a, **k: requests.append(a))
+    event = {"hook_event_name": "SessionEnd", "session_id": "s1", "agent_id": "a1"}
+    monkeypatch.setattr(announce.sys, "stdin", io.StringIO(json.dumps(event)))
+    announce.main()
+    assert requests == []
+    assert ended_session["identity"] in json.loads(announce.STATE_FILE.read_text())
+
+
+def test_late_stop_after_session_end_does_not_rejoin(monkeypatch, ended_session, tmp_path):
+    """An async Stop hook still summarizing at exit must not bring the session back."""
+    monkeypatch.setattr(announce, "_request", lambda *a, **k: {"status": "left"})
+    _session_end(monkeypatch, announce._request)
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi."}]}})
+    )
+    spoken = []
+    monkeypatch.setattr(announce, "announce", lambda *a: spoken.append(a[2]))
+    stop = {"hook_event_name": "Stop", "session_id": "s1", "transcript_path": str(transcript)}
+    monkeypatch.setattr(announce.sys, "stdin", io.StringIO(json.dumps(stop)))
+    announce.main()
+    assert spoken == []
+
+    # A resumed session (same ID) speaks again from its next prompt on
+    monkeypatch.setattr(announce, "summarize_with_agent", lambda prompt, limit=140: "fix it")
+    prompt = {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "fix it"}
+    monkeypatch.setattr(announce.sys, "stdin", io.StringIO(json.dumps(prompt)))
+    announce.main()
+    assert spoken == ["I'm going to fix it."]
+
+
+def test_session_end_hook_exits_zero_when_server_down(tmp_path):
+    state = tmp_path / ".agent-ptt" / "announcer-state.json"
+    state.parent.mkdir()
+    url = "http://localhost:19999"
+    state.write_text(
+        json.dumps({f"identity-v2:{url}:Claude:s1": {"channel_id": "c", "key_id": "k"}})
+    )
+    start = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, str(ANNOUNCE_PY)],
+        input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "s1", "cwd": "/tmp"}),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={"PATH": "/usr/bin:/bin", "AGENT_PTT_URL": url, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == "" and proc.stderr == ""
+    assert time.monotonic() - start < 5
+    assert "identity-v2" not in state.read_text()
+
+
+@pytest.mark.parametrize("path", [ANNOUNCER_HOOKS, CODEX_TEMPLATE])
+def test_hooks_register_a_synchronous_session_end(path):
+    entries = json.loads(path.read_text())["hooks"]["SessionEnd"]
+    hooks = [hook for entry in entries for hook in entry["hooks"]]
+    assert len(hooks) == 1
+    assert "announce.py" in hooks[0]["command"]
+    assert not hooks[0].get("async")  # the host may kill async hooks at exit
+    # Claude Code waits 1.5s for SessionEnd unless the hook sets its own timeout
+    assert hooks[0]["timeout"] > announce.LEAVE_BUDGET

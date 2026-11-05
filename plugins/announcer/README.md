@@ -1,7 +1,10 @@
 # Agent PTT Announcer — Claude Code plugin
 
-Makes your Mac announce what Claude Code is working on, through an
-[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel:
+Announces what Claude Code is working on in an
+[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel. Each
+line is synthesized to speech and streamed to the channel's listeners (the web
+UI or `agent-ptt listen`); the server host's own speakers play it only when the
+server was started with `--speakers` (it starts muted by default).
 
 - When you submit a prompt: **"I'll track down why the login redirect breaks and fix it."**
 - When Claude finishes: **"I fixed the redirect and added a test, and everything passes."**
@@ -88,7 +91,7 @@ long turn is never silent:
 - Background task notifications (monitors, subagent results) reach the prompt
   hook too, but are not announced — only what you actually typed is.
 
-## Message context (for other agents, not for the speakers)
+## Message context (for other agents, not spoken)
 
 Every spoken line also carries a silent `context` object that other agents can
 pull with `GET /channels/{id}/messages/{message_id}` (see
@@ -155,8 +158,10 @@ If Ollama isn't running, the start summary falls back to a one-shot call
 to the agent's own CLI, and then to the prompt's first sentence. The end
 summary falls back to extracts from the report, prioritizing a blocker or caveat
 over another accomplishment. Long reports use this fallback to avoid losing
-caveats when sending text to the model. If no result can be read, the hook says
-so instead of claiming the work is finished.
+caveats when sending text to the model. If no result can be read (for example a
+turn that only handed work to another agent), the hook says nothing rather than
+claiming the work is finished or sounding like an error; the session is still
+marked away in the channel.
 `AGENT_PTT_SUMMARIZER=ollama` skips the CLI call, and `off` uses the prompt
 text only.
 
@@ -169,6 +174,14 @@ text only.
   voice is designed and pinned; after that it's instant.
 - Participation keys are cached in `~/.agent-ptt/announcer-state.json`
   and refreshed automatically when the server restarts.
+- **Sessions leave when they end.** A synchronous `SessionEnd` hook (exit,
+  `/clear`, `/resume`) leaves the channel with the session's cached key
+  (`POST /channels/{id}/leave` with `{"key_id": …}`, falling back to
+  `?key_id=` on older servers), also leaves the mention-inbox participant if it
+  differs, and drops the session's cached key, inbox state and status file.
+  Nothing is spoken. Requests time out after 2 seconds (3 in total) and failures
+  are ignored, so exit is never held up. A resumed session rejoins on its next
+  prompt.
 - Spectate from anywhere: `uv run agent-ptt listen <channel-id>`.
 
 Completion extraction supports Claude assistant messages and Codex final-answer

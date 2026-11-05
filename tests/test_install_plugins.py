@@ -63,7 +63,13 @@ def test_install_codex_writes_fresh_hooks_json(tmp_path):
     config = json.loads(target.read_text())
     command = config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert str(REPO_ROOT / "plugins" / "codex-announcer" / "announce.py") in command
-    assert set(config["hooks"]) == {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+    assert set(config["hooks"]) == {
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "SessionEnd",
+    }
 
 
 def test_install_codex_replaces_stale_paths_and_keeps_other_hooks(tmp_path):

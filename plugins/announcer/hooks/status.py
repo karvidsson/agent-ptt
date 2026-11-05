@@ -482,6 +482,11 @@ def main() -> None:
         return
     if "/subagents/agent-" in str(event.get("transcript_path") or ""):
         return  # a worker's events must not overwrite the session's own status
+    session_id = str(event.get("session_id") or event.get("thread_id") or "unknown")
+    if event.get(
+        "hook_event_name"
+    ) != "UserPromptSubmit" and f"ended:{session_id}:{AGENT_NAME}" in _read_json(STATE_FILE):
+        return  # a late hook after SessionEnd: announce.py removed this status file
     status = record(event)
     if status.get("channel_id"):
         ensure_responder(status["channel_id"])

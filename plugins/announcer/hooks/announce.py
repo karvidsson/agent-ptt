@@ -4,7 +4,8 @@
 Both tools send the same hook JSON on stdin, so one script serves both.
 Announces in an Agent PTT voice channel what the current agent is doing:
 - UserPromptSubmit -> "I'm going to <short summary of the prompt>."
-- Stop            -> "<short summary of the result>."
+- Stop            -> "<short summary of the result>." (silent when there is none)
+- SessionEnd      -> leaves the channel (unspoken) and forgets the session's key.
 
 Summaries come from a small local model via Ollama when one is running,
 else from a one-shot call to the agent's own CLI, else from the prompt text.
@@ -23,6 +24,7 @@ hosts without async hook support are never blocked. Stdlib only.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -32,6 +34,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -77,6 +80,12 @@ OLLAMA_TIMEOUT = 15
 MAX_LLM_INPUT_CHARS = 4000
 PROGRESS_INTERVAL = 45
 MAX_PROGRESS_FACTS = 3
+# SessionEnd runs while the host is exiting: keep every leave request short.
+LEAVE_TIMEOUT = 2.0
+LEAVE_BUDGET = 3.0  # total seconds for all leave requests of one session
+ENDED_TTL = 60 * 60  # how long a session-ended marker blocks late Stop hooks
+INBOX_DIR = Path.home() / ".agent-ptt" / "inboxes"  # receive.py's per-session state
+STATUS_DIR = Path.home() / ".agent-ptt" / "status"  # status.py's per-session files
 
 
 def _api_key() -> str:
@@ -848,6 +857,13 @@ def announce(
         _say(channel_id, key_id, text, context)
 
 
+def _resume_session(event: dict) -> None:
+    session_id, _ = routing.session_context(event)
+    state = _load_state()
+    if state.pop(_ended_key(session_id), None) is not None:
+        _save_state(state)
+
+
 def _remember_task(event: dict, prompt: str) -> None:
     session_id, _ = routing.session_context(event)
     task = summarize_prompt(prompt, 200)
@@ -929,8 +945,104 @@ def presence(event: dict, name: str, args: str = "") -> None:
         )
 
 
+def _ended_key(session_id: str | None) -> str:
+    return f"ended:{session_id}:{AGENT_NAME}"
+
+
+def session_ended(event: dict) -> bool:
+    """True after SessionEnd, so a late async hook doesn't rejoin the channel."""
+    session_id, _ = routing.session_context(event)
+    if not session_id or session_id == "unknown":
+        return False
+    return _ended_key(session_id) in _load_state()
+
+
+def _leave(channel_id: str, key_id: str, timeout: float) -> None:
+    """POST /leave with the key in the body; older servers only take ?key_id=."""
+    try:
+        _request("POST", f"/channels/{channel_id}/leave", {"key_id": key_id}, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code not in {405, 422}:
+            raise
+        query = urllib.parse.urlencode({"key_id": key_id})
+        _request("POST", f"/channels/{channel_id}/leave?{query}", timeout=timeout)
+
+
+def _inbox_path(session_id: str) -> Path:
+    """receive.py's state file for this session (same digest as receive.deliver)."""
+    base = routing.setting("AGENT_PTT_URL", "http://localhost:8770").rstrip("/")
+    _, agent = routing.session_context()
+    digest = hashlib.sha256(json.dumps([base, agent, session_id]).encode()).hexdigest()
+    return INBOX_DIR / f"{digest}.json"
+
+
+def session_end(event: dict) -> None:
+    """Leave the channel(s) this session joined and forget its per-session state.
+
+    Local cleanup happens first, so a host that kills the hook mid-request
+    still leaves a clean cache: the next turn of a resumed session rejoins.
+    Network work is bounded by LEAVE_BUDGET and stops at the first sign that
+    the server is unreachable.
+    """
+    session_id, _ = routing.session_context(event)
+    if not session_id or session_id == "unknown":
+        return
+    targets: list[tuple[str, str]] = []
+
+    state = _load_state()
+    cached = state.pop(f"identity-v2:{BASE_URL}:{AGENT_NAME}:{session_id}", None)
+    if isinstance(cached, dict) and cached.get("channel_id") and cached.get("key_id"):
+        targets.append((cached["channel_id"], cached["key_id"]))
+    for key in (
+        _progress_key(event),
+        _trace_key(session_id),
+        f"task:{session_id}:{AGENT_NAME}",
+        f"last_prompt:{session_id}:{AGENT_NAME}",
+    ):
+        state.pop(key, None)
+    now = time.time()
+    for key, value in list(state.items()):  # forget old markers, keep the file small
+        if key.startswith("ended:") and not (
+            isinstance(value, (int, float)) and now - value < ENDED_TTL
+        ):
+            del state[key]
+    state[_ended_key(session_id)] = now
+    _save_state(state)
+
+    # receive.py registers the session for mentions; usually the same participant
+    with contextlib.suppress(Exception):
+        inbox = _inbox_path(session_id)
+        try:
+            data = json.loads(inbox.read_text())
+        except (OSError, ValueError):
+            data = {}
+        if isinstance(data, dict) and data.get("channel_id") and data.get("key_id"):
+            target = (data["channel_id"], data["key_id"])
+            if target not in targets:
+                targets.append(target)
+        inbox.unlink(missing_ok=True)
+        inbox.with_suffix(".lock").unlink(missing_ok=True)
+    # status.py's file holds the key its responder speaks with; the key is gone now
+    with contextlib.suppress(Exception):
+        (STATUS_DIR / f"{session_id}.json").unlink(missing_ok=True)
+
+    deadline = time.monotonic() + LEAVE_BUDGET
+    for channel_id, key_id in targets:
+        remaining = deadline - time.monotonic()
+        if remaining < 0.1:
+            return
+        try:
+            _leave(channel_id, key_id, min(LEAVE_TIMEOUT, remaining))
+        except urllib.error.HTTPError:
+            continue  # e.g. 404: already gone; the server is up, try the next one
+        except Exception:
+            return  # unreachable or timed out: don't spend the exit budget on retries
+
+
 def announce_from(event: dict, text: str) -> None:
     """Route a spoken line to this session's channel and voice."""
+    if session_ended(event):
+        return  # a late Stop/tool hook after SessionEnd must not rejoin the channel
     session_id, _ = routing.session_context(event)
     project = project_name(event.get("cwd"))
     handle = f"{AGENT_NAME} · {project}"
@@ -950,12 +1062,19 @@ def main() -> None:
 
     event = json.load(sys.stdin)
     event_name = event.get("hook_event_name", "")
-    if event_name not in {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}:
+    if event_name not in {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"}:
         return
     if event_name == "Stop" and event.get("stop_hook_active"):
         return
     if _is_subagent(event):
         return  # the session already said "hand off a subtask: …" when it started the worker
+    if event_name == "SessionEnd":
+        # Synchronous on purpose: the host may kill a forked child at exit, and the
+        # requests are bounded by LEAVE_BUDGET. Nothing is spoken.
+        session_end(event)
+        return
+    if event_name == "UserPromptSubmit":
+        _resume_session(event)  # a resumed session (same ID) may speak and join again
 
     # Summaries can take seconds; never make the host wait for them
     _detach()
@@ -996,8 +1115,12 @@ def main() -> None:
             if spoken:
                 completion = _normalize_completion_summary(spoken)
             else:
-                summary = _normalize_completion_summary(summarize_transcript(transcript))
-                completion = summary or "The task ended, but I couldn't read its result."
+                completion = _normalize_completion_summary(summarize_transcript(transcript))
+            if not completion:
+                # Nothing readable (e.g. a turn that only handed work off): stay
+                # silent rather than sound like an error, but still mark away.
+                presence(event, "away")
+                return
             text = completion
 
     announce_from(event, text)

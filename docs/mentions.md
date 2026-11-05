@@ -33,6 +33,7 @@ Receiving is independent of the announcement toggle.
 | Finishing its turn | A synchronous `Stop` hook supplies the messages as a continuation. |
 | Starting a new turn | `UserPromptSubmit` supplies pending mentions with the new prompt. |
 | Already idle or disconnected | Messages stay pending until another hook event runs. There is no automatic idle wake-up in this version. |
+| Session ended | The announcer's `SessionEnd` hook leaves the channel, which drops the receiver; mentions stop queuing. A resumed session registers again at its next hook event. |
 
 Only the currently selected channel is checked. Switching away leaves the old
 channel's messages pending until the session returns. A continued Stop hook

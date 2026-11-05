@@ -90,6 +90,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/announce.py",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

@@ -1,5 +1,5 @@
 ---
-description: Speak a message aloud through the Agent PTT voice channel on the user's speakers. Use when the user asks to announce, say, speak, or narrate something out loud — e.g. "announce that the build is green", "tell the channel we're deploying", "say it out loud".
+description: Speak a message aloud in the Agent PTT voice channel — synthesized to speech and streamed to the channel's listeners (web UI, `agent-ptt listen`). Use when the user asks to announce, say, speak, or narrate something out loud — e.g. "announce that the build is green", "tell the channel we're deploying", "say it out loud".
 argument-hint: [message]
 allowed-tools: Bash(python3 *say.py*)
 ---
@@ -16,7 +16,9 @@ script with it.
 
 Guidelines for the message:
 - Keep it short and speech-friendly — one or two sentences, no markdown, no
-  code, no URLs. It will be synthesized to audio and played on speakers.
+  code, no URLs. It is synthesized to speech and streamed to the channel's
+  listeners (the web UI or `agent-ptt listen`); the server host's own
+  speakers play it only if the server was started with `--speakers`.
 - Numbers and identifiers should be listenable ("forty-two tests passed",
   not "42/42 ✓").
 
