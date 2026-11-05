@@ -1735,7 +1735,11 @@ ___( o)&gt;
   async function leave() {
     if (state.keyId && state.channelId) {
       try {
-        await api(`${httpBase}/channels/${state.channelId}/leave?key_id=${encodeURIComponent(state.keyId)}`, { method: "POST" });
+        await api(`${httpBase}/channels/${state.channelId}/leave`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key_id: state.keyId }),
+        });
       } catch {}
     }
     forgetJoin();

@@ -327,13 +327,32 @@ If a paired profile is deleted, the next join replaces the voice but keeps the n
 ### Leave Channel
 
 ```
-POST /channels/{channel_id}/leave?key_id={key_id}
+POST /channels/{channel_id}/leave
+```
+
+**Request body:**
+```json
+{ "key_id": "uuid-participation-key" }
 ```
 
 **Response (200):**
 ```json
 { "status": "left" }
 ```
+
+Leaving is persistent: the participant is removed from the roster, its key is
+detached from the channel in `participant_keys` and its mention receiver is
+dropped, so a server restart does not bring it back and the old key stops
+working for `say`, `command` and the inbox. It is not a kick — no
+`revoked_participants` row is written, so joining again (including with the same
+`session_id`, which keeps the handle, voice and `mention_id`) issues a fresh key.
+
+**Errors:** `404` if the key is not a participant of this channel (including a
+key from another channel); `422` if no `key_id` is given.
+
+> **Deprecated:** `?key_id={key_id}` as a query parameter still works for older
+> clients, but puts the secret key in server access logs. If both are given the
+> body wins.
 
 ---
 

@@ -54,13 +54,22 @@ def test_join_persists_key(db_session):
     assert row.handle == "Claude"
 
 
-def test_leave_channel_and_get_participant():
+def test_leave_channel_and_get_participant(db_session):
     created = ch.create_channel("Room")
-    key = ch.join_channel(created.channel_id, "Claude")
+    key = ch.join_channel(created.channel_id, "Claude", db=db_session)
     assert ch.get_participant(key.key_id) is key
-    assert ch.leave_channel(key.key_id) is True
+    assert ch.leave_channel(created.channel_id, key.key_id, db_session) is True
     assert ch.get_participant(key.key_id) is None
-    assert ch.leave_channel(key.key_id) is False
+    assert ch.leave_channel(created.channel_id, key.key_id, db_session) is False
+
+
+def test_leave_channel_requires_the_participants_own_channel(db_session):
+    room = ch.create_channel("Room")
+    other = ch.create_channel("Other")
+    key = ch.join_channel(room.channel_id, "Claude", db=db_session)
+    assert ch.leave_channel(other.channel_id, key.key_id, db_session) is False
+    assert ch.leave_channel("missing", key.key_id, db_session) is False
+    assert ch.get_participant(key.key_id) is key
 
 
 async def test_send_message():

@@ -187,7 +187,10 @@ Leave the current channel.
 agent-ptt leave
 ```
 
-No arguments needed — uses the session saved by `join`.
+No arguments needed — uses the session saved by `join`. The key is sent in the
+request body (`POST /channels/{id}/leave`), never in the URL. Leaving is
+persistent: a server restart does not put you back in the roster; run `join`
+again to return (you get a new key).
 
 ---
 

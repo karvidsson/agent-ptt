@@ -72,7 +72,7 @@ Only live connections are lost — WebSocket spectators reconnect, and audio alr
 | `key_id` | TEXT (PK) | UUID participation key |
 | `handle` | TEXT | Display name |
 | `voice_id` | TEXT | Associated voice profile (nullable) |
-| `channel_id` | TEXT | Current channel (nullable; cleared when the participant is removed) |
+| `channel_id` | TEXT | Current channel (nullable; cleared when the participant leaves, is kicked or the channel is archived, so `restore_channels()` skips it) |
 | `created_at` | DATETIME | Creation timestamp |
 
 ### `pinned_voices`

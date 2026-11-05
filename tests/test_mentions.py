@@ -82,7 +82,7 @@ def test_pending_mentions_survive_restart_and_rejoin(client):
     with SessionLocal() as db:
         channel.restore_channels(db)
     assert inbox(client, cid, a).json()[0]["message_id"] == mid
-    channel.leave_channel(a["key_id"])
+    assert client.post(f"/channels/{cid}/leave", json={"key_id": a["key_id"]}).status_code == 200
     again = join(client, cid, "a")
     assert again["mention_id"] == a["mention_id"]
     assert again["key_id"] != a["key_id"]

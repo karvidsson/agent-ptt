@@ -43,7 +43,7 @@ def fake_post(monkeypatch):
     state = {"status": 200, "body": {"ok": True, "name": "", "result": {}}}
 
     def post(url, json=None, headers=None, **kwargs):
-        calls.append({"url": url, "json": json, "headers": headers})
+        calls.append({"url": url, "json": json, "headers": headers, "params": kwargs.get("params")})
         body = state["body"]
         return SimpleNamespace(
             status_code=state["status"], json=lambda: body, text=json_mod.dumps(body)
@@ -281,3 +281,21 @@ def test_auth_header_is_sent(session, fake_post, monkeypatch):
     result = runner.invoke(cli.app, ["back"])
     assert result.exit_code == 0
     assert fake_post.calls[0]["headers"] == {"Authorization": "Bearer secret"}
+
+
+# ---------------------------------------------------------------------------
+# leave
+# ---------------------------------------------------------------------------
+
+
+def test_leave_sends_key_in_body_not_query(session, fake_post):
+    fake_post.respond({}, body={"status": "left"})
+    result = runner.invoke(cli.app, ["leave"])
+    assert result.exit_code == 0, result.output
+    call = fake_post.calls[0]
+    assert call["url"].endswith(f"/channels/{CHANNEL}/leave")
+    assert call["json"] == {"key_id": KEY}
+    assert call["params"] is None
+    assert KEY not in call["url"]
+    saved = json.loads(session.read_text())
+    assert "key_id" not in saved and "channel_id" not in saved

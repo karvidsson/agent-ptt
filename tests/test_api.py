@@ -183,14 +183,50 @@ def test_join_unknown_channel(client):
 def test_leave_channel(client):
     channel_id = _create_channel(client)
     key_id = _join(client, channel_id)
-    resp = client.post(f"/channels/{channel_id}/leave", params={"key_id": key_id})
+    resp = client.post(f"/channels/{channel_id}/leave", json={"key_id": key_id})
     assert resp.status_code == 200
     assert resp.json() == {"status": "left"}
+    assert client.get(f"/channels/{channel_id}").json()["participants"] == {}
+
+
+def test_leave_channel_with_deprecated_query_param(client):
+    channel_id = _create_channel(client)
+    key_id = _join(client, channel_id)
+    resp = client.post(f"/channels/{channel_id}/leave", params={"key_id": key_id})
+    assert resp.status_code == 200
+    assert client.get(f"/channels/{channel_id}").json()["participants"] == {}
+
+
+def test_leave_body_wins_over_query(client):
+    channel_id = _create_channel(client)
+    first = _join(client, channel_id, handle="A")
+    second = _join(client, channel_id, handle="B")
+    resp = client.post(
+        f"/channels/{channel_id}/leave", params={"key_id": second}, json={"key_id": first}
+    )
+    assert resp.status_code == 200
+    participants = client.get(f"/channels/{channel_id}").json()["participants"]
+    assert [p["handle"] for p in participants.values()] == ["B"]
+
+
+def test_leave_without_key_is_rejected(client):
+    channel_id = _create_channel(client)
+    assert client.post(f"/channels/{channel_id}/leave").status_code == 422
+    assert client.post(f"/channels/{channel_id}/leave", json={}).status_code == 422
+
+
+def test_leave_with_key_from_another_channel(client):
+    channel_id = _create_channel(client)
+    other = _create_channel(client, name="Other")
+    key_id = _join(client, other)
+    resp = client.post(f"/channels/{channel_id}/leave", json={"key_id": key_id})
+    assert resp.status_code == 404
+    assert len(client.get(f"/channels/{other}").json()["participants"]) == 1
 
 
 def test_leave_with_unknown_key(client):
     channel_id = _create_channel(client)
-    resp = client.post(f"/channels/{channel_id}/leave", params={"key_id": "nonexistent"})
+    resp = client.post(f"/channels/{channel_id}/leave", json={"key_id": "nonexistent"})
     assert resp.status_code == 404
 
 
