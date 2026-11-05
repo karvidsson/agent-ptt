@@ -21,6 +21,7 @@ dependencies = [
     "sounddevice",
     "soundfile",
     "numpy",
+    "scipy",
     "pydantic>=2",
     "typer[all]",
     "rich",
@@ -53,7 +54,7 @@ torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 server = [
     "fastapi", "uvicorn[standard]", "websockets", "pydantic>=2",
     "sqlalchemy>=2", "alembic", "psycopg[binary]>=3.2,<4",
-    "pocket-tts>=1.0,<2", "soundfile", "numpy", "torch>=2.5",
+    "pocket-tts>=1.0,<2", "soundfile", "numpy", "scipy", "torch>=2.5",
 ]
 dev = [
     "pytest>=9.1.1",

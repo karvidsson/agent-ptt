@@ -855,7 +855,7 @@ def voice_preview(
     import asyncio
 
     from agent_ptt.models import VoiceProfile
-    from agent_ptt.tts import get_backend
+    from agent_ptt.tts import get_backend, synthesize_speech
 
     base = _get_base_url()
     resp = httpx.get(f"{base}/voices/profiles/{voice_id}", headers=_auth_headers())
@@ -874,7 +874,7 @@ def voice_preview(
         raise typer.Exit(1) from None
 
     rprint(f"[bold green]🎧 Synthesizing preview[/bold green] ({profile.engine})...")
-    audio_bytes = asyncio.run(backend.synthesize(text, profile))
+    audio_bytes = asyncio.run(synthesize_speech(backend, text, profile))
     _play_audio_bytes(audio_bytes)
     rprint("[bold green]✅ Done[/bold green]")
 

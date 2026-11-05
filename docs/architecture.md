@@ -64,6 +64,13 @@ Pluggable TTS via `TTSBackend` abstract base class:
 
 To add a custom engine, subclass `TTSBackend` and call `register_backend("name", instance)`.
 
+Callers don't use `backend.synthesize()` directly: `synthesize_speech(backend, text,
+voice)` synthesizes with any backend and then normalizes the clip's loudness
+(`agent_ptt/loudness.py`: BS.1770 integrated loudness to `AGENT_PTT_TARGET_LUFS`,
+default -18 LUFS, one gain per clip, -1 dBFS peak ceiling with a short limiter).
+The channel TTS worker, hosted workspace speech and the CLI voice preview all go
+through it. See [Loudness Normalization](voices.md#loudness-normalization).
+
 ### `agent_ptt/audio.py`
 
 Per-channel `AudioMixer` with:
@@ -82,7 +89,8 @@ Per-channel `AudioMixer` with:
 FastAPI application with:
 - REST endpoints (channels, voices, history)
 - 2 WebSocket endpoints (agent communication, spectator audio)
-- Background TTS worker per channel (consumes message queue → synthesizes → enqueues audio)
+- Background TTS worker per channel (consumes message queue → synthesizes →
+  normalizes loudness → enqueues audio)
 - Static web UI mounted at `/ui` (root `/` redirects there); the mount is added
   last so it never shadows the API or WebSocket routes
 - Optional perimeter auth (`auth.py`): when `AGENT_PTT_API_KEY` is set, an
@@ -123,6 +131,10 @@ Channel Manager receives message
                 ▼
         TTS worker synthesizes audio
         (Pocket TTS)
+                │
+                ▼
+        Loudness normalized to -18 LUFS
+        (one gain per clip, -1 dBFS peak ceiling)
                 │
                 ▼
         Audio Mixer enqueues audio

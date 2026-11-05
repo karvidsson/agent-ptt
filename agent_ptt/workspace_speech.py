@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from agent_ptt.db import SessionLocal, get_db
 from agent_ptt.models import VoiceProfile
-from agent_ptt.tts import POCKET_VOICES, get_backend
+from agent_ptt.tts import POCKET_VOICES, get_backend, synthesize_speech
 from agent_ptt.workspace_auth import (
     Principal,
     authenticate,
@@ -99,7 +99,7 @@ async def synthesize(org_id: str, data: dict) -> bytes:
             engine="pocket-tts",
             settings={"voice": data["voice"]["id"]},
         )
-        return await get_backend("pocket-tts").synthesize(data["text"], profile)
+        return await synthesize_speech(get_backend("pocket-tts"), data["text"], profile)
 
     task = asyncio.create_task(work())
     _tasks.add(task)

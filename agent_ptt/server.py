@@ -48,7 +48,7 @@ from agent_ptt.models import (
     public_participant_id,
 )
 from agent_ptt.session_identity import get_session_identity
-from agent_ptt.tts import get_backend
+from agent_ptt.tts import get_backend, synthesize_speech
 from agent_ptt.voicedesign import (
     get_or_create_pinned_voice,
     list_pinned_voices,
@@ -121,7 +121,7 @@ async def _tts_worker(channel_id: str) -> None:
 
         try:
             backend = get_backend(voice.engine)
-            audio_bytes = await backend.synthesize(spoken_text, voice)
+            audio_bytes = await synthesize_speech(backend, spoken_text, voice)
             with SessionLocal() as moderation_db:
                 revoked = moderation_db.get(RevokedParticipantDB, msg.sender_key) is not None
             if not revoked:

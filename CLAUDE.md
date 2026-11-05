@@ -40,7 +40,7 @@ Run pytest and ruff before committing. Tests fake out TTS and speaker playback (
 
 Single package `agent_ptt/`, three layers: Typer CLI client → FastAPI server → services (channel manager, TTS, audio mixer, DB).
 
-Message flow (the path most changes touch): CLI `say` → agent WebSocket `/channels/{id}/ws?key=...` → `channel.send_message()` (appends to in-memory history, persists `MessageDB`, broadcasts text JSON to connected agents, puts message on an asyncio queue) → per-channel `_tts_worker` background task in `server.py` dequeues → `tts.synthesize()` → `AudioMixer.enqueue()` in `audio.py` → sequential fan-out of raw audio bytes to spectator WebSockets (`/channels/{id}/audio`), paced at clip duration + 200ms gap; with speakers enabled the pacing comes from actual playback on the host (`sounddevice`), muted (the default, `audio.speakers_enabled()`) it is a sleep and `sounddevice` is never imported.
+Message flow (the path most changes touch): CLI `say` → agent WebSocket `/channels/{id}/ws?key=...` → `channel.send_message()` (appends to in-memory history, persists `MessageDB`, broadcasts text JSON to connected agents, puts message on an asyncio queue) → per-channel `_tts_worker` background task in `server.py` dequeues → `tts.synthesize_speech()` (backend synthesis + per-clip loudness normalization, `loudness.py`) → `AudioMixer.enqueue()` in `audio.py` → sequential fan-out of raw audio bytes to spectator WebSockets (`/channels/{id}/audio`), paced at clip duration + 200ms gap; with speakers enabled the pacing comes from actual playback on the host (`sounddevice`), muted (the default, `audio.speakers_enabled()`) it is a sleep and `sounddevice` is never imported.
 
 Key design points:
 
