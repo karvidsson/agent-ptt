@@ -63,6 +63,25 @@ class FakeMixer:
         pass
 
 
+_SPEAKER_ENV = ("AGENT_PTT_SPEAKERS", "AGENT_PTT_MUTE")
+
+
+@pytest.fixture(autouse=True)
+def isolate_speaker_env():
+    """Start every test muted-by-default; undo direct os.environ writes.
+
+    `server start` pins the speaker mode in os.environ itself, which
+    monkeypatch wouldn't roll back, so save and restore by hand.
+    """
+    saved = {name: os.environ.pop(name, None) for name in _SPEAKER_ENV}
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
 @pytest.fixture(autouse=True)
 def clean_state():
     """Reset in-memory registries and persisted rows between tests.

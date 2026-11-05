@@ -69,24 +69,51 @@ server_app = typer.Typer(help="Server management")
 app.add_typer(server_app, name="server")
 
 
+def apply_speaker_mode(flag: bool | None) -> bool:
+    """Resolve the speaker mode and pin it in the env for the server process.
+
+    An explicit flag wins over AGENT_PTT_SPEAKERS / AGENT_PTT_MUTE; with no
+    flag the env decides (muted unless AGENT_PTT_SPEAKERS is truthy).
+    """
+    from agent_ptt.audio import speakers_enabled
+
+    enabled = speakers_enabled(flag)
+    if enabled:
+        os.environ["AGENT_PTT_SPEAKERS"] = "1"
+        os.environ.pop("AGENT_PTT_MUTE", None)
+    else:
+        os.environ["AGENT_PTT_MUTE"] = "1"
+    return enabled
+
+
 @server_app.command("start")
 def server_start(
     host: str = typer.Option("0.0.0.0", help="Bind host"),
     port: int = typer.Option(8770, help="Bind port"),
+    speakers: bool | None = typer.Option(
+        None,
+        "--speakers/--no-speakers",
+        help="Also play speech on this machine's speakers (default: off, or "
+        "AGENT_PTT_SPEAKERS=1). Listeners get the audio stream either way.",
+        show_default=False,
+    ),
     mute: bool = typer.Option(
         False,
         "--mute",
-        help="Disable local speaker playback while keeping streamed audio available",
+        hidden=True,
+        help="Deprecated: same as --no-speakers (muted is now the default)",
     ),
 ):
-    """Start the Agent PTT server."""
+    """Start the Agent PTT server.
+
+    Speech is synthesized and streamed to listeners (web UI, `agent-ptt listen`);
+    it plays on the host's own speakers only with --speakers.
+    """
     import logging
-    import os
 
     import uvicorn
 
-    if mute:
-        os.environ["AGENT_PTT_MUTE"] = "1"
+    apply_speaker_mode(False if mute else speakers)
     # Make app loggers (TTS pipeline, audio mixer) visible alongside uvicorn's
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 

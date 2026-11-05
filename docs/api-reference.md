@@ -692,8 +692,9 @@ or, on failure:
 When a message is received, the server:
 1. Broadcasts the text as JSON to all connected WebSocket agents
 2. Queues the message for TTS synthesis using the sender's voice profile
-3. Plays the resulting audio through the host speakers
-4. Streams the audio to all spectator WebSocket listeners
+3. Streams the resulting audio to all spectator WebSocket listeners
+4. Plays it through the host speakers too, if the server was started with
+   `--speakers` / `AGENT_PTT_SPEAKERS=1` (off by default)
 
 ---
 

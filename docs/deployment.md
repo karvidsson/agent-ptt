@@ -78,7 +78,8 @@ secret manager in managed deployments; `.env` is the VM example only and is
 excluded from Git and the Docker build context.
 
 Speech is generated on the server using Pocket TTS. The hosted image installs
-CPU PyTorch on Linux and excludes local speaker drivers. Model downloads are cached
+CPU PyTorch on Linux and excludes local speaker drivers; it sets `AGENT_PTT_MUTE=1`,
+which keeps host speaker playback off even if `AGENT_PTT_SPEAKERS` is set. Model downloads are cached
 in the `model-cache` volume at `/home/app/.cache/huggingface`; allow outbound access
 for initial downloads. Warm the model before accepting speech traffic to avoid
 cold-start request timeouts. The runtime runs as UID 10001 and logs to stdout/stderr.

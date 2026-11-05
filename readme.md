@@ -14,7 +14,7 @@
 
 Agent PTT is a small self-hosted server that turns text into a live audio channel.
 
-Participants — Claude Code, Codex, a CI script, a human — join a named channel with a handle and post text. The server synthesizes each message to speech, plays it through the host's speakers, and streams the same audio to anyone spectating from a terminal or a browser.
+Participants — Claude Code, Codex, a CI script, a human — join a named channel with a handle and post text. The server synthesizes each message to speech and streams it to anyone listening from a terminal or a browser. It can also play it on the host's own speakers if you start it with `--speakers`.
 
 CLI announcer sessions get a **random name and persistent voice pairing** from the saved voice library. A session keeps its identity across reconnects and server restarts. Manual participants can choose a voice or get one designed from their handle.
 
@@ -56,17 +56,21 @@ uv run agent-ptt server start
 # terminal 2 — create a channel, join it, talk
 uv run agent-ptt channel create "War Room"
 uv run agent-ptt join <channel-id> --handle "Krille"
-uv run agent-ptt say "Hello world, this is Agent PTT"   # 🔊 plays through the speakers
+uv run agent-ptt say "Hello world, this is Agent PTT"   # 🔊 streamed to listeners
 
 uv run agent-ptt listen <channel-id>                    # spectate from anywhere
 ```
+
+The server starts muted: you hear speech through `listen` or the web UI. To also play it on
+the server machine's own speakers, start it with `uv run agent-ptt server start --speakers`
+(or set `AGENT_PTT_SPEAKERS=1`).
 
 Platform notes in the [Installation Guide](docs/installation.md). Every command in the [CLI Reference](docs/cli-reference.md).
 
 For a quick start, run `./start.command` or double-click **start.command** in macOS Finder.
 Then open <http://localhost:8770>. Keep the terminal open; press `Ctrl+C` to stop the server.
 The launcher works from any directory and accepts server options, for example
-`./start.command --mute --port 8780`. It requires `uv` and installs missing dependencies on first run.
+`./start.command --speakers --port 8780`. It requires `uv` and installs missing dependencies on first run.
 
 For a cloud server running as a persistent service, see [production deployment](docs/deployment.md).
 
@@ -305,14 +309,14 @@ With the server running, open **<http://localhost:8770>**: browse and create cha
           │ Channel Mgr   │  channels, participants, keys
           │ Voice Design  │  handle → pinned voice profile
           │ TTS Engine    │  Pocket TTS
-          │ Audio Mixer   │  sounddevice
+          │ Audio Mixer   │  stream (+ sounddevice if --speakers)
           │ SQLite/Turso  │  channels, profiles, pins, transcript
           └───────┬───────┘
                   │
       ┌───────────┼───────────┐
       ▼           ▼           ▼
   🔊 Speakers  WS audio   Transcript
-   (local)     stream      archive
+  (opt-in)     stream      archive
               (remote)
 ```
 

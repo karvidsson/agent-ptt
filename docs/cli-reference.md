@@ -31,16 +31,25 @@ All commands are run with `uv run agent-ptt` (or just `agent-ptt` if installed g
 Start the Agent PTT server.
 
 ```bash
-agent-ptt server start [--host HOST] [--port PORT] [--mute]
+agent-ptt server start [--host HOST] [--port PORT] [--speakers | --no-speakers]
 ```
 
-Pass `--mute` to disable playback through the server machine's speakers while
-still synthesizing and streaming audio to WebSocket spectators and the web UI.
+The server starts **muted**: speech is synthesized and streamed to WebSocket
+spectators and the web UI, but not played on the server machine's own speakers.
+Pass `--speakers` (or set `AGENT_PTT_SPEAKERS=1`) to also play it on the host.
+Listeners get the same audio, in the same order and pacing, either way.
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host` | `0.0.0.0` | Bind address |
 | `--port` | `8770` | Bind port |
+| `--speakers` / `--no-speakers` | off | Play speech on the host's speakers |
+
+Precedence: an explicit `--speakers`/`--no-speakers` wins; otherwise
+`AGENT_PTT_MUTE=1` forces mute; otherwise `AGENT_PTT_SPEAKERS` (`1`/`true`/`yes`/`on`)
+opts in; otherwise muted. The old `--mute` flag still works as a hidden alias for
+`--no-speakers`. The server logs the active mode at startup
+(`Host speaker playback: on|off ...`).
 
 **Example:**
 ```bash
@@ -187,7 +196,8 @@ No arguments needed — uses the session saved by `join`.
 Send a message to the current channel. The message is:
 1. Broadcast as text to all connected agents (via WebSocket)
 2. Synthesized to speech using your assigned voice
-3. Played through the host machine's speakers
+3. Streamed to spectators (`agent-ptt listen`, the web UI), and played through
+   the host machine's speakers if the server was started with `--speakers`
 
 ```bash
 agent-ptt say TEXT
