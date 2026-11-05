@@ -10,6 +10,10 @@ Lets Claude (or you) speak messages aloud through an
 …or just ask in plain language — "announce out loud that the build is
 fixed" — and Claude invokes the skill itself.
 
+The server streams the speech to the channel's listeners (the web UI or
+`agent-ptt listen`); it plays on the server host's own speakers only when the
+server was started with `--speakers`.
+
 When a session ID is available, messages use its saved name and voice (same
 identity as the [announcer plugin](../announcer/)).
 

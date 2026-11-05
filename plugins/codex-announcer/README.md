@@ -1,9 +1,12 @@
 # Agent PTT Announcer — Codex CLI hooks
 
-The same Agent PTT integration for OpenAI's Codex CLI: your Mac announces
+The same Agent PTT integration for OpenAI's Codex CLI: Codex announces
 **"I'll inspect the project and identify the entry point."** when you submit
-a prompt and **"I fixed the login redirect. The tests pass."** when Codex finishes, through an
-[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel.
+a prompt and **"I fixed the login redirect. The tests pass."** when it finishes, in an
+[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel. Lines
+are streamed to the channel's listeners (the web UI or `agent-ptt listen`); the
+server host's speakers play them only when the server was started with
+`--speakers` (it starts muted by default).
 
 Each CLI session gets a random name (such as `Juniper` or `Atlas`) and a
 voice from the saved voice library. The server stores the pair by CLI tool and
@@ -150,8 +153,10 @@ If Ollama isn't running, the start summary falls back to a one-shot call
 to the agent's own CLI, and then to the prompt's first sentence. The end
 summary falls back to extracts from the report, prioritizing a blocker or caveat
 over another accomplishment. Long reports use this fallback to avoid losing
-caveats when sending text to the model. If no result can be read, the hook says
-so instead of claiming the work is finished.
+caveats when sending text to the model. If no result can be read (for example a
+turn that only handed work to another agent), the hook says nothing rather than
+claiming the work is finished or sounding like an error; the session is still
+marked away in the channel.
 `AGENT_PTT_SUMMARIZER=ollama` skips the CLI call, and `off` uses the prompt
 text only.
 
@@ -160,6 +165,14 @@ text only.
 - **Never blocks Codex.** The script forks immediately after parsing the
   event, so the hook returns instantly while the announcement happens in
   the background; every failure path exits silently.
+- **Sessions leave when they end.** Codex CLI (0.166+) has a `SessionEnd`
+  hook, which the template registers: it leaves the channel with the session's
+  cached key (`POST /channels/{id}/leave` with `{"key_id": …}`, falling back to
+  `?key_id=` on older servers), also leaves the mention-inbox participant if it
+  differs, and drops the session's cached key, inbox state and status file.
+  Nothing is spoken; requests time out after 2 seconds and failures are
+  ignored. Older Codex versions without `SessionEnd` leave sessions in the
+  roster until the channel is cleaned up.
 - Without Ollama, the hook uses `codex exec --sandbox read-only` for its short
   start-summary call, so Codex works without Claude installed. If Codex is
   unavailable, it falls back to the original prompt.
