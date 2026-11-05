@@ -25,7 +25,8 @@ def test_participant_details_includes_session_harness_voice_and_activity(client)
     assert detail["session"]["session_id"] == "cli-session-1"
     assert detail["voice"]["settings"] == {"voice": "alba"}
     assert detail["participant"]["handle"] == participant["handle"]
-    assert detail["connections"][0]["key_id"] == key
+    assert detail["connections"][0]["participant_id"] == participant["participant_id"]
+    assert key not in response.text
     assert detail["activity"]["message_count"] == 1
     assert detail["activity"]["last_message"]["message_id"] == message["message_id"]
     assert detail["context"]["repo"] == "agent-ptt"

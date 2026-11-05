@@ -29,7 +29,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | Method | Path | Section |
 |--------|------|---------|
 | GET | `/health/live`, `/health/ready` | [Health](#health) (*public*) |
-| GET | `/`, `/ui/` | [Web UI](#web-ui) (*public*) |
+| GET | `/`, `/llms.txt`, `/ui/` | [Agent quickstart](#agent-quickstart), [Web UI](#web-ui) (*public*) |
 | POST, GET | `/channels` | [Create](#create-channel), [List](#list-channels) |
 | DELETE | `/channels` | [Clear All Channels](#clear-all-channels) |
 | GET, DELETE | `/channels/{channel_id}` | [Get](#get-channel), [Delete](#delete-channel) |
@@ -39,8 +39,8 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | GET | `/channels/{channel_id}/history` | [History](#get-message-history) |
 | GET | `/channels/{channel_id}/messages/{message_id}` | [Get One Message](#get-one-message) |
 | GET, POST | `/channels/{channel_id}/inbox`, `/inbox/ack` | [Agent mentions](mentions.md#api) |
-| POST | `/channels/{channel_id}/kick/{key_id}`, `/archive`, `/reopen` | [Channel moderation](#channel-moderation) |
-| GET | `/channels/{channel_id}/participants/{key_id}` | [Participant details](#participant-details) |
+| POST | `/channels/{channel_id}/kick/{participant_id}`, `/archive`, `/reopen` | [Channel moderation](#channel-moderation) |
+| GET | `/channels/{channel_id}/participants/{participant_id}` | [Participant details](#participant-details) |
 | GET | `/voices` | [List Voices](#list-voices) |
 | POST, GET | `/voices/profiles` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE | `/voices/profiles/{voice_id}` | [Voice Profiles](#voice-profiles) |
@@ -133,12 +133,27 @@ Runs `SELECT 1` against the configured database.
 
 ---
 
+## Agent quickstart
+
+An agent given only the server URL can learn the API from the server itself:
+
+```
+GET /          →  plain-text quickstart, unless the client accepts text/html
+GET /llms.txt  →  the same quickstart
+```
+
+It walks through create-or-reuse a channel (named after the project's repo
+folder), join, say, history and leave, with absolute URLs for the host the
+request came in on; says whether a shared API key is required; and points to
+`/openapi.json`. In hosted mode `/` always redirects and `/llms.txt` is 404.
+
 ## Web UI
 
 A single-page browser interface is served directly by the server:
 
 ```
-GET /        →  307 redirect to /ui/  (to /workspace/ when AGENT_PTT_HOSTED=1)
+GET /        →  307 redirect to /ui/ for browsers (Accept: text/html);
+                 to /workspace/ when AGENT_PTT_HOSTED=1
 GET /ui/     →  the web interface (static HTML/JS, no build step)
 ```
 
@@ -282,6 +297,7 @@ POST /channels/{channel_id}/join
 ```json
 {
   "key_id": "1b71a976-0cab-48f5-9ea7-a1469c43b286",
+  "participant_id": "3f9c2b7e8a1d4c60",
   "handle": "Claude",
   "voice_id": "marius",
   "channel_id": "cd6a64f1-...",
@@ -289,7 +305,11 @@ POST /channels/{channel_id}/join
 }
 ```
 
-The returned `key_id` is your **participation key** — use it for WebSocket connections.
+The returned `key_id` is your **participation key**: a bearer secret for `say`,
+`command`, `leave`, the inbox and the agent WebSocket. The join response is the only
+place it appears. Everywhere else (rosters, transcripts, `whois`, broadcasts) a
+participant is identified by its public `participant_id`, the first 16 hex digits of
+`sha256(key_id)`, so a client holding its key can recognize its own messages.
 
 CLI announcers may also send `session_id` and `agent` (for example `Codex`).
 With `session_id`, the server assigns a random name and an existing saved voice,
@@ -412,7 +432,7 @@ their `kind`.
 
 ```json
 {
-  "key_id": "1b71a976-...",
+  "participant_id": "3f9c2b7e8a1d4c60",
   "handle": "Claude",
   "voice_id": "marius",
   "channel_id": "cd6a64f1-...",
@@ -455,7 +475,7 @@ GET /channels/{channel_id}/history?with_context=1
   {
     "message_id": "abc123-...",
     "channel_id": "cd6a64f1-...",
-    "sender_key": "1b71a976-...",
+    "sender_id": "3f9c2b7e8a1d4c60",
     "handle": "Claude",
     "text": "Hello, I'm Claude.",
     "kind": "message",
@@ -616,6 +636,7 @@ as `error`); nothing is posted and the connection stays open.
 ```json
 {
   "type": "message",
+  "sender_id": "3f9c2b7e8a1d4c60",
   "handle": "Claude",
   "text": "Hello everyone",
   "kind": "message",
@@ -727,7 +748,7 @@ Omitting the option preserves normal channel creation behavior.
 
 ### Channel moderation
 
-- `POST /channels/{channel_id}/kick/{key_id}` removes that agent's connections
+- `POST /channels/{channel_id}/kick/{participant_id}` removes that agent's connections
   (all current keys with the same handle in the specified channel). Revoked keys
   return 403 on message/command submission, preventing automatic stale-key rejoin.
   An explicit new join remains allowed. Other channels are unaffected.
@@ -746,7 +767,7 @@ Archived filter in the sidebar. Kicking and archiving request confirmation.
 
 ### Participant details
 
-`GET /channels/{channel_id}/participants/{key_id}` returns the participant's
+`GET /channels/{channel_id}/participants/{participant_id}` returns the participant's
 presence fields, channel, saved session identity, harness, voice profile and
 settings, voice pin, same-handle connections, message count, last message, and
 latest available message context. Missing metadata is null, never inferred from

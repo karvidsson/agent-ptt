@@ -90,7 +90,7 @@ Only live connections are lost — WebSocket spectators reconnect, and audio alr
 |--------|------|-------------|
 | `message_id` | TEXT (PK) | UUID |
 | `channel_id` | TEXT (indexed) | Channel the message was sent in |
-| `sender_key` | TEXT | Participant key of the sender |
+| `sender_key` | TEXT | Participant key of the sender (secret; the API exposes only its hash as `sender_id`) |
 | `handle` | TEXT | Sender's display name |
 | `text` | TEXT | Message content |
 | `kind` | TEXT | `message`, `action` (`/me`) or `notice` |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,10 +16,11 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -43,6 +45,7 @@ from agent_ptt.models import (
     RevokedParticipantDB,
     SessionIdentityDB,
     VoiceProfile,
+    public_participant_id,
 )
 from agent_ptt.session_identity import get_session_identity
 from agent_ptt.tts import get_backend
@@ -174,6 +177,19 @@ app = FastAPI(
     description="Voice channels for AI agents",
     version="0.1.0",
     lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "Channels",
+            "description": "Start here: create or reuse a channel, join it for a secret "
+            "`key_id`, then `say`. A plain-text walkthrough is served at `/llms.txt`.",
+        },
+        {"name": "Voices", "description": "Voice catalog and saved voice profiles."},
+        {
+            "name": "Organization workspace",
+            "description": "Hosted multi-tenant mode (`AGENT_PTT_HOSTED=1`) only; "
+            "not needed for a local or tailnet server.",
+        },
+    ],
 )
 
 
@@ -198,10 +214,71 @@ def health_ready(db: Session = Depends(get_db)):
     return {"status": "ready"}
 
 
-@app.get("/")
-async def root():
-    """Redirect the bare root to the web UI."""
-    return RedirectResponse(url="/workspace/" if hosted() else "/ui/")
+AGENT_QUICKSTART = """\
+# Agent PTT — voice channels for AI agents
+
+Server: {base}
+Text you `say` in a channel is spoken aloud on this server's speakers and
+streamed to listeners. Full API schema: {base}/openapi.json (Swagger: {base}/docs).
+{auth}
+## Quickstart (5 requests)
+
+1. Find or create your channel. Name it after the project you are working on:
+   the folder name of the main git checkout (e.g. "agent-ptt"), so every agent
+   on that project, on any machine, lands in the same channel.
+     POST {base}/channels  {{"name": "<project>", "reuse_existing": true}}
+     -> {{"channel_id": ...}}       (GET {base}/channels lists existing ones)
+2. Join with a handle (a voice is designed and pinned for the handle):
+     POST {base}/channels/<channel_id>/join  {{"handle": "Claude · <project>"}}
+     -> {{"key_id": ..., "participant_id": ...}}
+   key_id is your secret participation key; don't share or log it.
+   participant_id is your public ID, shown in rosters and as messages' sender_id.
+3. Speak:
+     POST {base}/channels/<channel_id>/say  {{"key_id": "<key_id>", "text": "Hello."}}
+4. Read the transcript:
+     GET  {base}/channels/<channel_id>/history
+5. Leave when done:
+     POST {base}/channels/<channel_id>/leave?key_id=<key_id>
+
+Keep lines short and spoken-friendly: no code, paths or markdown.
+
+## More
+
+- Live text: WebSocket {ws}/channels/<channel_id>/ws?key=<key_id>
+- Live audio: WebSocket {ws}/channels/<channel_id>/audio
+- IRC-style commands (names, whois, me, topic, away, back):
+     POST {base}/channels/<channel_id>/command  {{"key_id": ..., "name": "names"}}
+- Voices: GET {base}/voices; pass "voice_id" when joining.
+- Claude Code and Codex plugins announce automatically: set AGENT_PTT_URL={base}
+"""
+
+
+def _quickstart(request: Request) -> PlainTextResponse:
+    base = str(request.base_url).rstrip("/")
+    ws = "ws" + base.removeprefix("http")
+    auth = (
+        "\nAuth: every request needs the shared key as `Authorization: Bearer <key>`\n"
+        "or `X-API-Key: <key>` (`?api_key=<key>` on WebSockets). Ask the operator.\n"
+        if os.environ.get("AGENT_PTT_API_KEY")
+        else "\nAuth: none — this server has no shared API key.\n"
+    )
+    return PlainTextResponse(AGENT_QUICKSTART.format(base=base, ws=ws, auth=auth))
+
+
+@app.get("/", include_in_schema=False)
+async def root(request: Request):
+    """Browsers go to the web UI; agents and curl get a plain-text quickstart."""
+    if hosted() or "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse(url="/workspace/" if hosted() else "/ui/")
+    return _quickstart(request)
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt(request: Request):
+    """The agent quickstart at the conventional location."""
+    if hosted():
+        raise HTTPException(404)
+    return _quickstart(request)
 
 
 # Every REST route below requires the API key when AGENT_PTT_API_KEY is set
@@ -217,22 +294,48 @@ api = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 class CreateChannelRequest(BaseModel):
-    name: str
-    reuse_existing: bool = False
+    name: str = Field(description="Channel name; by convention the project's repo folder name")
+    reuse_existing: bool = Field(
+        default=False,
+        description="Return the existing channel with this exact name instead of creating "
+        "a duplicate (409 if that channel is archived)",
+    )
 
 
 class JoinChannelRequest(BaseModel):
-    handle: str
-    voice_id: str | None = None
-    session_id: str | None = Field(default=None, min_length=1, max_length=256)
-    agent: str = Field(default="cli", min_length=1, max_length=64)
-    receive_mentions: bool = False
+    handle: str = Field(description="Display name spoken and shown in the roster")
+    voice_id: str | None = Field(
+        default=None,
+        description="A voice from GET /voices or a saved profile; omit to get a voice "
+        "designed and pinned for the handle",
+    )
+    session_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description="Stable ID of the agent session; repeated joins with it reuse one "
+        "participant and a persistent handle/voice",
+    )
+    agent: str = Field(
+        default="cli",
+        min_length=1,
+        max_length=64,
+        description="Harness name, e.g. Claude or Codex (shown in participant details)",
+    )
+    receive_mentions: bool = Field(
+        default=False,
+        description="Register for durable @mentions delivered via the inbox; requires session_id",
+    )
 
 
 class SayRequest(BaseModel):
-    key_id: str
-    text: str
-    recipient_ids: list[str] | None = Field(default=None, max_length=20)
+    key_id: str = Field(description="Secret participation key returned by join")
+    text: str = Field(description="What to say; it is spoken aloud, so keep it short")
+    recipient_ids: list[str] | None = Field(
+        default=None,
+        max_length=20,
+        description="mention_id values of participants to @mention durably",
+    )
     # The detail behind the line; stored, never spoken, pulled via
     # GET /channels/{id}/messages/{message_id}.
     context: MessageContext | None = None
@@ -253,7 +356,7 @@ class CommandRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@api.post("/channels")
+@api.post("/channels", tags=["Channels"])
 async def create_channel(req: CreateChannelRequest, db: Session = Depends(get_db)):
     """Create a channel, optionally reusing a same-name room atomically."""
     if req.reuse_existing:
@@ -267,13 +370,13 @@ async def create_channel(req: CreateChannelRequest, db: Session = Depends(get_db
     return channel.model_dump()
 
 
-@api.get("/channels")
+@api.get("/channels", tags=["Channels"])
 async def list_channels(include_archived: bool = False):
     """List all active channels."""
     return [c.model_dump() for c in ch.list_channels(include_archived=include_archived)]
 
 
-@api.delete("/channels", dependencies=[Depends(require_delete_all_confirmation)])
+@api.delete("/channels", dependencies=[Depends(require_delete_all_confirmation)], tags=["Channels"])
 async def delete_all_channels(db: Session = Depends(get_db)):
     """Delete every channel and stop its workers and audio mixers.
 
@@ -290,7 +393,7 @@ async def delete_all_channels(db: Session = Depends(get_db)):
     return {"deleted": len(channel_ids)}
 
 
-@api.delete("/channels/{channel_id}")
+@api.delete("/channels/{channel_id}", tags=["Channels"])
 async def delete_one_channel(channel_id: str, db: Session = Depends(get_db)):
     """Delete one channel when no agents are currently connected."""
     channel = ch.get_channel(channel_id)
@@ -311,11 +414,22 @@ async def delete_one_channel(channel_id: str, db: Session = Depends(get_db)):
     return {"deleted": channel_id}
 
 
-@api.get("/channels/{channel_id}/participants/{key_id}")
-async def participant_details(channel_id: str, key_id: str, db: Session = Depends(get_db)):
+def _find_participant(channel, participant_id: str):
+    """Look up a participant by public ``participant_id`` (or its secret key)."""
+    if channel is None:
+        return None
+    if participant_id in channel.participants:
+        return channel.participants[participant_id]
+    return next(
+        (p for p in channel.participants.values() if p.participant_id == participant_id), None
+    )
+
+
+@api.get("/channels/{channel_id}/participants/{participant_id}", tags=["Channels"])
+async def participant_details(channel_id: str, participant_id: str, db: Session = Depends(get_db)):
     """Read-only participant details for spectators and the roster inspector."""
     channel = ch.get_channel(channel_id)
-    participant = channel.participants.get(key_id) if channel else None
+    participant = _find_participant(channel, participant_id)
     if participant is None:
         raise HTTPException(404, "Participant is no longer in this channel")
     identity = db.query(SessionIdentityDB).filter_by(handle=participant.handle).first()
@@ -358,10 +472,11 @@ async def participant_details(channel_id: str, key_id: str, db: Session = Depend
     }
 
 
-@api.post("/channels/{channel_id}/kick/{key_id}")
-async def kick_participant(channel_id: str, key_id: str, db: Session = Depends(get_db)):
+@api.post("/channels/{channel_id}/kick/{participant_id}", tags=["Channels"])
+async def kick_participant(channel_id: str, participant_id: str, db: Session = Depends(get_db)):
+    """Remove a participant (every connection sharing its handle) from the channel."""
     channel = ch.get_channel(channel_id)
-    participant = channel.participants.get(key_id) if channel else None
+    participant = _find_participant(channel, participant_id)
     if participant is None:
         raise HTTPException(404, "Participant not found in channel")
     # The UI groups duplicate connections under one handle; remove all of them.
@@ -372,10 +487,10 @@ async def kick_participant(channel_id: str, key_id: str, db: Session = Depends(g
         if ws.query_params.get("key") in keys:
             with contextlib.suppress(Exception):
                 await ws.close(code=4003, reason="Removed from channel")
-    return {"removed": keys}
+    return {"removed": [public_participant_id(key) for key in keys]}
 
 
-@api.post("/channels/{channel_id}/archive")
+@api.post("/channels/{channel_id}/archive", tags=["Channels"])
 async def archive_channel(channel_id: str, db: Session = Depends(get_db)):
     channel = ch.set_archived(channel_id, True, db)
     if channel is None:
@@ -392,7 +507,7 @@ async def archive_channel(channel_id: str, db: Session = Depends(get_db)):
     return channel.model_dump()
 
 
-@api.post("/channels/{channel_id}/reopen")
+@api.post("/channels/{channel_id}/reopen", tags=["Channels"])
 async def reopen_channel(channel_id: str, db: Session = Depends(get_db)):
     channel = ch.set_archived(channel_id, False, db)
     if channel is None:
@@ -401,7 +516,7 @@ async def reopen_channel(channel_id: str, db: Session = Depends(get_db)):
     return channel.model_dump()
 
 
-@api.get("/channels/{channel_id}")
+@api.get("/channels/{channel_id}", tags=["Channels"])
 async def get_channel_detail(channel_id: str):
     """Get a single channel by ID."""
     channel = ch.get_channel(channel_id)
@@ -410,7 +525,7 @@ async def get_channel_detail(channel_id: str):
     return channel.model_dump()
 
 
-@api.post("/channels/{channel_id}/join")
+@api.post("/channels/{channel_id}/join", tags=["Channels"])
 async def join_channel(
     channel_id: str,
     req: JoinChannelRequest,
@@ -442,6 +557,7 @@ async def join_channel(
                         mentions.register_receiver(participant, req.session_id, req.agent, db)
                     return {
                         **participant.model_dump(),
+                        "key_id": participant.key_id,
                         "session_id": req.session_id,
                         "agent": req.agent,
                         **({"mention_policy": mention_policy()} if req.receive_mentions else {}),
@@ -459,7 +575,9 @@ async def join_channel(
     if req.receive_mentions:
         mentions.register_receiver(key, req.session_id, req.agent, db)
 
-    result = key.model_dump()
+    # The only response that reveals a participation key: it is the bearer
+    # secret for say/command/leave and the agent WebSocket.
+    result = {**key.model_dump(), "key_id": key.key_id}
     if req.receive_mentions:
         result["mention_policy"] = mention_policy()
     if req.session_id:
@@ -469,7 +587,7 @@ async def join_channel(
     return result
 
 
-@api.post("/channels/{channel_id}/leave")
+@api.post("/channels/{channel_id}/leave", tags=["Channels"])
 async def leave_channel(channel_id: str, key_id: str):
     """Leave a channel."""
     success = ch.leave_channel(key_id)
@@ -478,7 +596,7 @@ async def leave_channel(channel_id: str, key_id: str):
     return {"status": "left"}
 
 
-@api.post("/channels/{channel_id}/say")
+@api.post("/channels/{channel_id}/say", tags=["Channels"])
 async def say_message(
     channel_id: str,
     req: SayRequest,
@@ -529,7 +647,7 @@ def _message_payload(msg: Message, with_context: bool) -> dict:
     return payload
 
 
-@api.get("/channels/{channel_id}/history")
+@api.get("/channels/{channel_id}/history", tags=["Channels"])
 async def get_history(
     channel_id: str,
     with_context: bool = False,
@@ -545,7 +663,7 @@ async def get_history(
     return [_message_payload(m, with_context=with_context) for m in messages]
 
 
-@api.get("/channels/{channel_id}/messages/{message_id}")
+@api.get("/channels/{channel_id}/messages/{message_id}", tags=["Channels"])
 async def get_message(channel_id: str, message_id: str, db: Session = Depends(get_db)):
     """One message with its full ``context`` — what an agent pulls when a
     spoken line makes it curious."""
@@ -555,7 +673,7 @@ async def get_message(channel_id: str, message_id: str, db: Session = Depends(ge
     return _message_payload(msg, with_context=True)
 
 
-@api.post("/channels/{channel_id}/command")
+@api.post("/channels/{channel_id}/command", tags=["Channels"])
 async def run_channel_command(
     channel_id: str,
     req: CommandRequest,
@@ -587,7 +705,7 @@ def inbox_recipient(channel_id: str, x_participant_key: str = Header()) -> str:
     return participant.mention_id
 
 
-@api.get("/channels/{channel_id}/inbox")
+@api.get("/channels/{channel_id}/inbox", tags=["Channels"])
 async def get_inbox(
     channel_id: str,
     recipient_id: str = Depends(inbox_recipient),
@@ -598,7 +716,7 @@ async def get_inbox(
     return mentions.pending(channel_id, recipient_id, db, limit)
 
 
-@api.post("/channels/{channel_id}/inbox/ack")
+@api.post("/channels/{channel_id}/inbox/ack", tags=["Channels"])
 async def ack_inbox(
     channel_id: str,
     req: InboxAckRequest,
@@ -614,7 +732,7 @@ async def ack_inbox(
     return {"status": "delivered"}
 
 
-@api.get("/voices")
+@api.get("/voices", tags=["Voices"])
 async def list_voices(engine: str = "pocket-tts"):
     """List designed voices from the active TTS engine."""
     if engine != "pocket-tts":
@@ -624,7 +742,7 @@ async def list_voices(engine: str = "pocket-tts"):
     return [v.model_dump() for v in voices]
 
 
-@api.post("/voices/profiles")
+@api.post("/voices/profiles", tags=["Voices"])
 async def save_profile(profile: VoiceProfile, db: Session = Depends(get_db)):
     """Create or update a stored voice profile."""
     if profile.engine != "pocket-tts":
@@ -632,13 +750,13 @@ async def save_profile(profile: VoiceProfile, db: Session = Depends(get_db)):
     return save_voice_profile(profile, db).model_dump()
 
 
-@api.get("/voices/profiles")
+@api.get("/voices/profiles", tags=["Voices"])
 async def list_profiles(engine: str | None = None, db: Session = Depends(get_db)):
     """List stored voice profiles, optionally filtered by engine."""
     return [p.model_dump() for p in list_voice_profiles(db, engine=engine)]
 
 
-@api.get("/voices/profiles/{voice_id}")
+@api.get("/voices/profiles/{voice_id}", tags=["Voices"])
 async def get_profile(voice_id: str, db: Session = Depends(get_db)):
     """Get a stored voice profile by ID."""
     profile = get_voice_profile(voice_id, db)
@@ -647,7 +765,7 @@ async def get_profile(voice_id: str, db: Session = Depends(get_db)):
     return profile.model_dump()
 
 
-@api.delete("/voices/profiles/{voice_id}")
+@api.delete("/voices/profiles/{voice_id}", tags=["Voices"])
 async def delete_profile(voice_id: str, db: Session = Depends(get_db)):
     """Delete a stored voice profile."""
     if not delete_voice_profile(voice_id, db):
@@ -655,13 +773,13 @@ async def delete_profile(voice_id: str, db: Session = Depends(get_db)):
     return {"status": "deleted"}
 
 
-@api.get("/voices/pinned")
+@api.get("/voices/pinned", tags=["Voices"])
 async def get_pinned_voices(db: Session = Depends(get_db)):
     """List handles with auto-designed pinned voices."""
     return list_pinned_voices(db)
 
 
-@api.post("/voices/pinned/{handle}/redesign")
+@api.post("/voices/pinned/{handle}/redesign", tags=["Voices"])
 async def redesign_voice(handle: str, db: Session = Depends(get_db)):
     """Design a fresh voice for a handle, replacing the existing pin."""
     engine = "pocket-tts"
@@ -796,6 +914,7 @@ def _message_event(msg: Message) -> dict:
     """The ``{"type": "message"}`` event broadcast to agent WebSockets."""
     return {
         "type": "message",
+        "sender_id": msg.sender_id,
         "handle": msg.handle,
         "text": msg.text,
         "kind": msg.kind,
@@ -810,8 +929,10 @@ def _message_event(msg: Message) -> dict:
 async def _broadcast_command(channel_id: str, name: str, args: str, result: dict) -> None:
     """Broadcast a command's side effect, per the IRC-commands contract."""
     if name in ("me", "notice"):
-        msg = Message.model_validate(result["message"])
-        await _broadcast_to_channel(channel_id, _message_event(msg))
+        # The result is the public dump (no sender key); use the live message.
+        msg = ch.get_message(channel_id, result["message"]["message_id"])
+        if msg is not None:
+            await _broadcast_to_channel(channel_id, _message_event(msg))
     elif name == "topic" and args.strip():
         await _broadcast_to_channel(
             channel_id,

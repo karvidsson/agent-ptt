@@ -590,7 +590,8 @@ ___( o)&gt;
     archived: false,
     showArchived: false,
     channelName: null,
-    keyId: null,         // set when joined to talk
+    keyId: null,         // set when joined to talk (secret; never shown)
+    participantId: null, // our public ID in rosters and transcripts
     handle: null,
     seen: new Set(),     // message_ids rendered
     contexts: new Map(), // message_id -> fetched context
@@ -796,7 +797,7 @@ ___( o)&gt;
     const id = state.channelId;
     if (!confirm(`Kick ${participant.handle} from this channel? Their current connections will be revoked.`)) return;
     try {
-      const r = await api(`${httpBase}/channels/${id}/kick/${encodeURIComponent(participant.key_id)}`, { method: "POST" });
+      const r = await api(`${httpBase}/channels/${id}/kick/${encodeURIComponent(participant.participant_id)}`, { method: "POST" });
       if (!r.ok) throw new Error("Could not kick agent. Refresh and try again.");
       await refreshParticipants(id);
       await loadChannels();
@@ -980,7 +981,7 @@ ___( o)&gt;
       if (state.archived) stopAudio();
       var before = presenceKey(state.participants);
       state.participants = channel.participants ? Object.values(channel.participants) : [];
-      if (state.keyId && !state.participants.some((p) => p.key_id === state.keyId)) {
+      if (state.keyId && !state.participants.some((p) => p.participant_id === state.participantId)) {
         forgetJoin(); resetJoin(); renderChannelChrome();
       }
       var topic = channel.topic || null;
@@ -1198,7 +1199,7 @@ ___( o)&gt;
     $("agentDetailBody").textContent = "Loading agent details…";
     $("agentDialog").showModal();
     try {
-      const response = await api(`${httpBase}/channels/${encodeURIComponent(id)}/participants/${encodeURIComponent(participant.key_id)}`);
+      const response = await api(`${httpBase}/channels/${encodeURIComponent(id)}/participants/${encodeURIComponent(participant.participant_id)}`);
       if (!response.ok) throw new Error(response.status === 404 ? "This agent is no longer in the channel." : "Could not load agent details. Close this window and try again.");
       const data = await response.json();
       if (request !== agentDetailRequest || !$("agentDialog").open) return;
@@ -1215,7 +1216,7 @@ ___( o)&gt;
         section("Presence & activity", row("Status", p.state) + row("Since", date(p.since)) + row("Joined", date(p.created_at)) + row("Last active", date(p.last_active)) + optionalRow("Doing", p.doing) + optionalRow("Away reason", p.away_reason) + row("Messages here", data.activity.message_count)) +
         (data.context ? section("Workspace · latest reported", row("Repository", data.context?.repo) + row("Folder", data.context?.cwd) + row("Branch", data.context?.branch) + row("Worktree", data.context?.worktree) + row("Host", data.context?.host) + row("Task", data.context?.task)) : "") +
         section("Voice", row("Name", data.voice?.display_name || p.voice_id) + row("Voice ID", p.voice_id) + row("Engine", data.voice?.engine) + row("Created", date(data.voice?.created_at)) + row("Pin source", data.voice_pin?.source)) +
-        section("Connections", row("Connections here", data.connections.length) + row("Participation key", p.key_id) + row("Channel ID", p.channel_id) + row("Mention receiver", p.mention_id)) +
+        section("Connections", row("Connections here", data.connections.length) + row("Participant ID", p.participant_id) + row("Channel ID", p.channel_id) + row("Mention receiver", p.mention_id)) +
         (last ? `<h3>Last message · ${esc(date(last.timestamp))}</h3><blockquote>${esc(last.text)}</blockquote>` : "") +
         '<details><summary>All metadata · voice settings, connections & message context</summary><pre id="agentDetailRaw"></pre></details>';
       $("agentDetailRaw").textContent = JSON.stringify(data, null, 2);
@@ -1388,7 +1389,7 @@ ___( o)&gt;
   function rememberJoin() {
     try {
       localStorage.setItem(JOIN_STORE, JSON.stringify({
-        channelId: state.channelId, keyId: state.keyId,
+        channelId: state.channelId, keyId: state.keyId, participantId: state.participantId,
         handle: state.handle, voice: state.pickedVoice || null,
       }));
     } catch {}
@@ -1401,8 +1402,10 @@ ___( o)&gt;
   }
   function restoreJoin(channelId) {
     const saved = savedJoin();
-    if (!saved || saved.channelId !== channelId || !saved.keyId) return;
+    // Saves from before public participant IDs lack one; such a join is dropped once.
+    if (!saved || saved.channelId !== channelId || !saved.keyId || !saved.participantId) return;
     state.keyId = saved.keyId;
+    state.participantId = saved.participantId;
     state.handle = saved.handle;
     state.pickedVoice = saved.voice || "";
   }
@@ -1481,6 +1484,7 @@ ___( o)&gt;
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
       state.keyId = data.key_id;
+      state.participantId = data.participant_id;
       state.handle = handle;
       rememberJoin();
       closeJoin();
@@ -1523,7 +1527,9 @@ ___( o)&gt;
         body: JSON.stringify({ handle: saved.handle, voice_id: saved.voice || null }),
       });
       if (!r.ok) return false;
-      state.keyId = (await r.json()).key_id;
+      const data = await r.json();
+      state.keyId = data.key_id;
+      state.participantId = data.participant_id;
       state.handle = saved.handle;
       rememberJoin();
       return true;
@@ -1586,7 +1592,7 @@ ___( o)&gt;
     }
     try {
       let r = await postCommand(name, args);
-      if (r.status === 404 && !state.participants.some((p) => p.key_id === state.keyId) && await rejoin()) r = await postCommand(name, args);
+      if (r.status === 404 && !state.participants.some((p) => p.participant_id === state.participantId) && await rejoin()) r = await postCommand(name, args);
       let data = null;
       try { data = await r.json(); } catch {}
       if (!r.ok) {
@@ -1676,7 +1682,7 @@ ___( o)&gt;
       if ($("sayText").value.slice(0, $("sayText").selectionStart) !== before) return;
       const query = match[1].toLowerCase();
       const matches = [...new Map(
-        state.participants.filter((p) => p.mention_id && p.key_id !== state.keyId).map((participant) => [participant.mention_id, participant])
+        state.participants.filter((p) => p.mention_id && p.participant_id !== state.participantId).map((participant) => [participant.mention_id, participant])
       ).values()].filter((participant) =>
         participant.handle.toLowerCase().includes(query)
       );
@@ -1740,6 +1746,7 @@ ___( o)&gt;
 
   function resetJoin() {
     state.keyId = null;
+    state.participantId = null;
     state.handle = null;
     state.pickedVoice = "";
     $("handle").value = "";

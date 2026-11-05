@@ -6,11 +6,19 @@ so configs are portable between the two apps.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    computed_field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import JSON, Column, DateTime, Index, String, Text
 from sqlalchemy.orm import DeclarativeBase
 
@@ -164,10 +172,25 @@ class VoiceProfile(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ParticipantKey(BaseModel):
-    """UUID-based participation key issued on channel join."""
+def public_participant_id(key_id: str) -> str:
+    """The public handle for a participation key.
 
-    key_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ``key_id`` is a bearer secret: whoever holds it can speak as the
+    participant. Rosters, transcripts and broadcasts show this one-way hash
+    instead, and a client holding its own key can recompute it to recognize
+    itself.
+    """
+    return hashlib.sha256(key_id.encode()).hexdigest()[:16]
+
+
+class ParticipantKey(BaseModel):
+    """UUID-based participation key issued on channel join.
+
+    ``key_id`` is secret and excluded from serialization; only the join
+    response returns it, explicitly.
+    """
+
+    key_id: str = Field(default_factory=lambda: str(uuid.uuid4()), exclude=True)
     handle: str
     voice_id: str | None = None
     channel_id: str | None = None
@@ -181,6 +204,11 @@ class ParticipantKey(BaseModel):
     doing: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @computed_field
+    @property
+    def participant_id(self) -> str:
+        return public_participant_id(self.key_id)
 
 
 MessageKind = Literal["message", "action", "notice"]
@@ -238,7 +266,7 @@ class Message(BaseModel):
 
     message_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     channel_id: str
-    sender_key: str
+    sender_key: str = Field(exclude=True)
     handle: str
     text: str
     kind: MessageKind = "message"
@@ -247,6 +275,12 @@ class Message(BaseModel):
     context: MessageContext | None = None
 
     model_config = {"from_attributes": True}
+
+    @computed_field
+    @property
+    def sender_id(self) -> str:
+        """Public ID of the sender (see ``public_participant_id``)."""
+        return public_participant_id(self.sender_key)
 
     @field_validator("kind", mode="before")
     @classmethod
@@ -266,3 +300,8 @@ class Channel(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     topic: str | None = None
     topic_set_by: str | None = None
+
+    @field_serializer("participants", mode="wrap")
+    def _participants_by_public_id(self, value: dict[str, ParticipantKey], handler) -> Any:
+        # The in-memory dict is keyed by secret key_id; never expose those keys.
+        return {public_participant_id(key): data for key, data in handler(value).items()}

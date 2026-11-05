@@ -107,7 +107,13 @@ def test_enabled_rejects_wrong_key(client, auth_enabled):
 
 
 def test_enabled_root_and_ui_stay_public(client, auth_enabled):
-    assert client.get("/", follow_redirects=False).status_code == 307
+    assert (
+        client.get("/", headers={"Accept": "text/html"}, follow_redirects=False).status_code == 307
+    )
+    quickstart = client.get("/llms.txt")
+    assert quickstart.status_code == 200
+    assert "Authorization: Bearer" in quickstart.text
+    assert KEY not in quickstart.text
     assert client.get("/ui/").status_code == 200
 
 

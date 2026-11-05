@@ -190,6 +190,19 @@ def test_answer_question_ignores_agents_and_small_talk(monkeypatch):
     assert status.answer_question("c9", {"text": "status?", "sender_key": "user"}) == []
 
 
+def test_answer_question_recognizes_own_messages_by_public_sender_id(monkeypatch):
+    from agent_ptt.models import public_participant_id
+
+    _seed("s1", "k1")
+    monkeypatch.setattr(
+        status, "_request", lambda *a, **k: {"participants": {public_participant_id("k1"): {}}}
+    )
+    own = {"text": "Record slice status in the plan", "sender_id": public_participant_id("k1")}
+    assert status.answer_question("c1", own) == []
+    assert status._public_id("k1") == public_participant_id("k1")
+    assert status.answer_question("c1", {"text": "status", "sender_id": "someone"}) != []
+
+
 def test_ensure_responder_reuses_a_live_process(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENT_PTT_STATUS")
     started = []

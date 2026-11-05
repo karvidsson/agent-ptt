@@ -21,6 +21,7 @@ key announce.py cached in announcer-state.json, so the voice matches.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -349,6 +350,18 @@ def _announcer_keys() -> set[str]:
     return keys
 
 
+def _public_id(key_id: str) -> str:
+    """The server's public participant ID for a key (agent_ptt.models.public_participant_id)."""
+    return hashlib.sha256(key_id.encode()).hexdigest()[:16]
+
+
+def _sent_by(message: dict, keys: set[str]) -> bool:
+    """Whether one of ``keys`` sent ``message``; older servers expose ``sender_key``."""
+    if message.get("sender_key") in keys:
+        return True
+    return message.get("sender_id") in {_public_id(key) for key in keys}
+
+
 def _looks_like_question(text: str) -> bool:
     """A status question is short and asks, unlike narration that mentions status."""
     text = text.strip()
@@ -369,7 +382,7 @@ def answer_question(channel_id: str, message: dict, now: float | None = None) ->
     statuses = channel_statuses(channel_id)
     if not statuses:
         return []
-    if message.get("sender_key") in _announcer_keys() | {s["key_id"] for s in statuses}:
+    if _sent_by(message, _announcer_keys() | {s["key_id"] for s in statuses}):
         return []  # an agent's own announcement mentioning "status" is not a question
     if not _looks_like_question(text):
         return []
@@ -377,7 +390,12 @@ def answer_question(channel_id: str, message: dict, now: float | None = None) ->
         participants = _request("GET", f"/channels/{channel_id}", timeout=3).get("participants", {})
     except Exception:
         participants = {}
-    handles = {s["key_id"]: participants.get(s["key_id"], {}).get("handle", "") for s in statuses}
+    handles = {
+        s["key_id"]: (
+            participants.get(_public_id(s["key_id"])) or participants.get(s["key_id"]) or {}
+        ).get("handle", "")
+        for s in statuses
+    }
     addressed = [
         s for s in statuses if handles[s["key_id"]] and _mentioned(text, handles[s["key_id"]])
     ]

@@ -192,7 +192,7 @@ async def test_whois_prefix_match_is_case_insensitive_with_last_message():
     await ch.send_message(bob.key_id, "first")
     last = await ch.send_message(bob.key_id, "second")
     result = await ch.run_command(created.channel_id, ada.key_id, "whois", "bO")
-    assert result["participant"]["key_id"] == bob.key_id
+    assert result["participant"]["participant_id"] == bob.participant_id
     assert result["last_message"]["message_id"] == last.message_id
 
 
@@ -211,7 +211,7 @@ async def test_whois_prefers_exact_match_over_prefix():
     ch.join_channel(created.channel_id, "Alexander")
     alex = ch.join_channel(created.channel_id, "Alex")
     result = await ch.run_command(created.channel_id, alex.key_id, "whois", "alex")
-    assert result["participant"]["key_id"] == alex.key_id
+    assert result["participant"]["participant_id"] == alex.participant_id
 
 
 async def test_me_posts_an_action_and_sets_doing(db_session):

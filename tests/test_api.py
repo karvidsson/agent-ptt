@@ -111,10 +111,48 @@ def test_get_unknown_channel(client):
 # ---------------------------------------------------------------------------
 
 
-def test_root_redirects_to_ui(client):
-    resp = client.get("/", follow_redirects=False)
+def test_root_redirects_browsers_to_ui(client):
+    resp = client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
     assert resp.status_code in (307, 308)
     assert resp.headers["location"] == "/ui/"
+
+
+def test_root_and_llms_txt_give_agents_a_quickstart(client):
+    for path in ("/", "/llms.txt"):
+        resp = client.get(path, follow_redirects=False)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/plain")
+        assert "http://testserver/channels/<channel_id>/join" in resp.text
+        assert "reuse_existing" in resp.text
+        assert "ws://testserver/channels/<channel_id>/ws?key=<key_id>" in resp.text
+        assert "no shared API key" in resp.text
+
+
+def test_participation_keys_never_appear_in_public_output(client):
+    cid = client.post("/channels", json={"name": "secrets"}).json()["channel_id"]
+    joined = client.post(f"/channels/{cid}/join", json={"handle": "Ada", "voice_id": "alba"})
+    key, public = joined.json()["key_id"], joined.json()["participant_id"]
+    assert key != public
+    client.post(f"/channels/{cid}/say", json={"key_id": key, "text": "hello"})
+    client.post(f"/channels/{cid}/command", json={"key_id": key, "name": "me", "args": "waves"})
+    names = client.post(f"/channels/{cid}/command", json={"key_id": key, "name": "names"})
+    whois = client.post(
+        f"/channels/{cid}/command", json={"key_id": key, "name": "whois", "args": "Ada"}
+    )
+    public_bodies = [
+        client.get(f"/channels/{cid}").text,
+        client.get("/channels").text,
+        client.get(f"/channels/{cid}/history").text,
+        client.get(f"/channels/{cid}/participants/{public}").text,
+        names.text,
+        whois.text,
+    ]
+    for body in public_bodies:
+        assert key not in body
+    channel = client.get(f"/channels/{cid}").json()
+    assert list(channel["participants"]) == [public]
+    assert channel["messages"][0]["sender_id"] == public
+    assert "sender_key" not in channel["messages"][0]
 
 
 def test_ui_serves_html(client):
