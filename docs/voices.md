@@ -86,6 +86,40 @@ with `{"voice_id": "ledger"}`. Only built-in IDs are accepted.
 
 Run `agent-ptt voices` to list it without loading the model.
 
+## Loudness Normalization
+
+Raw Pocket TTS output varies a lot between voices: one fixed sentence measured
+from about -44 LUFS (`jean`) to -16 LUFS (`cruncher`), a 27 dB spread. So every
+synthesized clip is normalized to the same base loudness before anyone hears it
+(`agent_ptt/loudness.py`, applied by `tts.synthesize_speech()`):
+
+- **Target:** -18 LUFS integrated loudness (ITU-R BS.1770: K-weighting, 400 ms
+  blocks, absolute and relative gating). Set `AGENT_PTT_TARGET_LUFS` to another
+  negative number (e.g. `-23`) to change it, or to `off` to disable
+  normalization. Invalid values fall back to -18 with a warning.
+- **One gain per utterance.** Synthesis returns one complete WAV per message,
+  so the whole clip is measured and scaled by a single constant gain — no
+  pumping within a sentence, and it adapts to cloned voices and saved profiles
+  without a calibration table.
+- **Peak ceiling -1 dBFS** (sample peak). Speech peaks sit up to ~21 dB above
+  its loudness, so a short lookahead limiter (~20 ms ramps) pulls the few
+  transients that would cross the ceiling back under it. It may take at most
+  6 dB off any peak; a clip that would need more gets less gain instead and
+  ends up quieter than the target.
+- **Gain is capped at +30 dB**, and clips below -70 LUFS (silence, near-silence)
+  are left untouched, so noise is never boosted to speech level. Clips shorter
+  than one 400 ms block are measured ungated.
+- Output stays a WAV with the input's sample rate, channel count and subtype
+  (mono PCM_16 from Pocket TTS). Anything that isn't a parsable WAV — including
+  MP3 from a custom engine — passes through unchanged.
+
+To re-measure all built-in voices with the real model (raw, or as the server
+plays them):
+
+```bash
+HF_HUB_OFFLINE=1 uv run python scripts/measure_voice_loudness.py [--normalized]
+```
+
 ## Using Voices
 
 ### When joining a channel
@@ -116,7 +150,7 @@ class MyTTSBackend(TTSBackend):
         return "my-engine"
 
     async def synthesize(self, text: str, voice_profile: VoiceProfile) -> bytes:
-        # Your TTS logic here — return WAV or MP3 bytes
+        # Your TTS logic here — return WAV bytes (MP3 skips loudness normalization)
         ...
 
     async def list_voices(self) -> list[VoiceProfile]:

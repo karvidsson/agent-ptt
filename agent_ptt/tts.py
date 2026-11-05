@@ -11,6 +11,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 
+from agent_ptt.loudness import normalize_loudness
 from agent_ptt.models import VoiceProfile
 from agent_ptt.voice_catalog import BUILTIN_VOICES, resolve_voice
 
@@ -90,6 +91,16 @@ class PocketTTSBackend(TTSBackend):
                 subtype="PCM_16",
             )
             return output.getvalue()
+
+
+async def synthesize_speech(backend: TTSBackend, text: str, voice_profile: VoiceProfile) -> bytes:
+    """Synthesize with any backend, then normalize the clip's loudness.
+
+    Every playback path (channel TTS worker, workspace speech, CLI preview)
+    goes through here so all voices reach the same base loudness.
+    """
+    audio = await backend.synthesize(text, voice_profile)
+    return await asyncio.to_thread(normalize_loudness, audio)
 
 
 # ---------------------------------------------------------------------------

@@ -129,6 +129,7 @@ Run `uv run agent-ptt voices` for the full list of English voices.
 | `AGENT_PTT_HOSTED` | `0` | `1` enables the multi-tenant workspace and disables the local channel routes |
 | `AGENT_PTT_SPEAKERS` | unset | `1`/`true`/`yes`/`on` plays speech on the host's speakers (same as `server start --speakers`); off by default |
 | `AGENT_PTT_MUTE` | unset | `1` forces host speakers off, overriding `AGENT_PTT_SPEAKERS` (the Docker image sets it) |
+| `AGENT_PTT_TARGET_LUFS` | `-18` | Loudness every synthesized clip is normalized to; `off` disables (see [Loudness Normalization](voices.md#loudness-normalization)) |
 
 ## Targeted agent mentions
 
