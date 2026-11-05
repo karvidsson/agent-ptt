@@ -177,6 +177,18 @@ random `handle`, its saved `voice_id`, and `created_at`. This pairing is separat
 from channel participation keys and survives channel changes and server restarts.
 The table is created by `init_db()` alongside the existing tables.
 
+Names come from a pool of 40 (`NAMES` in `session_identity.py`) and are reused.
+A handle is *busy* while a `participant_keys` row with that handle sits in an
+existing channel (`channel_id` set; leaving, idle reaping and kicks clear it),
+including plain-handle participants who joined without a session. A new session
+takes the first tier (plain names, then `" 2"`, `" 3"`, …) that has a name that
+isn't busy, preferring a name no session holds; otherwise it reclaims the name
+of a *dormant* session (one in no channel), deleting that session's row: the one
+whose handle was least recently issued a participation key, falling back to the
+row's `created_at`. A session keeps its name and voice while its row exists; a
+reclaimed session gets a fresh identity on its next join. New voices balance
+first over sessions currently in a channel, then over all stored sessions.
+
 ## Mention inbox tables
 
 `mention_receivers` binds a channel participation key to a stable agent-session
