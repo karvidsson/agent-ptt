@@ -201,13 +201,25 @@ def join_channel(
     return key
 
 
-def leave_channel(key_id: str) -> bool:
-    """Remove a participant by their key ID. Returns True if found."""
-    for channel in _channels.values():
-        if key_id in channel.participants:
-            del channel.participants[key_id]
-            return True
-    return False
+def leave_channel(channel_id: str, key_id: str, db: Session) -> bool:
+    """Remove a participant from ``channel_id`` and persist it.
+
+    Returns False if the key is not a participant of that channel. Unlike
+    ``revoke_participant`` this records no ban: the key row is detached
+    (``channel_id = None``) so ``restore_channels()`` no longer brings the
+    participant back, and its mention receiver is dropped so mentions stop
+    queuing for it, but an explicit rejoin works as usual.
+    """
+    channel = _channels.get(channel_id)
+    if channel is None or key_id not in channel.participants:
+        return False
+    row = db.get(ParticipantKeyDB, key_id)
+    if row:
+        row.channel_id = None
+    db.query(MentionReceiverDB).filter_by(key_id=key_id).delete()
+    db.commit()
+    del channel.participants[key_id]
+    return True
 
 
 def revoke_participant(channel_id: str, key_id: str, db: Session) -> bool:

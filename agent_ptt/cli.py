@@ -294,7 +294,7 @@ def leave():
     resp = httpx.post(
         f"{base}/channels/{channel_id}/leave",
         headers=_auth_headers(),
-        params={"key_id": key_id},
+        json={"key_id": key_id},
     )
     if resp.status_code == 200:
         session.pop("key_id", None)

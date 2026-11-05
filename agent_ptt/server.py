@@ -241,7 +241,7 @@ Full API schema: {base}/openapi.json (Swagger: {base}/docs).
 4. Read the transcript:
      GET  {base}/channels/<channel_id>/history
 5. Leave when done:
-     POST {base}/channels/<channel_id>/leave?key_id=<key_id>
+     POST {base}/channels/<channel_id>/leave  {{"key_id": "<key_id>"}}
 
 Keep lines short and spoken-friendly: no code, paths or markdown.
 
@@ -329,6 +329,10 @@ class JoinChannelRequest(BaseModel):
         default=False,
         description="Register for durable @mentions delivered via the inbox; requires session_id",
     )
+
+
+class LeaveRequest(BaseModel):
+    key_id: str = Field(min_length=1, description="Secret participation key returned by join")
 
 
 class SayRequest(BaseModel):
@@ -591,9 +595,24 @@ async def join_channel(
 
 
 @api.post("/channels/{channel_id}/leave", tags=["Channels"])
-async def leave_channel(channel_id: str, key_id: str):
-    """Leave a channel."""
-    success = ch.leave_channel(key_id)
+async def leave_channel(
+    channel_id: str,
+    req: LeaveRequest | None = None,
+    key_id: str | None = Query(
+        None, deprecated=True, description="Deprecated: send key_id in the JSON body."
+    ),
+    db: Session = Depends(get_db),
+):
+    """Leave a channel.
+
+    Send the participation key in the JSON body (``{"key_id": ...}``); the
+    ``?key_id=`` query parameter still works but puts the secret in access
+    logs. The body wins if both are given.
+    """
+    key_id = req.key_id if req is not None else key_id
+    if not key_id:
+        raise HTTPException(422, "key_id is required")
+    success = ch.leave_channel(channel_id, key_id, db)
     if not success:
         return JSONResponse({"error": "Participant not found"}, status_code=404)
     return {"status": "left"}
