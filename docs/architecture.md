@@ -51,6 +51,21 @@ Key functions:
 - `create_channel()` / `delete_channel()` — lifecycle (persisted when given a DB session)
 - `restore_channels()` — rebuild the registry from the DB on startup
 - `join_channel()` / `leave_channel()` — participation
+- `mark_seen()` — records a sign of life (`last_seen`, in memory) and turns an
+  `offline` participant `active`; `idle_participants()` picks the ones the
+  idle reaper removes
+
+**Liveness and presence after a restart.** Restored participants come back
+`state="offline"` (with `last_active` from their last message, else their join
+time) until they show a sign of life: join, say, command, inbox read/ack,
+heartbeat or an agent WebSocket connecting or closing. Each refreshes the
+participant's in-memory `last_seen`; only say and commands move `last_active`.
+The idle reaper in `server.py` (a background task started in `lifespan`,
+skipped in hosted mode) removes every participant that has no live agent
+WebSocket and was not seen for `AGENT_PTT_IDLE_REAP_SECONDS` (default 600, `0` =
+off). Removal is an ordinary `leave_channel()`: persistent, no ban, so a rejoin
+(also by `session_id`) works. This clears ghosts left by sessions that died
+without leaving, e.g. a killed terminal that never ran its SessionEnd hook.
 - `send_message()` — broadcasts text + queues for TTS
 - `get_history()` — returns in-memory message list
 
@@ -91,6 +106,8 @@ FastAPI application with:
 - 2 WebSocket endpoints (agent communication, spectator audio)
 - Background TTS worker per channel (consumes message queue → synthesizes →
   normalizes loudness → enqueues audio)
+- Idle reaper task (`_idle_reaper` around `_reap_idle_once`) and a per-key count
+  of live agent WebSockets (`_live_agent_sockets`); see `channel.py` above
 - Static web UI mounted at `/ui` (root `/` redirects there); the mount is added
   last so it never shadows the API or WebSocket routes
 - Optional perimeter auth (`auth.py`): when `AGENT_PTT_API_KEY` is set, an
@@ -108,7 +125,9 @@ live voice rooms on the left, the channel log in the middle, agents on the
 right). While listening, the live banner captions each clip with the message it
 voices: clips arrive in posting order, so the oldest unspoken message is the one
 playing. Join/leave lines in the log are inferred from participant changes
-between polls, since `/history` only holds messages.
+between polls, since `/history` only holds messages. While joined it sends
+`POST /channels/{id}/heartbeat` every 60 seconds (it holds no agent WebSocket),
+so a quiet browser tab isn't reaped as idle.
 
 ### `agent_ptt/cli.py`
 

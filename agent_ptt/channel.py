@@ -9,6 +9,9 @@ the keys agents are already holding keep working.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,6 +31,8 @@ from agent_ptt.models import (
     ParticipantKeyDB,
     RevokedParticipantDB,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # In-memory channel registry
@@ -93,9 +98,12 @@ def restore_channels(db: Session) -> list[Channel]:
 
     Called once on startup. Participants are restored with the keys they
     were issued, so an agent that joined before the restart can carry on
-    posting without noticing it happened.
+    posting without noticing it happened. They come back ``offline`` until
+    they show a sign of life (see ``mark_seen``); one that doesn't within
+    the idle grace period is reaped.
     """
     restored: list[Channel] = []
+    now = datetime.now(UTC)
 
     for row in db.query(ChannelDB).order_by(ChannelDB.created_at).all():
         if row.channel_id in _channels:
@@ -117,6 +125,9 @@ def restore_channels(db: Session) -> list[Channel]:
                 voice_id=key_row.voice_id,
                 channel_id=key_row.channel_id,
                 created_at=_as_utc(key_row.created_at),
+                state="offline",
+                since=now,
+                last_seen=now,
             )
 
         for msg_row in (
@@ -137,6 +148,10 @@ def restore_channels(db: Session) -> list[Channel]:
                     context=msg_row.context,
                 )
             )
+
+        for participant in channel.participants.values():
+            last = last_message_from(channel, participant.key_id)
+            participant.last_active = last.timestamp if last else participant.created_at
 
         for receiver in db.query(MentionReceiverDB).filter_by(channel_id=row.channel_id):
             participant = channel.participants.get(receiver.key_id)
@@ -199,6 +214,74 @@ def join_channel(
         db.commit()
 
     return key
+
+
+def mark_seen(participant: ParticipantKey) -> None:
+    """Record a sign of life; an ``offline`` participant comes back ``active``.
+
+    Polling and heartbeats call only this; saying or doing something also
+    moves ``last_active`` (see ``_touch``).
+    """
+    now = datetime.now(UTC)
+    participant.last_seen = now
+    if participant.state == "offline":
+        participant.state = "active"
+        participant.since = now
+
+
+DEFAULT_IDLE_REAP_SECONDS = 600
+
+
+def idle_reap_seconds() -> int:
+    """Grace period before an idle participant is removed; 0 turns reaping off.
+
+    Read from ``AGENT_PTT_IDLE_REAP_SECONDS`` (default 600). A value that
+    isn't a non-negative integer falls back to the default with a warning.
+    """
+    raw = os.environ.get("AGENT_PTT_IDLE_REAP_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_IDLE_REAP_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        logger.warning(
+            "Ignoring AGENT_PTT_IDLE_REAP_SECONDS=%r (not a non-negative integer); using %d",
+            raw,
+            DEFAULT_IDLE_REAP_SECONDS,
+        )
+        return DEFAULT_IDLE_REAP_SECONDS
+    return value
+
+
+def idle_reap_message(grace: int) -> str:
+    """One-line description of the idle reaper, logged at server startup."""
+    if grace <= 0:
+        return "Idle participant reaping: off (AGENT_PTT_IDLE_REAP_SECONDS=0)"
+    return (
+        f"Idle participant reaping: after {grace}s without a sign of life "
+        "(AGENT_PTT_IDLE_REAP_SECONDS, 0 = off)"
+    )
+
+
+def idle_participants(
+    now: datetime, grace: float, live_keys: Collection[str]
+) -> list[ParticipantKey]:
+    """Participants to reap: no live agent WebSocket and unseen for over ``grace`` s.
+
+    Archived channels are skipped (their participants are already revoked).
+    """
+    stale: list[ParticipantKey] = []
+    for channel in _channels.values():
+        if channel.archived:
+            continue
+        for participant in channel.participants.values():
+            if participant.key_id in live_keys:
+                continue
+            if (now - participant.last_seen).total_seconds() > grace:
+                stale.append(participant)
+    return stale
 
 
 def leave_channel(channel_id: str, key_id: str, db: Session) -> bool:
@@ -325,6 +408,7 @@ async def send_message(
 
     # Publish only after the message and its deliveries are durably committed.
     channel.messages.append(msg)
+    mark_seen(participant)
     participant.last_active = msg.timestamp
     queue = _message_queues.get(channel.channel_id)
     if queue is not None:
@@ -403,7 +487,8 @@ COMMANDS = ("names", "whois", "me", "notice", "topic", "away", "back")
 
 
 def _touch(participant: ParticipantKey) -> None:
-    participant.last_active = datetime.now(UTC)
+    mark_seen(participant)
+    participant.last_active = participant.last_seen
 
 
 def find_participant_by_handle(channel: Channel, handle: str) -> ParticipantKey | None:

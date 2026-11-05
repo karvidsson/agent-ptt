@@ -299,3 +299,120 @@ def test_leave_sends_key_in_body_not_query(session, fake_post):
     assert KEY not in call["url"]
     saved = json.loads(session.read_text())
     assert "key_id" not in saved and "channel_id" not in saved
+
+
+# ---------------------------------------------------------------------------
+# say: rejoin once when the server dropped the key (left or reaped as idle)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_ws(monkeypatch):
+    """Fake the agent WebSocket: keys in `refused` are rejected at the handshake."""
+    import websockets
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    state = SimpleNamespace(refused={KEY}, sent=[])
+
+    class Socket:
+        def __init__(self, uri):
+            self.uri = uri
+
+        async def __aenter__(self):
+            if any(f"key={key}" in self.uri for key in state.refused):
+                raise InvalidStatus(Response(403, "Forbidden", Headers()))
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def send(self, data):
+            state.sent.append((self.uri, json.loads(data)))
+
+        async def recv(self):
+            text = state.sent[-1][1]["text"]
+            return json.dumps({"type": "message", "handle": "Claude", "text": text})
+
+    monkeypatch.setattr(websockets, "connect", lambda uri, **kwargs: Socket(uri))
+    return state
+
+
+def _route_posts(monkeypatch, routes: dict[str, tuple[int, dict]]):
+    calls: list[tuple[str, dict]] = []
+
+    def post(url, json=None, headers=None, **kwargs):
+        calls.append((url, json))
+        status, body = next(v for k, v in routes.items() if url.endswith(k))
+        return SimpleNamespace(status_code=status, json=lambda: body, text=json_mod.dumps(body))
+
+    monkeypatch.setattr(cli.httpx, "post", post)
+    return calls
+
+
+def test_say_sends_with_saved_key(session, fake_ws, monkeypatch):
+    fake_ws.refused = set()
+    calls = _route_posts(monkeypatch, {})
+    result = runner.invoke(cli.app, ["say", "hello"])
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    assert f"key={KEY}" in fake_ws.sent[0][0]
+
+
+def test_say_rejoins_once_when_key_was_dropped(session, fake_ws, monkeypatch):
+    saved = json.loads(session.read_text())
+    session.write_text(json.dumps({**saved, "voice": "marius"}))
+    calls = _route_posts(
+        monkeypatch,
+        {
+            "/heartbeat": (404, {"error": "Participant not found in channel"}),
+            "/join": (200, {"key_id": "key-new", "voice_id": "marius", "handle": "Claude"}),
+        },
+    )
+    result = runner.invoke(cli.app, ["say", "still here"])
+    assert result.exit_code == 0, result.output
+    assert "rejoined as Claude" in _flat(result.output)
+    assert calls == [
+        (f"{cli.DEFAULT_BASE_URL}/channels/{CHANNEL}/heartbeat", {"key_id": KEY}),
+        (
+            f"{cli.DEFAULT_BASE_URL}/channels/{CHANNEL}/join",
+            {"handle": "Claude", "voice_id": "marius"},
+        ),
+    ]
+    assert [(uri.endswith("key=key-new"), msg["text"]) for uri, msg in fake_ws.sent] == [
+        (True, "still here")
+    ]
+    saved = json.loads(session.read_text())
+    assert (saved["key_id"], saved["channel_id"], saved["voice"]) == ("key-new", CHANNEL, "marius")
+
+
+def test_say_does_not_undo_a_kick(session, fake_ws, monkeypatch):
+    calls = _route_posts(monkeypatch, {"/heartbeat": (403, {"detail": "removed"})})
+    result = runner.invoke(cli.app, ["say", "hi"])
+    assert result.exit_code == 1
+    assert "refused" in result.output
+    assert [url for url, _ in calls] == [f"{cli.DEFAULT_BASE_URL}/channels/{CHANNEL}/heartbeat"]
+    assert json.loads(session.read_text())["key_id"] == KEY
+
+
+def test_say_gives_up_if_the_new_key_is_refused_too(session, fake_ws, monkeypatch):
+    fake_ws.refused = {KEY, "key-new"}
+    _route_posts(
+        monkeypatch,
+        {
+            "/heartbeat": (404, {"error": "Participant not found in channel"}),
+            "/join": (200, {"key_id": "key-new", "voice_id": "marius"}),
+        },
+    )
+    result = runner.invoke(cli.app, ["say", "hi"])
+    assert result.exit_code == 1
+    assert len(fake_ws.sent) == 0
+
+
+def test_say_does_not_rejoin_on_a_server_without_heartbeat(session, fake_ws, monkeypatch):
+    # FastAPI's route-missing 404 has no "error" field: not proof the key is gone.
+    calls = _route_posts(monkeypatch, {"/heartbeat": (404, {"detail": "Not Found"})})
+    result = runner.invoke(cli.app, ["say", "hi"])
+    assert result.exit_code == 1
+    assert len(calls) == 1

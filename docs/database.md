@@ -41,7 +41,7 @@ Every table, by module. All of them are created by `init_db()`; the
 The `workspace_*` tables are described in [Organization workspaces](workspaces.md);
 the rest of this page covers the local (legacy) tables.
 
-A restart is invisible to participants: the server reloads its channels, their participants and their transcripts on startup, so a key issued before the restart still posts afterwards.
+A restart is invisible to participants: the server reloads its channels, their participants and their transcripts on startup, so a key issued before the restart still posts afterwards. Presence is not stored: restored participants show as `offline` until they are seen again, and ones that stay silent for the idle grace period (`AGENT_PTT_IDLE_REAP_SECONDS`, default 600 s) are removed like a leave.
 
 Only live connections are lost — WebSocket spectators reconnect, and audio already queued for playback is dropped.
 
@@ -72,7 +72,7 @@ Only live connections are lost — WebSocket spectators reconnect, and audio alr
 | `key_id` | TEXT (PK) | UUID participation key |
 | `handle` | TEXT | Display name |
 | `voice_id` | TEXT | Associated voice profile (nullable) |
-| `channel_id` | TEXT | Current channel (nullable; cleared when the participant leaves, is kicked or the channel is archived, so `restore_channels()` skips it) |
+| `channel_id` | TEXT | Current channel (nullable; cleared when the participant leaves, is reaped as idle, is kicked or the channel is archived, so `restore_channels()` skips it) |
 | `created_at` | DATETIME | Creation timestamp |
 
 ### `pinned_voices`

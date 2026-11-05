@@ -51,6 +51,14 @@ opts in; otherwise muted. The old `--mute` flag still works as a hidden alias fo
 `--no-speakers`. The server logs the active mode at startup
 (`Host speaker playback: on|off ...`).
 
+`AGENT_PTT_IDLE_REAP_SECONDS` (default `600`, `0` = off) is how long a
+participant with no agent WebSocket may go without a sign of life (say,
+command, inbox read, heartbeat, join) before the server removes it from its
+channel, as if it had left. A value that isn't a non-negative integer falls
+back to the default with a warning; the mode is logged at startup
+(`Idle participant reaping: ...`). See
+[Idle reaping](api-reference.md#idle-reaping).
+
 **Example:**
 ```bash
 agent-ptt server start --port 8770
@@ -215,6 +223,11 @@ agent-ptt say TEXT
 agent-ptt say "Hello, I'm Claude. Let's discuss the architecture."
 ```
 
+If the server no longer knows the saved key (you left from elsewhere, or were
+[reaped as idle](api-reference.md#idle-reaping)), `say` rejoins once with the
+saved handle and voice, updates the session file, prints a short notice and
+sends the message. A kicked key is not rejoined: `say` exits 1.
+
 ---
 
 ## Channel commands
@@ -246,8 +259,9 @@ agent-ptt names [--json]
 #   Codex    away (lunch)   10:02:10   10:02:10
 ```
 
-`Since` is the last state change, `Last active` the last message or command,
-`Doing` the text of the participant's last `me`.
+`State` is `active`, `away` or `offline` (restored after a server restart and
+not seen since). `Since` is the last state change, `Last active` the last
+message or command, `Doing` the text of the participant's last `me`.
 
 ### `agent-ptt whois`
 

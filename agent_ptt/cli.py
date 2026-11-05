@@ -241,6 +241,47 @@ def channel_history(
 # ---------------------------------------------------------------------------
 
 
+def _post_join(base: str, channel_id: str, handle: str, voice: str | None) -> httpx.Response:
+    # Generous timeout: joining may include database work
+    return httpx.post(
+        f"{base}/channels/{channel_id}/join",
+        headers=_auth_headers(),
+        json={"handle": handle, "voice_id": voice},
+        timeout=120.0,
+    )
+
+
+def _remember_join(channel_id: str, handle: str, voice: str | None, data: dict) -> None:
+    """Save a successful join's key, channel, handle and voice to the session."""
+    session = _load_session()
+    session["key_id"] = data["key_id"]
+    session["channel_id"] = channel_id
+    session["handle"] = handle
+    session["voice"] = data.get("voice_id") or voice
+    _save_session(session)
+
+
+def _participant_gone(base: str, channel_id: str, key_id: str) -> bool:
+    """Whether the server no longer knows ``key_id`` in the channel.
+
+    Asks ``POST /heartbeat``: a 404 with the server's ``error`` body means the
+    participant left or was reaped as idle (a rejoin brings it back); 403 is
+    a kick, which must not be undone automatically.
+    """
+    resp = httpx.post(
+        f"{base}/channels/{channel_id}/heartbeat",
+        headers=_auth_headers(),
+        json={"key_id": key_id},
+        timeout=10.0,
+    )
+    if resp.status_code != 404:
+        return False
+    try:
+        return "error" in resp.json()  # not FastAPI's bare route-missing 404
+    except ValueError:
+        return False
+
+
 @app.command("join")
 def join(
     channel_id: str = typer.Argument(help="Channel ID to join"),
@@ -250,23 +291,10 @@ def join(
     ),
 ):
     """Join a channel with a handle and voice."""
-    base = _get_base_url()
-    # Generous timeout: joining may include database work
-    resp = httpx.post(
-        f"{base}/channels/{channel_id}/join",
-        headers=_auth_headers(),
-        json={"handle": handle, "voice_id": voice},
-        timeout=120.0,
-    )
+    resp = _post_join(_get_base_url(), channel_id, handle, voice)
     if resp.status_code == 200:
         data = resp.json()
-        # Save session
-        session = _load_session()
-        session["key_id"] = data["key_id"]
-        session["channel_id"] = channel_id
-        session["handle"] = handle
-        session["voice"] = data.get("voice_id") or voice
-        _save_session(session)
+        _remember_join(channel_id, handle, voice, data)
 
         rprint(f"[bold green]✅ Joined as [{handle}][/bold green]")
         if designed := data.get("designed_voice"):
@@ -318,30 +346,58 @@ def say(text: str = typer.Argument(help="Message to send")):
 
     base = _get_base_url()
 
-    # Send via REST (for simplicity — WebSocket mode is for live agent connections)
-    # We'll post a message via the WebSocket protocol using httpx
+    # Sent over the agent WebSocket, opened for this one message.
     import asyncio
 
     import websockets
+    from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-    async def _send():
-        uri = f"ws://{base.replace('http://', '')}/channels/{channel_id}/ws?key={key_id}"
-        async with websockets.connect(uri, additional_headers=_auth_headers()) as ws:
-            await ws.send(json.dumps({"type": "message", "text": text}))
-            # Wait briefly for the broadcast echo
-            try:
-                resp = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                data = json.loads(resp)
-                if data.get("type") == "message":
-                    rprint(
-                        f"[dim]{data.get('timestamp', '')}[/dim] "
-                        f"[bold cyan]{data.get('handle', '?')}[/bold cyan]: "
-                        f"{data.get('text', '')}"
-                    )
-            except TimeoutError:
-                rprint(f"[bold green]✅ Sent:[/bold green] {text}")
+    async def _send(key: str) -> bool:
+        """Send ``text``; False if the server refused the key."""
+        uri = f"ws://{base.replace('http://', '')}/channels/{channel_id}/ws?key={key}"
+        try:
+            async with websockets.connect(uri, additional_headers=_auth_headers()) as ws:
+                await ws.send(json.dumps({"type": "message", "text": text}))
+                # Wait briefly for the broadcast echo
+                try:
+                    resp = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                    data = json.loads(resp)
+                    if data.get("type") == "message":
+                        rprint(
+                            f"[dim]{data.get('timestamp', '')}[/dim] "
+                            f"[bold cyan]{data.get('handle', '?')}[/bold cyan]: "
+                            f"{data.get('text', '')}"
+                        )
+                except TimeoutError:
+                    rprint(f"[bold green]✅ Sent:[/bold green] {text}")
+        except InvalidStatus:
+            # The server refuses the handshake (HTTP 403) for an unknown key.
+            return False
+        except ConnectionClosed as exc:
+            if exc.rcvd is not None and exc.rcvd.code == 4001:
+                return False
+            raise
+        return True
 
-    asyncio.run(_send())
+    if asyncio.run(_send(key_id)):
+        return
+
+    # The key may have been dropped (left elsewhere, or reaped as idle):
+    # rejoin once with the saved handle and voice, then retry.
+    handle = session.get("handle")
+    if not handle or not _participant_gone(base, channel_id, key_id):
+        rprint("[bold red]❌ Error:[/bold red] the server refused this participation key")
+        raise typer.Exit(1)
+    resp = _post_join(base, channel_id, handle, session.get("voice"))
+    if resp.status_code != 200:
+        rprint(f"[bold red]❌ Rejoin failed:[/bold red] {escape(resp.text)}")
+        raise typer.Exit(1)
+    data = resp.json()
+    _remember_join(channel_id, handle, session.get("voice"), data)
+    rprint(f"[yellow]↻ The server had dropped your key; rejoined as {escape(handle)}[/yellow]")
+    if not asyncio.run(_send(data["key_id"])):
+        rprint("[bold red]❌ Error:[/bold red] the server refused the new participation key")
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
