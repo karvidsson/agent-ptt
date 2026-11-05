@@ -8,6 +8,17 @@ import tempfile
 _TEST_DB_DIR = tempfile.mkdtemp(prefix="agent-ptt-tests-")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_DIR}/test.db"
 
+# CLI tests assert on plain text. CI runners make Rich/Typer force a colour
+# terminal (GITHUB_ACTIONS, FORCE_COLOR, PY_COLORS), which wraps words in ANSI
+# codes; both read the environment at import, so neutralise it here, before
+# any agent_ptt (and thus Rich/Typer) import. A wide, fixed width keeps
+# option names from wrapping.
+for _var in ("FORCE_COLOR", "PY_COLORS", "GITHUB_ACTIONS", "FORCE_TERMINAL"):
+    os.environ.pop(_var, None)
+os.environ["NO_COLOR"] = "1"
+os.environ["TERM"] = "dumb"
+os.environ["COLUMNS"] = "200"
+
 import pytest
 from fastapi.testclient import TestClient
 

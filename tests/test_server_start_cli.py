@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -11,6 +12,25 @@ import agent_ptt.cli as cli
 from agent_ptt.audio import speakers_enabled
 
 runner = CliRunner()
+
+# CI runners force colour (FORCE_COLOR / GITHUB_ACTIONS), so Rich wraps option
+# names in ANSI codes and may wrap at a narrow width. Render --help plain and
+# wide, and strip any escape codes that still get through.
+PLAIN_HELP_ENV = {
+    "NO_COLOR": "1",
+    "FORCE_COLOR": None,
+    "GITHUB_ACTIONS": None,
+    "TERM": "dumb",
+    "COLUMNS": "200",
+    "_TYPER_FORCE_DISABLE_TERMINAL": "1",
+}
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def plain_help(*args: str) -> str:
+    result = runner.invoke(cli.app, [*args, "--help"], env=PLAIN_HELP_ENV)
+    assert result.exit_code == 0, result.output
+    return ANSI_ESCAPE.sub("", result.output)
 
 
 @pytest.fixture
@@ -61,9 +81,9 @@ def test_apply_speaker_mode_pins_env():
 
 
 def test_mute_flag_is_hidden_but_speakers_documented():
-    result = runner.invoke(cli.app, ["server", "start", "--help"])
-    assert "--speakers" in result.output
-    assert "--mute" not in result.output
+    output = plain_help("server", "start")
+    assert "--speakers" in output
+    assert "--mute" not in output
 
 
 def test_server_logs_speaker_mode_at_startup(caplog, fake_tts, fake_mixer):
