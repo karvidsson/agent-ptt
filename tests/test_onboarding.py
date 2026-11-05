@@ -75,6 +75,8 @@ def test_eight_agent_invitation_has_individual_scoped_credentials(owner):
         assert bot.post(API + "/invitations/inspect", json={"token": token}).status_code == 403
     registered = owner.get(f"{API}/organizations/{org}/agents").json()
     assert all(a["onboarded_by"] == developer_id for a in registered)
+    assert all(a["voice_id"] for a in registered)
+    assert len({a["voice_id"] for a in registered}) == len(registered)
     assert all("token" not in a for a in registered)
     with SessionLocal() as db:
         stored = set(db.scalars(select(Credential.digest)))

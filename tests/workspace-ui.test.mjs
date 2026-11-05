@@ -19,7 +19,7 @@ function harness(){
   const nodes=new Map(),requests=[],waiters=[],events={};
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Node());return nodes.get(id);};
   class Option extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}}
-  const ctx=vm.createContext({document:{getElementById:get,createElement:tag=>new Node(tag),createTextNode:text=>new Node('text'),querySelectorAll:()=>[]},location:{hash:'',pathname:'/workspace/',protocol:'http:',host:'localhost'},history:{replaceState(){}},window:{addEventListener(name,handler){events[name]=handler;}},getComputedStyle:()=>({display:'flex'}),URLSearchParams,Option,crypto:{randomUUID:()=> 'retry-id'},setTimeout:()=>1,clearTimeout(){},console,WebSocket:class{close(){}},fetch:(path,options)=>new Promise(resolve=>{requests.push({path,options});waiters.push(data=>resolve({ok:true,status:200,json:async()=>data}));})});
+  const ctx=vm.createContext({document:{body:new Node('body'),getElementById:get,createElement:tag=>new Node(tag),createTextNode:text=>new Node('text'),querySelectorAll:()=>[]},location:{hash:'',pathname:'/workspace/',protocol:'http:',host:'localhost'},history:{replaceState(){}},window:{addEventListener(name,handler){events[name]=handler;}},getComputedStyle:()=>({display:'flex'}),URL,URLSearchParams,Option,crypto:{randomUUID:()=> 'retry-id'},setTimeout:()=>1,clearTimeout(){},console,WebSocket:class{close(){}},fetch:(path,options)=>new Promise(resolve=>{requests.push({path,options});waiters.push(data=>resolve({ok:true,status:200,json:async()=>data}));})});
   const run=code=>vm.runInContext(code,ctx);run(source);run(`state.me={name:'Test',organizations:[{id:'a',name:'Alpha',role:'owner'},{id:'b',name:'Beta',role:'member'}]}`);
   return {run,nodes,get,requests,waiters,events};
 }
@@ -111,7 +111,7 @@ test('general join link uses organization enrollment without a channel or agent 
  h.waiters.shift()({organization:'Team',role:'member'});await info;
  assert.match(h.get('invitation-description').textContent,/list, create, and join channels/);
  assert.equal(h.get('onboarding-fields').hidden,true);
- assert.match(h.get('invite-agent-command').textContent,/workspace --profile my-agent enroll/);
+ assert.match(h.get('invite-agent-command').textContent,/python3 .*--profile my-agent enroll/);
  const accept=h.get('accept-invite').onclick();
  assert.equal(h.requests[1].path,'/api/workspace/join/person');
  assert.deepEqual(JSON.parse(h.requests[1].options.body),{token:'a'.repeat(43)});
@@ -130,4 +130,108 @@ test('late general link creation cannot expose another organization secret',asyn
  const pending=h.get('create-join-link').onclick();assert.equal(h.requests[0].path,'/api/workspace/organizations/a/join-link');
  h.run('switchOrg("b")');h.waiters[0]({url:'secret-link-a'});await pending;
  assert.equal(h.get('secret-value').value,'');assert.equal(h.get('secret-dialog').open,false);
+});
+test('agent invitation names the organization and ignores a stale preview',async()=>{
+ const h=harness();h.run("generalJoin=true;inviteToken='first'");
+ const first=h.run('previewAgentInvitation()');h.run("inviteToken='second'");
+ const second=h.run('previewAgentInvitation()');h.waiters[1]({organization:'Current team'});await second;
+ h.waiters[0]({organization:'Old team'});await first;
+ assert.match(h.get('agent-invitation-target').textContent,/You, the agent, are invited to join Current team/);
+ assert.doesNotMatch(h.get('agent-invitation-target').textContent,/Old team/);
+});
+
+test('agent invitation URL encodes onboarding fields and preserves the join token',()=>{
+ const h=harness();
+ const room={id:'00000000-0000-4000-8000-000000000001',name:'Review & QA'};
+ const link='http://localhost/workspace/#join='+'a'.repeat(43);
+ const result=h.run(`agentInvitationUrl(${JSON.stringify(link)},${JSON.stringify(room)},"Codex O'Reilly",true).href`);
+ const params=new URLSearchParams(new URL(result).hash.slice(1));
+ assert.equal(params.get('join'),'a'.repeat(43));assert.equal(params.get('channel'),room.id);
+ assert.equal(params.get('channel_name'),room.name);assert.equal(params.get('agent'),"Codex O'Reilly");assert.equal(params.get('introduce'),'1');
+ assert.ok(!result.includes("'"));
+ assert.throws(()=>h.run(`agentInvitationUrl('https://other.example/workspace/#join=${'a'.repeat(43)}',${JSON.stringify(room)},'',true)`));
+});
+test('agent onboarding instructions retain targeted link and never execute it on page load',()=>{
+ const h=harness();h.run(`generalJoin=true;inviteToken='${'a'.repeat(43)}';agentInviteParams=new URLSearchParams({channel:'room-id',channel_name:'Review',agent:"Codex O'Reilly",introduce:'1'});renderJoinChoice()`);
+ assert.match(h.get('agent-invitation-plan').textContent,/join as Codex O'Reilly in #Review/);
+ assert.match(h.get('join-agent-command').textContent,/connect/);
+ assert.match(h.get('join-agent-command').textContent,/agent=Codex\+O%27Reilly/);
+ assert.equal(h.requests.length,0);
+ h.run('clearTenant()');assert.equal(h.get('agent-invitation-link').value,'');
+});
+test('copy invitation rejects a different organization without generating a link',async()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[0];state.rooms=[{id:'room-a',name:'General'}]`);
+ h.get('agent-invitation-link').value='http://localhost/workspace/#join='+'a'.repeat(43);
+ h.get('agent-invitation-channel').value='room-a';
+ const pending=h.get('agent-invitation-form').onsubmit({preventDefault(){},target:new Node('form')});
+ assert.equal(h.requests[0].path,'/api/workspace/join/inspect');h.waiters[0]({org_id:'b'});await pending;
+ assert.equal(h.get('agent-invitation-result').value,'');assert.match(h.get('agent-invitation-error').textContent,/different organization/);
+});
+test('copy invitation offers manual copy and discards stale organization responses',async()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[0];state.rooms=[{id:'room-a',name:'General'}]`);
+ const prepare=()=>{h.get('agent-invitation-link').value='http://localhost/workspace/#join='+'a'.repeat(43);h.get('agent-invitation-channel').value='room-a';};
+ prepare();let pending=h.get('agent-invitation-form').onsubmit({preventDefault(){},target:new Node('form')});
+ h.waiters[0]({org_id:'a'});await pending;
+ assert.match(h.get('agent-invitation-result').value,/channel=room-a/);assert.equal(h.get('agent-invitation-result-label').hidden,false);
+ prepare();pending=h.get('agent-invitation-form').onsubmit({preventDefault(){},target:new Node('form')});
+ h.run('clearTenant();state.org=state.me.organizations[1]');h.waiters[1]({org_id:'a'});await pending;
+ assert.equal(h.get('agent-invitation-result').value,'');assert.equal(h.get('agent-invitation-link').value,'');
+});
+
+test('agent roster uses check-ins instead of stale task state to claim online',()=>{
+ const h=harness();h.run(`state.presenceStatus='ready';state.presence=[{principal_id:'a',kind:'agent',state:'working'}]`);
+ assert.equal(h.run("presenceSummary({id:'a',kind:'agent',online_status:'unknown'})"),'Not checked in');
+ assert.equal(h.run("presenceSummary({id:'a',kind:'agent',online_status:'online',checkin_mode:'timer'})"),'Online · timer checks');
+ assert.equal(h.run("presenceSummary({id:'a',kind:'agent',online_status:'offline'})"),'Offline · check-in expired');
+ h.run("state.presenceStatus='unavailable'");
+ assert.equal(h.run("presenceSummary({id:'a',kind:'agent',online_status:'online'})"),'Online status unavailable');
+});
+test('only admins see channel removal for offline agents',()=>{
+ const h=harness();
+ const all=node=>[node.textContent,...node.children.map(all)].join(' ');
+ for(const [role,status,visible] of [['owner','offline',true],['admin','offline',true],['member','offline',false],['owner','online',false],['owner','unknown',false]]){
+  h.run(`state.org={...state.me.organizations[0],role:${JSON.stringify(role)}};state.rooms=[{id:'room-a',name:'general'}];openProfile({id:'agent-a',name:'Scout',kind:'agent',online_status:${JSON.stringify(status)},channel_ids:['room-a']})`);
+  assert.equal(all(h.get('profile-body')).includes('Remove from #general'),visible);
+ }
+});
+test('channel roster and mention choices follow membership without changing organization agents',()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[0];state.agents=[{id:'a',name:'General Scout',active:true,channel_ids:['general']},{id:'b',name:'Project Scout',active:true,channel_ids:['project']},{id:'c',name:'Both',active:true,channel_ids:['general','project']},{id:'d',name:'Unjoined',active:true,channel_ids:[]}];state.room={id:'general'};renderRoster();renderRecipients()`);
+ const text=node=>[node.textContent,...node.children.map(text)].join(' ');
+ assert.match(text(h.get('roster-list')),/General Scout/);assert.doesNotMatch(text(h.get('roster-list')),/Project Scout|Unjoined/);
+ assert.equal(h.get('recipient').children.length,3);
+ h.run(`state.room={id:'project'};renderRoster();renderRecipients()`);
+ assert.match(text(h.get('roster-list')),/Project Scout/);assert.doesNotMatch(text(h.get('roster-list')),/General Scout|Unjoined/);
+ assert.equal(h.run('state.agents.length'),4);
+});
+
+test('agent profile saves a catalog voice through the tenant API',async()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[0];state.agents=[{id:'agent',name:'Helper',kind:'agent',active:true,voice_id:'fender'}];openProfile(state.agents[0])`);
+ assert.equal(h.requests[0].path,'/api/workspace/organizations/a/voices');
+ h.waiters[0]([{id:'fender',name:'Fender'},{id:'ledger',name:'Ledger'}]);await tick();
+ const section=h.get('profile-body').children[1],select=section.children[1];
+ assert.equal(select.value,'fender');assert.equal(select.disabled,false);
+ select.value='ledger';const save=select.onchange();
+ assert.equal(h.requests[1].path,'/api/workspace/organizations/a/agents/agent/voice');
+ assert.equal(JSON.parse(h.requests[1].options.body).voice_id,'ledger');
+ h.waiters[1]({id:'agent',voice_id:'ledger'});await save;
+ assert.equal(h.run('state.agents[0].voice_id'),'ledger');assert.match(section.children[2].textContent,/Voice saved/);
+});
+
+test('member can see the voice but cannot edit it',async()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[1];openProfile({id:'agent',name:'Helper',kind:'agent',active:true,voice_id:'fender'})`);
+ h.waiters[0]([{id:'fender',name:'Fender'}]);await tick();
+ assert.equal(h.get('profile-body').children[1].children[1].disabled,true);
+});
+test('successful removal disappears immediately and stale roster cannot restore it',async()=>{
+ const h=harness();
+ h.run(`state.org=state.me.organizations[0];state.room={id:'general'};state.agents=[{id:'scout',name:'Scout',active:true,channel_ids:['general','project']}];renderRoster();renderRecipients()`);
+ const old=h.run('refreshRoster(context())');
+ h.run(`applyChannelRemoval('scout','general')`);
+ assert.equal(h.get('roster-list').children.length,0);
+ assert.equal(h.get('recipient').children.length,1);
+ assert.equal(h.run("state.agents[0].channel_ids.join(',')"),'project');
+ h.waiters[0]([]);h.waiters[1]([]);h.waiters[2]([{id:'scout',name:'Scout',active:true,channel_ids:['general','project']}]);
+ await old;
+ assert.equal(h.get('roster-list').children.length,0);
+ assert.equal(h.run("state.agents[0].channel_ids.join(',')"),'project');
 });

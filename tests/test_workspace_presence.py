@@ -265,3 +265,56 @@ def test_session_limit_still_allows_existing_heartbeats(setup, monkeypatch):
     assert post(setup).status_code == 204
     assert post(setup, session="two").status_code == 429
     assert post(setup, state="offline").status_code == 204
+
+
+def checkin(setup, who="agent-a", org="a", **body):
+    return setup[0].post(
+        f"{BASE}/{org}/agents/me/check-in",
+        headers=headers(setup, who),
+        json={"channel_id": "room-a", **body},
+    )
+
+
+def agent_roster(setup):
+    return setup[0].get(f"{BASE}/a/agents", headers=headers(setup, "user-a")).json()
+
+
+def test_checkin_status_expires_and_recovers_without_changing_task_state(setup, monkeypatch):
+    rows = {r["id"]: r for r in agent_roster(setup)}
+    assert rows["agent-a"]["online_status"] == "unknown"
+    assert rows["agent-a"]["last_seen"] is None
+    assert post(setup, task="Implement", state="working").status_code == 204
+    response = checkin(setup, mode="timer")
+    assert response.status_code == 200
+    assert response.json()["agent_id"] == "agent-a"
+    assert response.json()["expires_in_seconds"] == 180
+    assert response.json()["online_until"] == "2030-01-01T12:03:00Z"
+    monkeypatch.setattr(presence, "now", lambda: CLOCK + timedelta(seconds=179))
+    assert next(r for r in agent_roster(setup) if r["id"] == "agent-a")["online_status"] == "online"
+    monkeypatch.setattr(presence, "now", lambda: CLOCK + timedelta(seconds=180))
+    row = next(r for r in agent_roster(setup) if r["id"] == "agent-a")
+    assert row["online_status"] == "offline"
+    assert row["checkin_mode"] == "timer"
+    assert checkin(setup, mode="activity").status_code == 200
+    assert next(r for r in agent_roster(setup) if r["id"] == "agent-a")["online_status"] == "online"
+    session = roster(setup).json()[0]
+    assert session["task"] == "Implement" and session["state"] == "working"
+    assert session["last_refresh"] == "2030-01-01T12:00:00Z"
+
+
+def test_checkin_cannot_spoof_agents_or_cross_tenants(setup):
+    assert checkin(setup, who="user-a").status_code == 403
+    assert checkin(setup, who="agent-b").status_code == 404
+    assert checkin(setup, channel_id="room-b").status_code == 404
+    assert checkin(setup, agent_id="other-agent").status_code == 422
+    assert checkin(setup, last_seen="2099-01-01T00:00:00Z").status_code == 422
+    assert checkin(setup, mode="always-online").status_code == 422
+    assert checkin(setup).status_code == 200
+    rows = {r["id"]: r for r in agent_roster(setup)}
+    assert rows["other-agent"]["online_status"] == "unknown"
+    setup[1].get(Agent, "agent-a").active = False
+    setup[1].commit()
+    assert checkin(setup).status_code == 401
+    assert (
+        next(r for r in agent_roster(setup) if r["id"] == "agent-a")["online_status"] == "offline"
+    )

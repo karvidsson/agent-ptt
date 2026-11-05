@@ -9,21 +9,22 @@ Deployed on 2026-09-27 to Proxmox VM **108**, `agent-ptt-test`:
 - PostgreSQL 16 and the application run as Docker services, with reboot recovery verified.
 - Speech is generated on the server with Pocket TTS; the browser plays WAV responses.
 
-## Open the app from this Mac
+## Open the app
 
-Double-click `deploy/connect-test.command`, then open
-<http://localhost:8780/workspace/>. Keep the Terminal window open while using the
-app. Closing the tunnel does not stop the server. Tailscale must be connected;
-an expired SSH identity check may require signing in again.
+<https://aptt.arvidsson.tech/workspace/> — published through a Cloudflare Tunnel
+(`cloudflared` service in the guest, tunnel `agent-ptt`), no Cloudflare Access in
+front. Signup is closed; new people and agents arrive through invitations and
+organization join links. Pocket model files are cached in the server model volume.
 
-Signup is enabled for this private test. Create your account and organization in
-the app. No permanent user account was created during deployment. Pocket model files are cached in the server model volume.
+SSH management uses the machine-specific configuration at `~/.ssh/agent-ptt-test.conf`
+and a dedicated verified host-key file; both stay out of the repository, and another
+workstation needs its own authorized identity. Tailscale must be connected, and an
+expired Tailscale SSH check asks you to sign in again. The service binds to guest
+loopback port 8080 and PostgreSQL has no published port; only the tunnel reaches it.
+The earlier `localhost:8780` SSH tunnel is retired because the app accepts one origin.
 
-The shortcut uses the machine-specific SSH configuration at
-`~/.ssh/agent-ptt-test.conf` and a dedicated verified host-key file. These files
-are not in the repository. Another workstation needs its own authorized SSH
-identity and configuration. The service binds to guest loopback port 8080, and
-PostgreSQL has no published port. Public HTTPS access is not configured.
+Releases go out with `deploy/ship.sh` from a clean, committed checkout; see
+[deployment](deployment.md#develop-locally-then-ship).
 
 ## Manage the service
 
@@ -44,7 +45,7 @@ curl --fail http://127.0.0.1:8080/health/ready
 ```
 
 The private `deploy/.env` contains the generated database password and sets
-`AGENT_PTT_PUBLIC_ORIGIN=http://localhost:8780`. Preserve it across updates. The
+`AGENT_PTT_PUBLIC_ORIGIN=https://aptt.arvidsson.tech`. Preserve it across updates. The
 database persists in Docker volume `deploy_database`; never use `down -v` unless
 intentionally deleting it. Automated backups are not configured. Configure and
 verify database backups before storing important data.
@@ -102,5 +103,13 @@ channels without administrator approval.
 - Readiness passed after container replacement. Claude Code and Codex plugins on the
   development Mac were refreshed; running CLI sessions need a restart to load them.
 
-This remains the private Proxmox test service, accessible through the existing
-`http://localhost:8780/workspace/` SSH tunnel. Public HTTPS hosting is unchanged.
+## Public hostname and release script — 2026-09-29
+
+`aptt.arvidsson.tech` is served by Cloudflare Tunnel `agent-ptt` (created with
+`deploy/cloudflare-tunnel.sh create`; ids in the gitignored `deploy/.cf-*`), with
+`cloudflared` installed as a systemd service by `deploy/cloudflare-tunnel.sh install`,
+which also switched `AGENT_PTT_PUBLIC_ORIGIN` to the HTTPS hostname and closed signup.
+Subsequent releases use `deploy/ship.sh`, which backs up the database to
+`/opt/agent-ptt/backups/<release>/`, keeps the previous image as
+`agent-ptt:before-<release>`, migrates, and recreates the server. The deployed source
+is now the committed HEAD recorded in `/opt/agent-ptt/RELEASE`.

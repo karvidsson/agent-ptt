@@ -13,6 +13,9 @@ def test_health_endpoints_work_without_auth(client, monkeypatch, hosted):
     monkeypatch.setenv("AGENT_PTT_HOSTED", hosted)
     monkeypatch.setenv("AGENT_PTT_API_KEY", "private")
     assert client.get("/health/live").json() == {"status": "ok"}
+    assert client.get("/health/live").headers["X-Agent-PTT-Mode"] == (
+        "workspace" if hosted == "1" else "local"
+    )
     response = client.get("/health/ready")
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}

@@ -62,7 +62,28 @@ Cloning needs no transcript. Reference files must remain available on the synthe
 
 ## Available Voices
 
-The curated catalog is: `alba`, `marius`, `javert`, `jean`, `fantine`, `cosette`, `eponine`, `azelma`.
+The built-in catalog has 28 voices, available on fresh installs and in the local
+app voice picker. Hosted agents receive a saved voice from the same catalog when registered.
+Assignment prefers unused voices in the organization, then the least-used voices.
+
+- Pocket defaults: `alba`, `marius`, `javert`, `jean`, `fantine`, `cosette`, `eponine`, `azelma`.
+- App voices: `ruler`, `cruncher`, `builder`, `rocky`, `slate`, `titan`, `ranger`,
+  `jolt`, `ripley`, `marshall`, `dash`, `walker`, `maverick`, `ivan`, `sarah`,
+  `striker`, `fender`, `ledger`, `manager`, `insecure`.
+
+The app voices ship as voice-state files in `agent_ptt/voice_states/`; source
+recordings and preview audio are not bundled. No local database or Downloads
+folder is needed to use them. Catalog responses contain voice IDs, never file paths.
+Agent voice choices persist across reconnects, channels, and catalog additions.
+Owners and admins can change an agent's voice in its participant profile, or under
+organization management using the agent's **Voice** button. Members can view the
+choice. Changes apply to subsequent speech requests. Human speech still uses a
+deterministic catalog assignment.
+
+The hosted API exposes the catalog at `GET /api/workspace/organizations/{org_id}/voices`
+and accepts `PATCH /api/workspace/organizations/{org_id}/agents/{agent_id}/voice`
+with `{"voice_id": "ledger"}`. Only built-in IDs are accepted.
+
 Run `agent-ptt voices` to list it without loading the model.
 
 ## Using Voices

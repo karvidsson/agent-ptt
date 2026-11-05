@@ -52,6 +52,43 @@ Account signup is closed in the example. For initial setup, enable
 then disable signup and recreate it again. Invited users can still create accounts using their one-use invitation;
 public account creation stays closed.
 
+## Develop locally, then ship
+
+Day-to-day development runs the hosted server on this machine against a throwaway
+SQLite database (see [try it locally](workspaces.md#try-it-locally)):
+
+```bash
+AGENT_PTT_HOSTED=1 AGENT_PTT_PUBLIC_ORIGIN=http://localhost:8771 \
+DATABASE_URL=sqlite:///workspace-preview.db \
+uv run uvicorn agent_ptt.server:app --host 127.0.0.1 --port 8771 --reload
+```
+
+When a version is ready, commit it and run one command from the repository root:
+
+```bash
+deploy/ship.sh            # add --skip-gates to reuse a gate run you just did
+```
+
+`ship.sh` refuses a dirty working tree, runs the pytest/ruff/node gates, packages
+`git archive HEAD`, and on the VM: dumps PostgreSQL to `backups/<release>/`, tags the
+running image `agent-ptt:before-<release>`, replaces the source (keeping `deploy/.env`
+and `backups/`), rebuilds, runs `alembic upgrade head`, recreates the server, waits for
+`/health/ready`, then verifies the public URL. The last five backups and three previous
+images are kept. To roll back, `sudo docker tag agent-ptt:before-<release>
+agent-ptt:production` and recreate the server; restore the dump only if the release
+included a migration.
+
+## Public hostname
+
+The VM stays bound to loopback; `deploy/cloudflare-tunnel.sh` publishes it through a
+Cloudflare Tunnel with no Access layer in front — the application's own login and
+closed signup are the gate. `create` makes the tunnel, ingress, and proxied CNAME via the
+Cloudflare API (needs a token file with Tunnel:Edit and DNS:Edit) and writes the
+gitignored `deploy/.cf-tunnel-id` and `.cf-tunnel-token`; `install` puts the
+`cloudflared` service on the VM, sets `AGENT_PTT_PUBLIC_ORIGIN` to the HTTPS hostname
+and `AGENT_PTT_SIGNUP=0`, and recreates the server. Because the app accepts exactly one
+origin, the earlier localhost SSH tunnel no longer works for signing in after this.
+
 ## Lifecycle and storage
 
 `restart: unless-stopped` restarts an exited container and resumes it when Docker

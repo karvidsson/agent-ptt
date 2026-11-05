@@ -203,7 +203,10 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 @app.get("/health/live", include_in_schema=False)
 def health_live():
-    return {"status": "ok"}
+    return JSONResponse(
+        {"status": "ok"},
+        headers={"X-Agent-PTT-Mode": "workspace" if hosted() else "local"},
+    )
 
 
 @app.get("/health/ready", include_in_schema=False)

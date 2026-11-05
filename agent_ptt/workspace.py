@@ -7,9 +7,10 @@ import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +20,7 @@ from starlette.websockets import WebSocketDisconnect
 from agent_ptt import workspace_delivery as delivery
 from agent_ptt.db import SessionLocal, get_db
 from agent_ptt.mention_policy import mention_policy
+from agent_ptt.voice_catalog import BUILTIN_VOICES
 from agent_ptt.workspace_auth import (
     COOKIE,
     SESSION_SECONDS,
@@ -39,6 +41,7 @@ from agent_ptt.workspace_auth import (
 )
 from agent_ptt.workspace_models import (
     Agent,
+    AgentChannel,
     AuditEvent,
     ChatMessage,
     Credential,
@@ -49,6 +52,7 @@ from agent_ptt.workspace_models import (
     User,
     now,
 )
+from agent_ptt.workspace_voices import choose_voice
 
 router = APIRouter(prefix="/api/workspace", tags=["Organization workspace"])
 STATIC = Path(__file__).parent / "static"
@@ -447,7 +451,13 @@ def accept_invite(
         db.add(Member(org_id=org_id, user_id=identity.id, role=role))
     agents = []
     for index, spec in enumerate(req.agents, 1):
-        agent = Agent(org_id=org_id, name=spec.name, harness=spec.harness, onboarded_by=identity.id)
+        agent = Agent(
+            org_id=org_id,
+            name=spec.name,
+            harness=spec.harness,
+            onboarded_by=identity.id,
+            voice_id=choose_voice(org_id, db),
+        )
         db.add(agent)
         db.flush()
         token = issue_credential(db, agent_id=agent.id, days=90)
@@ -457,6 +467,7 @@ def accept_invite(
                 "id": agent.id,
                 "name": agent.name,
                 "harness": spec.harness,
+                "voice_id": agent.voice_id,
                 "token": token,
             }
         )
@@ -485,7 +496,14 @@ def accept_invite(
 
 @router.get("/organizations/{org_id}/agents")
 def agents(org_id: str, identity: Principal = Depends(principal), db: Session = Depends(get_db)):
+    from agent_ptt.workspace_presence import AgentCheckIn, checkin_json
+    from agent_ptt.workspace_presence import now as presence_now
+
     role_for(org_id, identity, db)
+    clock = presence_now()
+    memberships = {}
+    for member in db.scalars(select(AgentChannel).where(AgentChannel.org_id == org_id)):
+        memberships.setdefault(member.agent_id, []).append(member.channel_id)
     return [
         {
             "id": a.id,
@@ -495,8 +513,19 @@ def agents(org_id: str, identity: Principal = Depends(principal), db: Session = 
             "role": "member",
             "onboarded_by": a.onboarded_by,
             "harness": a.harness,
+            "work_context": a.work_context,
+            "voice_id": a.voice_id,
+            "channel_ids": memberships.get(a.id, []),
+            **checkin_json(checkin, active=a.active, clock=clock),
         }
-        for a in db.scalars(select(Agent).where(Agent.org_id == org_id))
+        for a, checkin in db.execute(
+            select(Agent, AgentCheckIn)
+            .outerjoin(
+                AgentCheckIn,
+                (AgentCheckIn.org_id == Agent.org_id) & (AgentCheckIn.agent_id == Agent.id),
+            )
+            .where(Agent.org_id == org_id)
+        )
     ]
 
 
@@ -506,13 +535,64 @@ def add_agent(
 ):
     require_admin(org_id, identity, db)
     rate_limit("agent:" + identity.id, 30, 3600)
-    agent = Agent(org_id=org_id, name=req.name, onboarded_by=identity.id)
+    agent = Agent(
+        org_id=org_id, name=req.name, onboarded_by=identity.id, voice_id=choose_voice(org_id, db)
+    )
     db.add(agent)
     db.flush()
     token = issue_credential(db, agent_id=agent.id, days=90)
     audit(db, org_id, identity.id, "agent.created", agent.id)
     db.commit()
-    return {"id": agent.id, "name": agent.name, "token": token, "expires_in_days": 90}
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "voice_id": agent.voice_id,
+        "token": token,
+        "expires_in_days": 90,
+    }
+
+
+class AgentVoice(Input):
+    voice_id: str
+
+    @field_validator("voice_id")
+    @classmethod
+    def catalog_voice(cls, value):
+        if value not in BUILTIN_VOICES:
+            raise ValueError("Choose a built-in voice")
+        return value
+
+
+@router.get("/organizations/{org_id}/voices")
+def voice_catalog(
+    org_id: str, identity: Principal = Depends(principal), db: Session = Depends(get_db)
+):
+    role_for(org_id, identity, db)
+    return [{"id": name, "name": name.title()} for name in BUILTIN_VOICES]
+
+
+@router.patch("/organizations/{org_id}/agents/{agent_id}/voice")
+def change_agent_voice(
+    org_id: str,
+    agent_id: str,
+    req: AgentVoice,
+    identity: Principal = Depends(human),
+    db: Session = Depends(get_db),
+):
+    require_admin(org_id, identity, db)
+    agent = db.scalar(
+        select(Agent).where(
+            Agent.org_id == org_id,
+            Agent.id == agent_id,
+            Agent.active.is_(True),
+        )
+    )
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    agent.voice_id = req.voice_id
+    audit(db, org_id, identity.id, "agent.voice_changed", agent.id)
+    db.commit()
+    return {"id": agent.id, "voice_id": agent.voice_id}
 
 
 @router.delete("/organizations/{org_id}/agents/{agent_id}", status_code=204)
@@ -529,22 +609,39 @@ def revoke_agent(
     db.commit()
 
 
+class ChannelInput(Named):
+    project: str | None = Field(default=None, max_length=160)
+    description: str | None = Field(default=None, max_length=500)
+
+
+def room_json(room):
+    return {
+        "id": room.id,
+        "name": room.name,
+        "project": room.project,
+        "description": room.description,
+    }
+
+
 @router.get("/organizations/{org_id}/channels")
 def channels(org_id: str, identity: Principal = Depends(principal), db: Session = Depends(get_db)):
     role_for(org_id, identity, db)
     return [
-        {"id": r.id, "name": r.name}
+        room_json(r)
         for r in db.scalars(select(Room).where(Room.org_id == org_id).order_by(Room.created_at))
     ]
 
 
 @router.post("/organizations/{org_id}/channels", status_code=201)
 def new_channel(
-    org_id: str, req: Named, identity: Principal = Depends(principal), db: Session = Depends(get_db)
+    org_id: str,
+    req: ChannelInput,
+    identity: Principal = Depends(principal),
+    db: Session = Depends(get_db),
 ):
     role_for(org_id, identity, db)
     rate_limit("channel:" + identity.id, 30, 3600)
-    room = Room(org_id=org_id, name=req.name)
+    room = Room(org_id=org_id, name=req.name, project=req.project, description=req.description)
     db.add(room)
     try:
         db.flush()
@@ -553,7 +650,97 @@ def new_channel(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, "A channel with that name already exists") from exc
-    return {"id": room.id, "name": room.name}
+    return room_json(room)
+
+
+@router.get("/organizations/{org_id}/agents/me/channels")
+def joined_channels(
+    org_id: str, identity: Principal = Depends(principal), db: Session = Depends(get_db)
+):
+    role_for(org_id, identity, db)
+    if identity.kind != "agent":
+        raise HTTPException(403, "An agent credential is required")
+    rooms = db.scalars(
+        select(Room)
+        .join(
+            AgentChannel,
+            (AgentChannel.channel_id == Room.id) & (AgentChannel.org_id == Room.org_id),
+        )
+        .where(AgentChannel.org_id == org_id, AgentChannel.agent_id == identity.id)
+        .order_by(AgentChannel.joined_at, Room.id)
+    )
+    return [room_json(room) for room in rooms]
+
+
+@router.put("/organizations/{org_id}/channels/{room_id}/membership")
+def join_channel(
+    org_id: str,
+    room_id: str,
+    identity: Principal = Depends(principal),
+    db: Session = Depends(get_db),
+):
+    room = require_room(org_id, room_id, identity, db)
+    if identity.kind != "agent":
+        raise HTTPException(403, "An agent credential is required")
+    key = (org_id, identity.id, room_id)
+    if not db.get(AgentChannel, key):
+        db.add(AgentChannel(org_id=org_id, agent_id=identity.id, channel_id=room_id))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if not db.get(AgentChannel, key):
+                raise
+    return {"joined": True, "channel": room_json(room)}
+
+
+@router.delete("/organizations/{org_id}/channels/{room_id}/membership", status_code=204)
+def leave_channel(
+    org_id: str,
+    room_id: str,
+    identity: Principal = Depends(principal),
+    db: Session = Depends(get_db),
+):
+    require_room(org_id, room_id, identity, db)
+    if identity.kind != "agent":
+        raise HTTPException(403, "An agent credential is required")
+    db.execute(
+        delete(AgentChannel).where(
+            AgentChannel.org_id == org_id,
+            AgentChannel.agent_id == identity.id,
+            AgentChannel.channel_id == room_id,
+        )
+    )
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/organizations/{org_id}/channels/{room_id}/agents/{agent_id}", status_code=204)
+def kick_offline_agent(
+    org_id: str,
+    room_id: str,
+    agent_id: str,
+    identity: Principal = Depends(human),
+    db: Session = Depends(get_db),
+):
+    from agent_ptt.workspace_presence import AgentCheckIn, checkin_json
+
+    require_admin(org_id, identity, db)
+    require_room(org_id, room_id, identity, db)
+    agent = db.get(Agent, agent_id)
+    if not agent or agent.org_id != org_id:
+        raise HTTPException(404, "Agent not found")
+    checkin = db.get(AgentCheckIn, (org_id, agent_id), with_for_update=True)
+    if checkin_json(checkin, active=agent.active)["online_status"] != "offline":
+        raise HTTPException(
+            409, "Agent is online or has not reported a check-in; refresh its status"
+        )
+    membership = db.get(AgentChannel, (org_id, agent_id, room_id))
+    if membership:
+        db.delete(membership)
+        audit(db, org_id, identity.id, "agent.channel_removed", agent_id + ":" + room_id)
+    db.commit()
+    return Response(status_code=204)
 
 
 def require_room(org_id, room_id, identity, db):
@@ -733,9 +920,23 @@ def install(app):
         "/api/workspace/organizations/{org_id}/channels/{room_id}/stream", stream
     )
 
+    agent_skill = Path(__file__).parent / "skills" / "agent-ptt-organization"
+
+    @app.get("/workspace/SKILL.md", include_in_schema=False)
+    def organization_agent_skill():
+        content = (agent_skill / "SKILL.md").read_text().replace("{{ORIGIN}}", public_origin())
+        return PlainTextResponse(content, media_type="text/markdown")
+
+    @app.get("/workspace/agent-client.py", include_in_schema=False)
+    def organization_agent_client():
+        return FileResponse(agent_skill / "scripts" / "client.py", media_type="text/plain")
+
     @app.get("/workspace/", include_in_schema=False)
     def workspace_ui():
-        return FileResponse(STATIC / "workspace.html")
+        return FileResponse(
+            STATIC / "workspace.html",
+            headers={"Link": '</workspace/SKILL.md>; rel="describedby"; type="text/markdown"'},
+        )
 
     @app.get("/workspace/assets/{name}", include_in_schema=False)
     def workspace_asset(name: str):
@@ -746,6 +947,22 @@ def install(app):
     @app.middleware("http")
     async def workspace_boundary(request: Request, call_next):
         path = request.url.path
+        # Local browser aliases must use one origin for cookies and CSRF checks.
+        # Redirect only page navigation; never redirect credentials or API writes.
+        if request.method in {"GET", "HEAD"} and path in {"/", "/workspace", "/workspace/"}:
+            target = urlsplit(public_origin())
+            loopback = {"localhost", "127.0.0.1", "::1"}
+            if (
+                target.hostname in loopback
+                and request.url.hostname in loopback
+                and request.url.hostname != target.hostname
+                and request.url.scheme == target.scheme
+                and request.url.port == target.port
+            ):
+                destination = public_origin() + "/workspace/"
+                if request.url.query:
+                    destination += "?" + request.url.query
+                return RedirectResponse(destination, status_code=307)
         is_workspace = path.startswith("/api/workspace/") or path.startswith("/workspace/")
         if hosted() and path not in {"/", "/health/live", "/health/ready"} and not is_workspace:
             return JSONResponse(

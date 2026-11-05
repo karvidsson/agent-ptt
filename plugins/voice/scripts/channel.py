@@ -55,7 +55,7 @@ def _request(method: str, path: str, payload: dict | None = None) -> object:
         method=method,
         headers=_headers(),
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with routing.local_urlopen(request, timeout=10) as response:
         return json.loads(response.read())
 
 

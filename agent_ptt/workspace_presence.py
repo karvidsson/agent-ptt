@@ -4,7 +4,7 @@ Import before Base.metadata.create_all, then install(app) alongside workspace's
 router/middleware. No dependency on workspace.py or process-local presence state.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
@@ -74,6 +74,96 @@ class SessionPresence(Base):
     channel_id = Column(String, nullable=True)
     tokens_in = Column(Integer, nullable=True)
     tokens_out = Column(Integer, nullable=True)
+
+
+ONLINE_WINDOW_SECONDS = 180
+
+
+class AgentCheckIn(Base):
+    __tablename__ = "workspace_agent_checkins"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "agent_id"],
+            ["workspace_agents.org_id", "workspace_agents.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "channel_id"],
+            ["workspace_rooms.org_id", "workspace_rooms.id"],
+        ),
+    )
+    org_id = Column(String, primary_key=True)
+    agent_id = Column(String, primary_key=True)
+    channel_id = Column(String, nullable=False)
+    last_seen = Column(DateTime, nullable=False)
+    mode = Column(String(16), nullable=False)
+
+
+class CheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    channel_id: str = Field(min_length=1, max_length=128)
+    mode: Literal["activity", "timer", "manual"] = "manual"
+
+
+def checkin_json(row, *, active=True, clock=None):
+    clock = clock or now()
+    online = bool(
+        active and row and clock < row.last_seen + timedelta(seconds=ONLINE_WINDOW_SECONDS)
+    )
+    return {
+        "online_status": "online" if online else ("offline" if row or not active else "unknown"),
+        "last_seen": utc(row.last_seen) if row else None,
+        "online_until": utc(row.last_seen + timedelta(seconds=ONLINE_WINDOW_SECONDS))
+        if row
+        else None,
+        "checkin_mode": row.mode if row else None,
+        "checkin_channel_id": row.channel_id if row else None,
+    }
+
+
+@router.post("/agents/me/check-in")
+def agent_checkin(
+    org_id: str,
+    body: CheckIn,
+    identity: Principal = Depends(principal),
+    db: Session = Depends(get_db),
+):
+    role_for(org_id, identity, db)
+    if identity.kind != "agent":
+        raise HTTPException(403, "An agent credential is required")
+    from agent_ptt.workspace_models import Room
+
+    room = db.get(Room, body.channel_id)
+    if not room or room.org_id != org_id:
+        raise HTTPException(404, "Channel not found")
+    rate_limit("check-in:" + identity.id, 120)
+    key = (org_id, identity.id)
+    row = db.get(AgentCheckIn, key, with_for_update=True)
+    if row is None:
+        row = AgentCheckIn(
+            org_id=org_id,
+            agent_id=identity.id,
+            channel_id=body.channel_id,
+            mode=body.mode,
+            last_seen=now(),
+        )
+        db.add(row)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            row = db.get(AgentCheckIn, key, with_for_update=True)
+            if row is None:
+                raise HTTPException(409, "Check-in changed; retry") from None
+    row.last_seen = now()
+    row.channel_id = body.channel_id
+    row.mode = body.mode
+    db.commit()
+    return {
+        "agent_id": identity.id,
+        "expires_in_seconds": ONLINE_WINDOW_SECONDS,
+        **checkin_json(row),
+    }
 
 
 class PresenceUpdate(BaseModel):

@@ -16,3 +16,12 @@ dialog{background:var(--panel);color:var(--text);border:1px solid var(--border-2
   border-radius: 4px;
 }
 #join-choice { margin-bottom: 16px; }
+
+.agent-entry { margin: 16px auto; padding: 16px 24px; max-width: 960px; border: 1px solid var(--border-2); background: var(--panel); border-radius: 4px; }
+.agent-entry h2 { color: var(--accent); font-size: 16px; margin-bottom: 10px; }
+.agent-entry p { font-size: 12px; line-height: 1.6; margin: 8px 0; }
+.agent-entry a { color: var(--accent); text-decoration: underline; }
+body.has-agent-invitation { overflow: auto; }
+body.has-agent-invitation #app { height: max(620px, 80dvh); }
+
+#agent-invitation-form .check{display:flex;align-items:center;gap:8px}#agent-invitation-form input[type="checkbox"]{width:auto}#agent-invitation-result{width:100%;overflow-wrap:anywhere}

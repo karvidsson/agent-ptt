@@ -54,21 +54,36 @@ def init_db() -> None:
     # apply the versioned Alembic migration before starting the service.
     with engine.begin() as connection:
         for table, additions in {
+            "workspace_rooms": {"project": "VARCHAR(160)", "description": "VARCHAR(500)"},
             "workspace_invitations": {
                 "agent_limit": "INTEGER NOT NULL DEFAULT 0",
                 "channel_id": "VARCHAR",
                 "claimed_by": "VARCHAR",
             },
-            "workspace_agents": {"onboarded_by": "VARCHAR", "harness": "VARCHAR(20)"},
+            "workspace_agents": {
+                "onboarded_by": "VARCHAR",
+                "harness": "VARCHAR(20)",
+                "work_context": "JSON",
+                "voice_id": "VARCHAR(40)",
+            },
         }.items():
             existing = {column["name"] for column in inspect(connection).get_columns(table)}
             for name, definition in additions.items():
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+    from agent_ptt.workspace_membership_backfill import backfill
+
+    with engine.begin() as connection:
+        backfill(connection)
+
     from agent_ptt.voices import migrate_legacy_voice_profiles
 
     with SessionLocal() as db:
         migrate_legacy_voice_profiles(db)
+        from agent_ptt.workspace_voices import assign_missing_voices
+
+        assign_missing_voices(db)
+        db.commit()
 
 
 def get_db():

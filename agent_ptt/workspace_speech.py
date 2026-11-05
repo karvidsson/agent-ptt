@@ -23,7 +23,7 @@ from agent_ptt.workspace_auth import (
     role_for,
     token_from,
 )
-from agent_ptt.workspace_models import ChatMessage
+from agent_ptt.workspace_models import Agent, ChatMessage
 
 router = APIRouter(prefix="/api/workspace", tags=["Workspace speech"])
 PATH = "/organizations/{org_id}/channels/{room_id}/messages/{message_id}/speech"
@@ -51,14 +51,21 @@ def speech_input(org_id: str, room_id: str, message_id: int, identity: Principal
     )
     if row is None:
         raise HTTPException(404, "Message not found")
-    # Only public catalog voices: never consult global profiles, clones, or paths.
+    # Only the shipped catalog: never consult tenant input or global saved profiles.
     seed = hashlib.sha256(f"{org_id}:{row.sender_kind}:{row.sender_id}".encode()).digest()
     voice = POCKET_VOICES[int.from_bytes(seed[:4], "big") % len(POCKET_VOICES)]
+    if row.sender_kind == "agent":
+        agent = db.scalar(select(Agent).where(Agent.org_id == org_id, Agent.id == row.sender_id))
+        if agent is None:
+            raise HTTPException(404, "Agent not found")
+        voice = agent.voice_id
+    if voice not in POCKET_VOICES:
+        raise HTTPException(503, "Assigned voice is unavailable")
     return {
         "message_id": row.id,
         "text": row.text[:MAX_TEXT],
         "truncated": len(row.text) > MAX_TEXT,
-        "voice": {"engine": "pocket-tts", "id": voice, "scope": "public-catalog", "version": 1},
+        "voice": {"engine": "pocket-tts", "id": voice, "scope": "public-catalog", "version": 2},
         "mime_type": "audio/wav",
     }
 

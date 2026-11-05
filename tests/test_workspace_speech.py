@@ -31,7 +31,7 @@ def setup_speech(monkeypatch):
                 ]
             )
             db.flush()
-        db.add(Agent(id="agent", org_id="a", name="Agent"))
+        db.add(Agent(id="agent", org_id="a", name="Agent", voice_id="alba"))
         db.flush()
         human_token = auth.issue_credential(db, user_id="a")
         agent_token = auth.issue_credential(db, agent_id="agent")
@@ -208,3 +208,46 @@ def test_server_speech_enabled_by_default(setup_speech, monkeypatch):
     monkeypatch.delenv("AGENT_PTT_SERVER_SPEECH", raising=False)
     assert client.get(URL).status_code == 200
     assert len(calls) == 1
+
+
+def test_hosted_bundled_voice_ignores_saved_profile_paths(setup_speech, monkeypatch):
+    from agent_ptt.models import VoiceProfile
+    from agent_ptt.voices import save_voice_profile
+
+    client, calls, _ = setup_speech
+    monkeypatch.setattr(speech, "POCKET_VOICES", ("fender",))
+    with SessionLocal() as db:
+        db.get(Agent, "agent").voice_id = "fender"
+        save_voice_profile(
+            VoiceProfile(
+                voice_id="fender",
+                display_name="Override",
+                settings={"voice": "/private/custom.wav"},
+            ),
+            db,
+        )
+    assert client.get(URL + "/metadata").json()["voice"] == {
+        "engine": "pocket-tts",
+        "id": "fender",
+        "scope": "public-catalog",
+        "version": 2,
+    }
+    assert client.get(URL).status_code == 200
+    assert calls[0][1].settings == {"voice": "fender"}
+
+
+def test_saved_agent_voice_survives_catalog_growth_and_controls_speech(setup_speech, monkeypatch):
+    client, calls, _ = setup_speech
+    with SessionLocal() as db:
+        db.get(Agent, "agent").voice_id = "manager"
+        db.commit()
+    monkeypatch.setattr(speech, "POCKET_VOICES", ("new-voice", *speech.POCKET_VOICES))
+    assert client.get(URL + "/metadata").json()["voice"]["id"] == "manager"
+    assert client.get(URL).status_code == 200
+    assert calls[-1][1].settings == {"voice": "manager"}
+    response = client.patch(
+        "/api/workspace/organizations/a/agents/agent/voice", json={"voice_id": "ledger"}
+    )
+    assert response.status_code == 200
+    assert client.get(URL).status_code == 200
+    assert calls[-1][1].settings == {"voice": "ledger"}

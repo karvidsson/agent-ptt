@@ -129,3 +129,22 @@ def test_legacy_migration_preserves_profile_and_pin(db_session, engine):
     migrate_legacy_voice_profiles(db_session)
     assert get_voice_profile("old", db_session).settings == migrated.settings
     assert get_voice_profile("omni", db_session).engine == "pocket-tts"
+
+
+async def test_bundled_catalog_is_portable(pocket_model):
+    from pathlib import Path
+
+    from safetensors import safe_open
+
+    from agent_ptt.voice_catalog import BUNDLED_VOICES, resolve_voice
+
+    assert len(POCKET_VOICES) == len(set(POCKET_VOICES)) == 28
+    for name in BUNDLED_VOICES:
+        path = Path(resolve_voice(name))
+        assert path.parent.name == "voice_states"
+        with safe_open(path, framework="pt") as state:
+            assert list(state.keys())
+        await PocketTTSBackend().synthesize(
+            "Hello", VoiceProfile(display_name=name, settings={"voice": name})
+        )
+        pocket_model[0].get_state_for_audio_prompt.assert_called_with(str(path))

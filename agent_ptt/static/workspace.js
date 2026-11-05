@@ -1,15 +1,16 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {me:null,org:null,room:null,rooms:[],members:[],agents:[],presence:[],presenceStatus:'loading',socket:null,generation:0,orgEpoch:0,authEpoch:0,cursor:0,seen:new Set(),signup:true,creating:null,pending:null,rosterTimer:null,speech:null,listening:false,muted:false};
+const state = {me:null,org:null,room:null,rooms:[],members:[],agents:[],presence:[],presenceStatus:'loading',socket:null,generation:0,orgEpoch:0,authEpoch:0,cursor:0,seen:new Set(),signup:true,creating:null,pending:null,rosterTimer:null,rosterRevision:0,speech:null,listening:false,muted:false};
 let joinAsPerson=false;
+let agentInviteParams=new URLSearchParams(location.hash.slice(1));
 let generalJoin = new URLSearchParams(location.hash.slice(1)).has('join');
 let inviteToken = new URLSearchParams(location.hash.slice(1)).get(generalJoin?'join':'invite');
 if(inviteToken&&!generalJoin) history.replaceState(null,'',location.pathname);
 window.addEventListener('hashchange',()=>{
   const params=new URLSearchParams(location.hash.slice(1)),isJoin=params.has('join');
-  const token=params.get(isJoin?'join':'invite');if(!token)return;generalJoin=isJoin;joinAsPerson=false;
+  const token=params.get(isJoin?'join':'invite');if(!token)return;generalJoin=isJoin;joinAsPerson=false;agentInviteParams=params;
   inviteToken=token;if(!generalJoin)history.replaceState(null,'',location.pathname);$('invitation').hidden=false;
-  if(state.me)void loadInvitation();else setAuthMode(state.signup);
+  if(state.me)void loadInvitation();else {setAuthMode(state.signup);if(generalJoin)void previewAgentInvitation();}
 });
 let noticeTimer;
 let onboardingInfo=null, onboardingRows=[], setupResult=null;
@@ -31,7 +32,7 @@ function nick(name){return 'nick-'+([...name].reduce((n,c)=>n+c.charCodeAt(0),0)
 function date(value){return value?new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)?value:value+'Z').toLocaleString():'Not recorded';}
 function stopSpeech(){state.listening=false;state.muted=false;state.speech?.setMuted(true);state.speech?.cancel();renderSpeech();}
 function disconnect(){state.generation++;if(state.socket)state.socket.close();state.socket=null;stopSpeech();}
-function closeTenantDialogs(){for(const id of ['manage','profile','name-dialog','secret-dialog','setup-dialog'])if($(id).open)$(id).close();$('secret-value').value='';$('secret-title').textContent='';$('secret-description').textContent='';$('profile-title').textContent='Participant';$('agent-name').value='';$('new-name').value='';$('profile-body').replaceChildren();$('setup-commands').replaceChildren();setupResult=null;state.creating=null;}
+function closeTenantDialogs(){clearAgentInvitation();for(const id of ['manage','profile','name-dialog','secret-dialog','setup-dialog'])if($(id).open)$(id).close();$('secret-value').value='';$('secret-title').textContent='';$('secret-description').textContent='';$('profile-title').textContent='Participant';$('agent-name').value='';$('new-name').value='';$('profile-body').replaceChildren();$('setup-commands').replaceChildren();setupResult=null;state.creating=null;}
 function clearTenant(){
   disconnect();state.orgEpoch++;clearTimeout(state.rosterTimer);state.rosterTimer=null;closeTenantDialogs();
   state.room=null;state.rooms=[];state.members=[];state.agents=[];state.presence=[];state.presenceStatus='loading';state.pending=null;state.cursor=0;state.seen.clear();
@@ -46,12 +47,37 @@ function renderJoinChoice(){
   $('join-choice').hidden=!generalJoin||!inviteToken;
   $('auth-card').hidden=generalJoin&&!!inviteToken&&!joinAsPerson;
   $('join-agent-help').hidden=true;
-  $('join-agent-command').textContent=generalJoin&&/^[A-Za-z0-9_-]{43}$/.test(inviteToken||'')?`agent-ptt workspace --profile my-agent enroll '${location.protocol}//${location.host}/workspace/#join=${inviteToken}' --name 'My agent'
-agent-ptt workspace --profile my-agent channels
-agent-ptt workspace --profile my-agent join 'work-channel' --create`:'';
+  $('agent-entry').hidden=!generalJoin||!inviteToken;
+  document.body.classList.toggle('has-agent-invitation',generalJoin&&!!inviteToken);
+  const name=agentInviteParams.get('agent')||'',channel=agentInviteParams.get('channel_name')||agentInviteParams.get('channel')||'';
+  const targeted=!!agentInviteParams.get('channel');
+  $('agent-invitation-plan').textContent=targeted?`Your invitation: join${name?' as '+name:''} in #${channel}.${agentInviteParams.get('introduce')==='1'?' Introduce yourself with a short message.':''} Act when your user asks you to join; opening this page does not connect you.`:'';
+  const params=new URLSearchParams({join:inviteToken||''});
+  for(const key of ['channel','channel_name','agent','introduce'])if(agentInviteParams.has(key))params.set(key,agentInviteParams.get(key));
+  const invitation=location.protocol+'//'+location.host+'/workspace/#'+params.toString();
+  $('join-agent-command').textContent=generalJoin&&/^[A-Za-z0-9_-]{43}$/.test(inviteToken||'')?`# Paste this link into your agent; no slash command is required:
+${invitation}
+# Claude: invoke the installed agent-ptt-voice:join skill yourself with this link.
+# Discover and reuse your matching profile; choose routine defaults yourself.
+# Other harnesses: read /workspace/SKILL.md first. If execution is authorized,
+# download and inspect the standalone client. Stop if the harness denies execution:
+curl --fail --silent --show-error '${location.protocol}//${location.host}/workspace/agent-client.py' -o /tmp/agent-ptt-client.py
+# Choose a stable profile unique to this agent, then follow the invitation:
+python3 /tmp/agent-ptt-client.py --profile my-agent ${targeted?'connect':'enroll'} '${invitation}'${name?'':" --name 'My agent'"}
+python3 /tmp/agent-ptt-client.py --profile my-agent ${targeted?'verify':'channels'}
+# Verify installed mention hooks with: python3 /tmp/agent-ptt-client.py --profile my-agent connection
+# See SKILL.md for session attachment and optional harness loops.`:'';
 }
 $('join-person').onclick=()=>{joinAsPerson=true;$('auth-card').hidden=false;$('join-agent-help').hidden=true;};
 $('join-agent').onclick=()=>{joinAsPerson=false;$('join-agent-help').hidden=false;$('auth-card').hidden=true;};
+async function previewAgentInvitation(){
+  const token=inviteToken;
+  $('agent-join-error').textContent='';
+  $('agent-invitation-target').textContent='You, the agent, are invited to join an organization. Verifying the invitation…';
+  try{const info=await api('/join/inspect','POST',{token});if(token!==inviteToken||!generalJoin)return;
+    $('agent-invitation-target').textContent=`You, the agent, are invited to join ${info.organization} as an independent agent member. You can list, create, and join its channels. No human account is required.`;
+  }catch(error){if(token===inviteToken&&generalJoin)$('agent-join-error').textContent=error.message;}
+}
 function setAuthMode(signup){
   renderJoinChoice();
   state.signup=signup;$('name-label').hidden=!signup;$('auth-form').elements.name.required=signup;
@@ -73,10 +99,10 @@ async function boot(preferredOrg){
   let me;try{me=await api('/me');}catch(error){
     if(request!==state.authEpoch)return;
     clearTenant();state.org=null;state.me=null;$('app').hidden=true;$('auth').hidden=false;setAuthMode(state.signup);
-    if(error.status!==401)notice(error.message);return;
+    if(generalJoin&&inviteToken)void previewAgentInvitation();if(error.status!==401)notice(error.message);return;
   }
   if(request!==state.authEpoch)return;
-  state.me=me;$('auth').hidden=true;$('app').hidden=false;$('user-name').textContent=me.name;$('invitation').hidden=!inviteToken;
+  state.me=me;renderJoinChoice();$('auth').hidden=true;$('app').hidden=false;$('user-name').textContent=me.name;$('invitation').hidden=!inviteToken;
   const select=$('organizations');select.replaceChildren();for(const org of me.organizations)select.add(new Option(org.name,org.id));
   if(!me.organizations.length)select.add(new Option('No organization yet',''));
   select.value=preferredOrg||me.organizations[0]?.id||'';if(!select.value&&me.organizations.length)select.value=me.organizations[0].id;
@@ -102,7 +128,7 @@ function renderChannels(){
 }
 async function openRoom(room){
   if(!state.rooms.some(item=>item.id===room.id))return;
-  disconnect();state.room=room;state.cursor=0;state.seen.clear();state.pending=null;const ctx=context();
+  disconnect();state.room=room;renderRoster();renderRecipients();state.cursor=0;state.seen.clear();state.pending=null;const ctx=context();
   $('channel-name').textContent='#'+room.name;$('channel-description').textContent='Everyone in this organization · people and agents';$('status-room').textContent='#'+room.name;
   $('message').disabled=false;$('send').disabled=false;$('message').value='';$('recipient').value='';$('recipient').disabled=false;$('export-log').disabled=false;
   $('messages').replaceChildren(el('div','Loading conversation…','empty'));renderChannels();renderSpeech();
@@ -165,9 +191,9 @@ $('name-form').onsubmit=async event=>{
 };
 async function loadInvitation(){
   const token=inviteToken,epoch=state.authEpoch;
-  $('accept-invite').disabled=true;onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('onboarding-fields').hidden=true;$('invitation-error').textContent='';
+  $('accept-invite').disabled=true;$('accept-invite').textContent=generalJoin?'Join as a person':'Accept invitation';onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('onboarding-fields').hidden=true;$('invitation-error').textContent='';
   try{const info=await api(generalJoin?'/join/inspect':'/invitations/inspect','POST',{token});if(token!==inviteToken||epoch!==state.authEpoch)return;
-    renderJoinChoice();$('invite-agent-option').hidden=!generalJoin;$('invite-agent-command').textContent=$('join-agent-command').textContent;onboardingInfo=info;$('invitation-description').textContent=generalJoin?`Join ${info.organization} as a member. Then list, create, and join channels for your work.`:`Join ${info.organization} as ${info.role}${info.agent_limit?` and register up to ${info.agent_limit} agents, starting in #${info.channel}`:''}. This link can be used once.`;
+    renderJoinChoice();$('invite-agent-option').hidden=!generalJoin;$('invite-agent-command').textContent=$('join-agent-command').textContent;if(generalJoin){$('agent-join-error').textContent='';$('agent-invitation-target').textContent=`You, the agent, are invited to join ${info.organization} as an independent agent member. You can list, create, and join its channels. No human account is required.`;}onboardingInfo=info;$('invitation-description').textContent=generalJoin?`Join ${info.organization} as a member. Then list, create, and join channels for your work.`:`Join ${info.organization} as ${info.role}${info.agent_limit?` and register up to ${info.agent_limit} agents, starting in #${info.channel}`:''}. This link can be used once.`;
     $('onboarding-fields').hidden=!info.agent_limit;$('onboard-count').max=info.agent_limit;$('onboard-count').value=info.agent_limit;
     onboardingRows=[];renderOnboardingAgents();$('accept-invite').disabled=false;
   }catch(error){if(token===inviteToken&&epoch===state.authEpoch)$('invitation-error').textContent=error.message;}
@@ -207,14 +233,15 @@ $('download-setup').onclick=()=>{
   const link=el('a');link.href=url;link.download='agent-ptt-team.py';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 $('setup-dialog').addEventListener('close',()=>{setupResult=null;$('setup-commands').replaceChildren();});
-$('dismiss-invite').onclick=()=>{inviteToken=null;generalJoin=false;history.replaceState(null,'',location.pathname);onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('invitation').hidden=true;};
+$('dismiss-invite').onclick=()=>{inviteToken=null;generalJoin=false;history.replaceState(null,'',location.pathname);onboardingInfo=null;onboardingRows=[];$('onboarding-agents').replaceChildren();$('invitation').hidden=true;renderJoinChoice();};
 async function refreshRoster(ctx){
   if(!current(ctx))return;
+  const revision=state.rosterRevision;
   const presence=fetchPresence(ctx).then(rows=>({rows,status:'ready'}),()=>({rows:[],status:'unavailable'}));
-  try{const [members,agents,activity]=await Promise.all([api(orgPath(ctx,'/members')),api(orgPath(ctx,'/agents')),presence]);if(!current(ctx))return;
+  try{const [members,agents,activity]=await Promise.all([api(orgPath(ctx,'/members')),api(orgPath(ctx,'/agents')),presence]);if(!current(ctx)||revision!==state.rosterRevision)return;
     state.members=members;state.agents=agents;state.presence=activity.rows;state.presenceStatus=activity.status;renderRoster();renderRecipients();refreshReceipts(context());
-  }catch(error){if(current(ctx)){$('presence-note').textContent='Roster unavailable. '+error.message;}}
-  if(current(ctx))state.rosterTimer=setTimeout(()=>refreshRoster(ctx),15000);
+  }catch(error){if(current(ctx)&&revision===state.rosterRevision){$('presence-note').textContent='Roster unavailable. '+error.message;}}
+  if(current(ctx)&&revision===state.rosterRevision)state.rosterTimer=setTimeout(()=>refreshRoster(ctx),15000);
 }
 async function fetchPresence(ctx){
   const rows=[],limit=200;
@@ -231,12 +258,18 @@ async function refreshReceipts(ctx){
     for(const message of messages){if(!state.seen.has(message.id))continue;const row=[...$('messages').children].find(child=>Number(child.dataset.id)===message.id);if(row)renderReceipt(row,message);}
   }catch{ /* Streaming and text submission remain independent of receipt refresh. */ }
 }
-function renderRecipients(){const selected=$('recipient').value;$('recipient').replaceChildren(new Option('Everyone in this channel',''));for(const agent of state.agents.filter(a=>a.active))$('recipient').add(new Option('@'+agent.name,agent.id));$('recipient').value=selected;if(!$('recipient').value)$('recipient').value='';}
+function applyChannelRemoval(agentId,channelId){
+  state.rosterRevision++;
+  state.agents=state.agents.map(agent=>agent.id===agentId?{...agent,channel_ids:(agent.channel_ids||[]).filter(id=>id!==channelId)}:agent);
+  renderRoster();renderRecipients();
+}
+function channelAgents(){return state.agents.filter(a=>a.active&&state.room&&(a.channel_ids||[]).includes(state.room.id));}
+function renderRecipients(){const selected=$('recipient').value;$('recipient').replaceChildren(new Option('Everyone in this channel',''));for(const agent of channelAgents())$('recipient').add(new Option('@'+agent.name,agent.id));$('recipient').value=selected;if(!$('recipient').value)$('recipient').value='';}
 function renderRoster(){
-  const people=[...state.members.map(person=>({...person,kind:'human'})),...state.agents.filter(agent=>agent.active).map(agent=>({...agent,kind:'agent'}))];
+  const people=[...state.members.map(person=>({...person,kind:'human'})),...channelAgents().map(agent=>({...agent,kind:'agent'}))];
   $('roster-count').textContent=people.length;$('roster-list').replaceChildren();
-  for(const person of people){const row=el('button',undefined,'roster-person'),meta=el('span',undefined,'person-meta');meta.append(el('strong',person.name),el('small',presenceSummary(person)));row.append(el('span',person.name.slice(0,2).toUpperCase(),'avatar '+nick(person.name)),meta);row.onclick=()=>openProfile(person);$('roster-list').append(row);}
-  $('presence-note').textContent=state.presenceStatus==='unavailable'?'Presence unavailable · membership does not indicate activity.':'Reported sessions · delayed heartbeat indicates lost contact, not proven inactivity.';
+  for(const person of people){const row=el('button',undefined,'roster-person'),meta=el('span',undefined,'person-meta');meta.append(el('strong',person.name),el('small',presenceSummary(person)));if(person.work_context?.project)meta.append(el('small',person.work_context.project));row.append(el('span',person.name.slice(0,2).toUpperCase(),'avatar '+nick(person.name)),meta);row.onclick=()=>openProfile(person);$('roster-list').append(row);}
+  $('presence-note').textContent=state.presenceStatus==='unavailable'?'Presence unavailable · membership does not indicate activity.':'Agent online status expires 3 minutes after the last check-in. Activity checks do not imply idle listening.';
 }
 function personSessions(person){return state.presence.filter(session=>session.principal_id===person.id&&session.kind===person.kind);}
 function presenceLabel(session){
@@ -244,17 +277,54 @@ function presenceLabel(session){
   if(session.presumed_hung&&session.state!=='offline')return session.state+' · heartbeat delayed';
   return session.state+(session.state==='offline'?' · reported':'');
 }
+function agentOnlineLabel(person){
+  if(person.online_status==='unknown')return 'Not checked in';
+  if(person.online_status==='offline')return 'Offline · check-in expired';
+  if(person.online_status==='online')return 'Online · '+({activity:'activity checks',timer:'timer checks',manual:'manual check-in'}[person.checkin_mode]||'recent check-in');
+  return null;
+}
 function presenceSummary(person){
+  if(person.kind==='agent'&&person.online_status){
+    if(state.presenceStatus!=='ready')return 'Online status unavailable';
+    return agentOnlineLabel(person);
+  }
   if(state.presenceStatus!=='ready')return state.presenceStatus==='loading'?'Presence loading':'Presence unavailable';
   const sessions=personSessions(person);
   if(!sessions.length)return 'Presence not reported';
   return (sessions.length>1?sessions.length+' sessions · ':'')+[...new Set(sessions.map(presenceLabel))].join(', ');
 }
 function metadataList(values){const list=el('dl');for(const [label,value] of Object.entries(values))list.append(el('dt',label),el('dd',String(value??'Not reported')));return list;}
+let voiceEditorEpoch=0;
+function agentVoiceControl(person,ctx,epoch){
+  const section=el('section');section.append(el('h3','Voice'));
+  const select=el('select');select.setAttribute('aria-label','Voice for '+person.name);select.disabled=true;
+  const status=el('small','Loading voices…');status.setAttribute('aria-live','polite');section.append(select,status);
+  const active=()=>current(ctx)&&epoch===voiceEditorEpoch;
+  void (async()=>{
+    try{
+      const voices=await api(orgPath(ctx,'/voices'));if(!active())return;
+      for(const voice of voices)select.add(new Option(voice.name,voice.id));
+      select.value=person.voice_id||'';select.disabled=!isAdmin();
+      status.textContent=isAdmin()?'Applies to this agent in every channel.':'An owner or admin can change this voice.';
+    }catch(error){if(active())status.textContent=error.message;}
+  })();
+  select.onchange=async()=>{
+    if(!active())return;
+    const previous=person.voice_id;select.disabled=true;status.textContent='Saving voice…';
+    try{
+      const result=await api(orgPath(ctx,'/agents/'+person.id+'/voice'),'PATCH',{voice_id:select.value});if(!active())return;
+      person.voice_id=result.voice_id;const cached=state.agents.find(a=>a.id===person.id);if(cached)cached.voice_id=result.voice_id;
+      status.textContent='Voice saved. New speech will use '+select.value+'.';
+    }catch(error){if(active()){select.value=previous;status.textContent=error.message;}}
+    finally{if(active())select.disabled=!isAdmin();}
+  };
+  return section;
+}
 function openProfile(person){
+  const voiceEpoch=++voiceEditorEpoch;
   $('profile-title').textContent=person.name;
   const sessions=personSessions(person);
-  const list=metadataList({Type:person.kind,Role:person.role||'member',ID:person.id,Organization:state.org.name,Harness:person.harness});
+  const list=metadataList({Type:person.kind,Role:person.role||'member',ID:person.id,Organization:state.org.name,Harness:person.harness,...(person.kind==='agent'?{Channels:(person.channel_ids||[]).map(id=>state.rooms.find(r=>r.id===id)?.name||id).join(', ')||'None joined',Project:person.work_context?.project,Workspace:person.work_context?.workspace,'Working on':person.work_context?.task,'Online status':agentOnlineLabel(person),'Last check-in':date(person.last_seen),'Online until':date(person.online_until)}:{})});
   const activity=el('section',undefined,'session-details');activity.append(el('h3','Sessions'));
   if(!sessions.length)activity.append(el('p',presenceSummary(person)));
   for(const session of sessions){
@@ -262,14 +332,36 @@ function openProfile(person){
   }
   if(sessions.length)activity.append(el('small','Token counts are client reports, not billing data. Presence is a snapshot from the latest roster refresh.'));
   const details=el('details');details.append(el('summary','All available metadata'),el('pre',JSON.stringify({...person,sessions},null,2)));
-  $('profile-body').replaceChildren(list,activity,details);$('profile').showModal();
+  const membershipActions=el('section');
+  if(person.kind==='agent'&&isAdmin()&&person.online_status==='offline'){
+    const ctx=context();
+    for(const id of person.channel_ids||[]){
+      const room=state.rooms.find(r=>r.id===id);if(!room)continue;
+      const button=el('button','Remove from #'+room.name);
+      button.onclick=async()=>{
+        if(!current(ctx))return;
+        button.disabled=true;
+        try{
+          await api(orgPath(ctx,'/channels/'+id+'/agents/'+person.id),'DELETE');
+          if(!current(ctx))return;
+          applyChannelRemoval(person.id,id);
+          clearTimeout(state.rosterTimer);await refreshRoster(ctx);if(!current(ctx))return;
+          const updated=state.agents.find(a=>a.id===person.id);
+          if(updated)openProfile(updated);else $('profile').close();
+        }catch(error){if(current(ctx)){notice(error.message);button.disabled=false;}}
+      };
+      membershipActions.append(button);
+    }
+  }
+  $('profile-body').replaceChildren(list,...(person.kind==='agent'&&person.active!==false?[agentVoiceControl(person,context(),voiceEpoch)]:[]),membershipActions,activity,details);$('profile').showModal();
 }
 function renderRosterToggle(){const visible=getComputedStyle($('roster')).display!=='none';$('roster-toggle').setAttribute('aria-expanded',String(visible));}
 $('roster-toggle').onclick=()=>{const show=getComputedStyle($('roster')).display==='none';$('app').classList.toggle('roster-open',show);$('app').classList.toggle('roster-hidden',!show);renderRosterToggle();};window.addEventListener('resize',renderRosterToggle);
 async function loadPeople(ctx=context()){
+  const revision=state.rosterRevision;
   const admin=['owner','admin'].includes(ctx.role);
   const [members,agents,invitations]=await Promise.all([api(orgPath(ctx,'/members')),api(orgPath(ctx,'/agents')),admin?api(orgPath(ctx,'/invitations')):Promise.resolve([])]);
-  if(!current(ctx))return false;
+  if(!current(ctx)||revision!==state.rosterRevision)return false;
   state.members=members;state.agents=agents;renderRoster();renderRecipients();$('members').replaceChildren();$('agents').replaceChildren();$('pending-invites').replaceChildren();
   const action=async(suffix,method,body)=>{if(!current(ctx))return;try{await api(orgPath(ctx,suffix),method,body);if(current(ctx))await loadPeople(ctx);}catch(error){if(current(ctx))notice(error.message);}};
   for(const invitation of invitations){const row=el('div',undefined,'member');row.append(el('strong','Pending '+invitation.role+' invitation'+(invitation.agent_limit?' · up to '+invitation.agent_limit+' agents':'')));const revoke=el('button','Revoke');revoke.onclick=()=>action('/invitations/'+invitation.id,'DELETE');row.append(revoke);$('pending-invites').append(row);}
@@ -278,8 +370,9 @@ async function loadPeople(ctx=context()){
     if(ctx.role==='owner'&&person.role!=='owner'){const select=el('select');select.setAttribute('aria-label','Role for '+person.name);for(const role of ['member','admin'])select.add(new Option(role,role));select.value=person.role;select.onchange=()=>action('/members/'+person.id,'PATCH',{role:select.value});row.append(select);}else row.append(el('small',person.role));
     if(admin&&person.role!=='owner'&&(person.role!=='admin'||ctx.role==='owner')){const remove=el('button','Remove');remove.onclick=()=>{if(confirm('Remove '+person.name+' from this organization?'))action('/members/'+person.id,'DELETE');};row.append(remove);}$('members').append(row);
   }
-  for(const agent of agents){const row=el('div',undefined,'member');row.append(el('strong',agent.name),el('small',agent.active?'Agent · '+(agent.harness||'CLI not specified')+(agent.onboarded_by?' · '+(members.find(person=>person.id===agent.onboarded_by)?.name||'Former member'):''):'Revoked'));if(admin&&agent.active){const revoke=el('button','Revoke');revoke.onclick=()=>{if(confirm('Revoke access for '+agent.name+'?'))action('/agents/'+agent.id,'DELETE');};row.append(revoke);}$('agents').append(row);}
+  for(const agent of agents){const row=el('div',undefined,'member');row.append(el('strong',agent.name),el('small',agent.active?'Agent · '+(agentOnlineLabel(agent)?agentOnlineLabel(agent)+' · ':'')+(agent.harness||'CLI not specified')+(agent.onboarded_by?' · '+(members.find(person=>person.id===agent.onboarded_by)?.name||'Former member'):''):'Revoked'));if(agent.active){const voice=el('button','Voice: '+(agent.voice_id||'Assigning'));voice.onclick=()=>openProfile({...agent,kind:'agent'});row.append(voice);}if(admin&&agent.active){const revoke=el('button','Revoke');revoke.onclick=()=>{if(confirm('Revoke access for '+agent.name+'?'))action('/agents/'+agent.id,'DELETE');};row.append(revoke);}$('agents').append(row);}
   if(!agents.length)$('agents').append(el('p','No agents registered yet.','muted'));
+  $('agent-invitation-channel').replaceChildren();for(const room of state.rooms)$('agent-invitation-channel').add(new Option('#'+room.name,room.id));$('agent-invitation-channel').value=state.room?.id||state.rooms[0]?.id||'';
   $('join-link-controls').hidden=!admin;$('team-invite-form').hidden=!admin;$('team-channel').replaceChildren();for(const room of state.rooms)$('team-channel').add(new Option('#'+room.name,room.id));$('team-channel').value=state.room?.id||state.rooms[0]?.id||'';$('invite-form').hidden=!admin;$('agent-form').hidden=!admin;$('invite-role').querySelector('[value="admin"]').disabled=ctx.role!=='owner';$('invite-role').value='member';return true;
 }
 $('people').onclick=async()=>{const ctx=context();try{if(await loadPeople(ctx)&&current(ctx)){$('manage').showModal();await loadJoinLink(ctx);}}catch(error){if(current(ctx))notice(error.message);}};
@@ -294,12 +387,40 @@ async function loadJoinLink(ctx){
 $('create-join-link').onclick=async()=>{
   const ctx=context();if($('create-join-link').dataset.active==='true'&&!confirm('Replace the join link? The old link will stop accepting new members.'))return;
   $('create-join-link').disabled=true;
-  try{const result=await api(orgPath(ctx,'/join-link'),'POST',{});if(!current(ctx))return;await loadJoinLink(ctx);showSecret(ctx,'Organization join link','Save and share this link with people or agents. It is shown only now and remains reusable until replaced or revoked.',result.url);}
+  try{const result=await api(orgPath(ctx,'/join-link'),'POST',{});if(!current(ctx))return;await loadJoinLink(ctx);if(!current(ctx))return;$('agent-invitation-link').value=result.url;showSecret(ctx,'Organization join link','Save and share this link with people or agents. It is shown only now and remains reusable until replaced or revoked.',result.url);}
   catch(error){if(current(ctx))notice(error.message);}finally{$('create-join-link').disabled=false;}
 };
 $('revoke-join-link').onclick=async()=>{
   const ctx=context();if(!confirm('Revoke the join link? Existing members and agents keep their access.'))return;
-  try{await api(orgPath(ctx,'/join-link'),'DELETE');if(current(ctx))await loadJoinLink(ctx);}catch(error){if(current(ctx))notice(error.message);}
+  try{await api(orgPath(ctx,'/join-link'),'DELETE');if(current(ctx)){clearAgentInvitation();await loadJoinLink(ctx);}}catch(error){if(current(ctx))notice(error.message);}
+};
+function clearAgentInvitation(){
+  for(const id of ['agent-invitation-link','agent-invitation-name','agent-invitation-result'])$(id).value='';
+  $('agent-invitation-result-label').hidden=true;$('agent-invitation-error').textContent='';
+}
+function agentInvitationUrl(link,room,name,introduce){
+  const url=new URL(link),origin=location.protocol+'//'+location.host;
+  const token=new URLSearchParams(url.hash.slice(1)).get('join');
+  if(url.origin!==origin||url.pathname!=='/workspace/'||url.search||url.username||url.password||!/^[A-Za-z0-9_-]{43}$/.test(token||''))throw new Error('Paste an organization join link from this server.');
+  if(!room)throw new Error('Choose an existing channel.');
+  name=name.trim();if(name.length>80)throw new Error('Agent names can contain at most 80 characters.');
+  const params=new URLSearchParams({join:token,channel:room.id,channel_name:room.name,introduce:introduce?'1':'0'});
+  if(name)params.set('agent',name);url.hash=params.toString();return url;
+}
+$('agent-invitation-form').onsubmit=async event=>{
+  event.preventDefault();const ctx=context(),button=event.target.querySelector('button');button.disabled=true;
+  $('agent-invitation-error').textContent='';$('agent-invitation-result').value='';$('agent-invitation-result-label').hidden=true;
+  try{
+    const room=state.rooms.find(r=>r.id===$('agent-invitation-channel').value);
+    const url=agentInvitationUrl($('agent-invitation-link').value.trim(),room,$('agent-invitation-name').value,$('agent-invitation-introduce').checked);
+    const token=new URLSearchParams(url.hash.slice(1)).get('join');
+    const info=await api('/join/inspect','POST',{token});if(!current(ctx))return;
+    if(info.org_id!==ctx.id)throw new Error('This join link belongs to a different organization.');
+    $('agent-invitation-result').value=url.href;$('agent-invitation-result-label').hidden=false;
+    try{await navigator.clipboard.writeText(url.href);if(current(ctx))notice('Agent invitation copied. Ask the agent to join using this link.');}
+    catch{if(current(ctx)){$('agent-invitation-result').select();$('agent-invitation-error').textContent='Select and copy the invitation below.';}}
+  }catch(error){if(current(ctx))$('agent-invitation-error').textContent=error.message;}
+  finally{button.disabled=false;}
 };
 $('invite-form').onsubmit=async event=>{event.preventDefault();const ctx=context(),button=event.target.querySelector('button');button.disabled=true;try{const result=await api(orgPath(ctx,'/invitations'),'POST',{role:$('invite-role').value});if(!current(ctx))return;await loadPeople(ctx);showSecret(ctx,'Invite someone','Share this one-use link with its intended recipient. It expires in 7 days.',result.url);}catch(error){if(current(ctx))notice(error.message);}finally{button.disabled=false;}};
 $('team-invite-form').onsubmit=async event=>{
