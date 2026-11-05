@@ -42,7 +42,7 @@ def request(base: str, method: str, path: str, payload=None, key: str | None = N
         headers["X-Participant-Key"] = key
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as response:
+    with routing.local_urlopen(req, timeout=HTTP_TIMEOUT) as response:
         return json.loads(response.read())
 
 
@@ -82,6 +82,7 @@ def deliver(event: dict) -> None:
     )
     workspace = importlib.util.module_from_spec(workspace_spec)
     workspace_spec.loader.exec_module(workspace)
+    workspace.routing.bind_event(event)
     if workspace.enabled():
         workspace.deliver(event, STATE_DIR, save)
         return

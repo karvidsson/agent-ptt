@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 
 from agent_ptt.models import VoiceProfile
+from agent_ptt.voice_catalog import BUILTIN_VOICES, resolve_voice
 
 
 class TTSBackend(ABC):
@@ -34,7 +35,7 @@ class TTSBackend(ABC):
         ...
 
 
-POCKET_VOICES = ("alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma")
+POCKET_VOICES = BUILTIN_VOICES
 
 
 class PocketTTSBackend(TTSBackend):
@@ -64,7 +65,7 @@ class PocketTTSBackend(TTSBackend):
         voice = voice_profile.settings.get("voice", "alba")
         if not isinstance(voice, str) or not voice.strip():
             raise ValueError("Pocket TTS voice must be a non-empty voice name or audio path")
-        return await asyncio.to_thread(self._synthesize, text, voice)
+        return await asyncio.to_thread(self._synthesize, text, resolve_voice(voice))
 
     def _synthesize(self, text: str, voice: str) -> bytes:
         import soundfile as sf

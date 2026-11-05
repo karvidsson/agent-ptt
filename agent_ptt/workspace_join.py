@@ -4,7 +4,7 @@ import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -15,9 +15,11 @@ from agent_ptt.workspace_auth import (
     Principal,
     digest,
     human,
+    principal,
     public_origin,
     rate_limit,
     require_admin,
+    role_for,
 )
 from agent_ptt.workspace_models import (
     Agent,
@@ -28,11 +30,20 @@ from agent_ptt.workspace_models import (
     Organization,
     now,
 )
+from agent_ptt.workspace_voices import choose_voice
 
 router = APIRouter(prefix="/api/workspace", tags=["Organization join links"])
 
 
+class WorkContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    project: str | None = Field(default=None, max_length=160)
+    workspace: str | None = Field(default=None, max_length=160)
+    task: str | None = Field(default=None, max_length=500)
+
+
 class EnrollAgent(InviteToken, Named):
+    work_context: WorkContext | None = None
     # Generated and saved by the client before enrollment. Retrying a lost
     # response uses the same secret; the server stores only its digest.
     credential: str = Field(min_length=43, max_length=100, pattern=r"^[A-Za-z0-9_-]+$", repr=False)
@@ -99,7 +110,11 @@ def inspect_link(req: InviteToken, request: Request, db: Session = Depends(get_d
     link = db.scalar(select(JoinLink).where(JoinLink.digest == digest(req.token), JoinLink.active))
     if not link:
         raise HTTPException(404, "Join link is unavailable")
-    return {"organization": db.get(Organization, link.org_id).name, "role": "member"}
+    return {
+        "organization": db.get(Organization, link.org_id).name,
+        "org_id": link.org_id,
+        "role": "member",
+    }
 
 
 @router.post("/join/person")
@@ -134,7 +149,15 @@ def accept_agent(req: EnrollAgent, request: Request, db: Session = Depends(get_d
     else:
         if db.get(Credential, key):
             raise HTTPException(409, "Use a separate credential for this enrollment")
-        agent = Agent(org_id=link.org_id, name=req.name)
+        names = db.scalars(select(Agent.name).where(Agent.org_id == link.org_id)).all()
+        if req.name.casefold() in {name.strip().casefold() for name in names}:
+            raise HTTPException(409, "Agent name already in use; choose a unique name")
+        agent = Agent(
+            org_id=link.org_id,
+            voice_id=choose_voice(link.org_id, db),
+            name=req.name,
+            work_context=req.work_context.model_dump() if req.work_context else None,
+        )
         db.add(agent)
         db.flush()
         credential = Credential(
@@ -149,6 +172,8 @@ def accept_agent(req: EnrollAgent, request: Request, db: Session = Depends(get_d
         "org_id": agent.org_id,
         "expires_at": credential.expires_at,
         "status": "registered",
+        "work_context": agent.work_context,
+        "voice_id": agent.voice_id,
     }
     try:
         db.commit()
@@ -156,3 +181,19 @@ def accept_agent(req: EnrollAgent, request: Request, db: Session = Depends(get_d
         db.rollback()
         raise HTTPException(409, "Enrollment conflicted; retry with the same credential") from exc
     return result
+
+
+@router.patch("/organizations/{org_id}/agents/me/context")
+def update_agent_context(
+    org_id: str,
+    body: WorkContext,
+    identity: Principal = Depends(principal),
+    db: Session = Depends(get_db),
+):
+    role_for(org_id, identity, db)
+    if identity.kind != "agent":
+        raise HTTPException(403, "An agent credential is required")
+    agent = db.get(Agent, identity.id)
+    agent.work_context = {**(agent.work_context or {}), **body.model_dump(exclude_unset=True)}
+    db.commit()
+    return {"work_context": agent.work_context}

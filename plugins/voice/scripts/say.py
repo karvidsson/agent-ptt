@@ -69,7 +69,7 @@ def _request(method: str, path: str, payload: dict | None = None, timeout: float
         method=method,
         headers=_headers(),
     )
-    with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as resp:
+    with routing.local_urlopen(req, timeout=timeout or HTTP_TIMEOUT) as resp:
         return json.loads(resp.read())
 
 

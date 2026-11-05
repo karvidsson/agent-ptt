@@ -165,3 +165,76 @@ def test_atomicity_limits_and_all_or_nothing_ack(tenant, monkeypatch):
             send(t, client_id="fail")
     with SessionLocal() as db:
         assert db.scalar(select(ChatMessage).where(ChatMessage.client_id == "fail")) is None
+
+
+def test_agent_memberships_are_self_scoped_and_tenant_scoped(tenant):
+    t = tenant
+    endpoint = t["base"] + "/membership"
+    for _ in range(2):
+        assert t["bot"].put(endpoint).status_code == 200
+    mine = f"/api/workspace/organizations/{t['org']}/agents/me/channels"
+    assert [r["id"] for r in t["bot"].get(mine).json()] == [t["room"]]
+    assert t["second"].get(mine).json() == []
+    assert t["owner"].put(endpoint).status_code == 403
+    assert t["foreign"].put(endpoint).status_code in (403, 404)
+    wrong_room = f"/api/workspace/organizations/{t['org']}/channels/{t['elsewhere']}/membership"
+    assert t["bot"].put(wrong_room).status_code == 404
+    for _ in range(2):
+        assert t["bot"].delete(endpoint).status_code == 204
+    assert t["bot"].get(mine).json() == []
+
+
+def test_admin_can_remove_only_offline_channel_membership(tenant):
+    from datetime import timedelta
+
+    from agent_ptt.workspace_models import now
+    from agent_ptt.workspace_presence import AgentCheckIn
+
+    t = tenant
+    t["bot"].put(t["base"] + "/membership")
+    endpoint = t["base"] + "/agents/" + t["a"]
+    assert t["owner"].delete(endpoint).status_code == 409  # Unknown is not offline.
+    assert t["bot"].delete(endpoint).status_code == 403
+    with SessionLocal() as db:
+        db.add(
+            AgentCheckIn(
+                org_id=t["org"],
+                agent_id=t["a"],
+                channel_id=t["room"],
+                mode="manual",
+                last_seen=now(),
+            )
+        )
+        db.commit()
+    assert t["owner"].delete(endpoint).status_code == 409
+    with SessionLocal() as db:
+        db.get(AgentCheckIn, (t["org"], t["a"])).last_seen = now() - timedelta(minutes=4)
+        db.commit()
+    assert t["owner"].delete(t["base"] + "/agents/" + t["remote"]).status_code == 404
+    assert t["owner"].delete(endpoint).status_code == 204
+    assert t["owner"].delete(endpoint).status_code == 204
+    assert t["bot"].get(f"/api/workspace/organizations/{t['org']}/agents/me/channels").json() == []
+    assert t["bot"].get(f"/api/workspace/organizations/{t['org']}/inbox").status_code == 200
+
+
+def test_legacy_membership_adoption_runs_once_and_preserves_removal(tenant):
+    from sqlalchemy import delete
+
+    from agent_ptt.workspace_membership_backfill import backfill
+    from agent_ptt.workspace_models import AgentChannel, WorkspaceDataMigration
+
+    t = tenant
+    t["bot"].post(t["base"] + "/messages", json={"text": "Joined", "client_id": "legacy-intro"})
+    with SessionLocal() as db:
+        db.execute(delete(WorkspaceDataMigration))
+        db.commit()
+        backfill(db.connection())
+        db.commit()
+        key = (t["org"], t["a"], t["room"])
+        assert db.get(AgentChannel, key) is not None
+        assert db.get(AgentChannel, (t["org"], t["b"], t["room"])) is None
+        db.delete(db.get(AgentChannel, key))
+        db.commit()
+        backfill(db.connection())
+        db.commit()
+        assert db.get(AgentChannel, key) is None

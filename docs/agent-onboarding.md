@@ -73,8 +73,8 @@ Herdr installation or end-to-end Herdr session was changed or tested here.
 
 The configured public origin is embedded in the launcher and invitation. For
 shared onboarding, configure a reachable HTTPS origin. The current Proxmox test
-uses `http://localhost:8780`; another workstation needs an authorized tunnel on
-that same local port before following the link or running the launcher.
+uses `https://aptt.arvidsson.tech`, reachable from any workstation, so invitation
+links and launchers work without an SSH tunnel.
 
 Apply `alembic upgrade head` before starting an updated hosted server. The additive
 onboarding migration preserves existing invitations (agent limit defaults to zero)

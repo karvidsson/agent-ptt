@@ -8,6 +8,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -75,6 +76,8 @@ class Agent(Base):
     active = Column(Boolean, default=True, nullable=False)
     onboarded_by = Column(String, nullable=True)
     harness = Column(String(20), nullable=True)
+    work_context = Column(JSON, nullable=True)
+    voice_id = Column(String(40), nullable=True)
     created_at = Column(DateTime, default=now, nullable=False)
 
 
@@ -100,7 +103,29 @@ class Room(Base):
     id = Column(String, primary_key=True, default=new_id)
     org_id = Column(String, ForeignKey("workspace_organizations.id"), nullable=False, index=True)
     name = Column(String(80), nullable=False)
+    project = Column(String(160), nullable=True)
+    description = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=now, nullable=False)
+
+
+class AgentChannel(Base):
+    __tablename__ = "workspace_agent_channels"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "agent_id"],
+            ["workspace_agents.org_id", "workspace_agents.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "channel_id"],
+            ["workspace_rooms.org_id", "workspace_rooms.id"],
+            ondelete="CASCADE",
+        ),
+    )
+    org_id = Column(String, primary_key=True)
+    agent_id = Column(String, primary_key=True)
+    channel_id = Column(String, primary_key=True)
+    joined_at = Column(DateTime, default=now, nullable=False)
 
 
 class JoinLink(Base):
@@ -150,3 +175,8 @@ class AuditEvent(Base):
     action = Column(String, nullable=False)
     target_id = Column(String, nullable=False)
     created_at = Column(DateTime, default=now, nullable=False)
+
+
+class WorkspaceDataMigration(Base):
+    __tablename__ = "workspace_data_migrations"
+    name = Column(String(80), primary_key=True)

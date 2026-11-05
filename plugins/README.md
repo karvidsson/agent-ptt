@@ -5,7 +5,7 @@ Integrations that let coding agents speak through Agent PTT voice channels.
 | Plugin | For | What it does |
 |--------|-----|--------------|
 | [announcer/](announcer/) | Claude Code | Announces "I'm currently looking into …" / "I've finished working on it." on every task via hooks |
-| [voice/](voice/) | Claude Code | `/agent-ptt-voice:say` skill — speak any message on demand |
+| [voice/](voice/) | Claude Code | `/agent-ptt-voice:join` — join/resume an organization; `/agent-ptt-voice:say` — legacy voice messages |
 | [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as Codex hooks |
 
 All of them talk to a locally running server (`uv run agent-ptt server start`)

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from agent_ptt.db import get_db
 from agent_ptt.models import Base
-from agent_ptt.workspace_auth import Principal, principal, rate_limit
+from agent_ptt.workspace_auth import Principal, principal, rate_limit, role_for
 from agent_ptt.workspace_models import Agent, now
 
 
@@ -83,6 +83,10 @@ def prepare(db, org_id, room_id, identity, recipient_ids, reply_to):
         )
         if not parent or not delivery:
             raise HTTPException(404, "Addressed message not found in this agent's inbox")
+        if parent.sender_kind == "agent" and parent.sender_id not in targets:
+            sender = db.get(Agent, parent.sender_id)
+            if sender and sender.org_id == org_id and sender.active:
+                agents.append(sender)
     return agents
 
 
@@ -133,7 +137,15 @@ def same_request(db, row, room_id, req):
     if not row or row.room_id != room_id or row.text != req.text:
         return False
     data = details(db, [row])[row.id]
-    return set(data["recipient_ids"]) == set(req.recipient_ids) and data["reply_to"] == req.reply_to
+    actual, requested = set(data["recipient_ids"]), set(req.recipient_ids)
+    if req.reply_to is not None and data["reply_to"] == req.reply_to:
+        from agent_ptt.workspace_models import ChatMessage
+
+        parent = db.get(ChatMessage, req.reply_to)
+        if parent and parent.org_id == row.org_id and parent.sender_kind == "agent":
+            actual.discard(parent.sender_id)
+            requested.discard(parent.sender_id)
+    return actual == requested and data["reply_to"] == req.reply_to
 
 
 router = APIRouter(prefix="/api/workspace", tags=["Agent delivery"])
@@ -147,7 +159,10 @@ class Acknowledge(BaseModel):
 def authorize_agent(org_id, room_id, identity, db):
     from agent_ptt.workspace import require_room
 
-    require_room(org_id, room_id, identity, db)
+    if room_id is None:
+        role_for(org_id, identity, db)
+    else:
+        require_room(org_id, room_id, identity, db)
     if identity.kind != "agent":
         raise HTTPException(403, "An agent credential is required")
 
@@ -176,7 +191,7 @@ def inbox(
                 Delivery.org_id == org_id,
                 Delivery.recipient_id == identity.id,
                 Delivery.delivered_at.is_(None),
-                ChatMessage.room_id == room_id,
+                (ChatMessage.room_id == room_id) if room_id else True,
             )
             .order_by(ChatMessage.id)
             .limit(limit)
@@ -184,6 +199,16 @@ def inbox(
     )
     metadata = details(db, rows)
     return [{**message_json(row), **metadata[row.id]} for row in rows]
+
+
+@router.get("/organizations/{org_id}/inbox")
+def organization_inbox(
+    org_id: str,
+    limit: int = Query(default=6, ge=1, le=20),
+    identity: Principal = Depends(principal),
+    db: Session = Depends(get_db),
+):
+    return inbox(org_id, None, limit, identity, db)
 
 
 @router.post("/organizations/{org_id}/channels/{room_id}/inbox/ack")

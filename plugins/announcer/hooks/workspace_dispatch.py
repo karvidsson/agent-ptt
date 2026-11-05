@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,20 +24,29 @@ def main():
         "status.py",
     }:
         raise ValueError("Unsupported hook target")
+    event = json.load(sys.stdin)
+    if event.get("agent_id"):
+        return
     workspace = load("workspace_client")
+    workspace.routing.bind_event(event)
     if not workspace.enabled():
-        os.execv(sys.executable, [sys.executable, str(script)])
+        subprocess.run(
+            [sys.executable, str(script)], input=json.dumps(event), text=True, check=False
+        )
         return
     # No legacy participation keys, status responders, or implicit local fallback
     # are used when a session explicitly selects hosted mode.
     if script.name == "status.py":
-        workspace.report_presence(json.load(sys.stdin))
+        workspace.report_presence(event)
         return
     if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0":
         return
-    event = json.load(sys.stdin)
-    if event.get("agent_id") or event.get("stop_hook_active"):
+    if event.get("stop_hook_active"):
         return
+    if event.get("hook_event_name") not in {"UserPromptSubmit", "Stop"}:
+        return
+    if workspace.polling_turn(event):
+        return  # Replies use explicit say; polling bookkeeping never becomes chat.
     helper = load("announce")
     name = event.get("hook_event_name")
     if name == "UserPromptSubmit":

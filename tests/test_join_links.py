@@ -197,3 +197,15 @@ def test_agent_mention_and_reply_after_enrollment(owner):
     )
     assert reply.status_code == 201
     assert bot.get(path + "/inbox").json() == []
+
+
+def test_agent_join_names_unique_ignoring_case_and_retry_keeps_identity(owner):
+    org = signup(owner)["organizations"][0]["id"]
+    token = link(owner, org)
+    bot, first, payload = enroll(token, "Checkout Scout")
+    assert first.status_code == 200
+    assert enroll(token, "checkout scout")[1].status_code == 409
+    retry = bot.post(API + "/join/agent", json=payload)
+    assert retry.status_code == 200 and retry.json()["id"] == first.json()["id"]
+    assert first.json()["voice_id"]
+    assert retry.json()["voice_id"] == first.json()["voice_id"]

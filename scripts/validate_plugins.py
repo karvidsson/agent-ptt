@@ -75,6 +75,11 @@ def validate() -> list[str]:
         if config is not None and "hooks" not in config:
             problems.append(f"{hooks_path.relative_to(REPO_ROOT)}: missing top-level 'hooks' key")
 
+    client = REPO_ROOT / "agent_ptt/skills/agent-ptt-organization/scripts/client.py"
+    bundled = PLUGINS_DIR / "voice/scripts/organization_client.py"
+    if not bundled.exists() or bundled.read_bytes() != client.read_bytes():
+        problems.append("voice organization_client.py must match the published organization client")
+
     # Skills have parseable frontmatter with a description
     for skill_path in sorted(PLUGINS_DIR.glob("*/skills/*/SKILL.md")):
         rel = skill_path.relative_to(REPO_ROOT)

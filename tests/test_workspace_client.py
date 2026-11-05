@@ -36,7 +36,9 @@ def transport(tenant, monkeypatch, tmp_path):
 
     def request(config, method, suffix, payload=None, *, organization=False):
         calls.append((method, suffix, payload))
-        prefix = f"/api/workspace/organizations/{t['org']}" if organization else t["base"]
+        prefix = f"/api/workspace/organizations/{t['org']}"
+        if not organization:
+            prefix += "/channels/" + config["channel"]
         path = "/api/workspace/me" if suffix == "/me" else prefix + suffix
         response = t["bot"].request(method, path, json=payload)
         if response.status_code >= 400:
@@ -80,10 +82,10 @@ def test_failed_ack_then_reconnect_does_not_reinject(transport, monkeypatch, cap
     )
     request = client.request
 
-    def failure(config, method, suffix, payload=None):
+    def failure(config, method, suffix, payload=None, **kwargs):
         if suffix == "/inbox/ack":
             raise urllib.error.URLError("offline")
-        return request(config, method, suffix, payload)
+        return request(config, method, suffix, payload, **kwargs)
 
     monkeypatch.setattr(client, "request", failure)
     with pytest.raises(urllib.error.URLError):
@@ -200,8 +202,8 @@ def test_server_policy_controls_tool_throttle_but_not_prompt_or_stop(
     _, calls, event, directory, save = transport
     original = client.request
 
-    def request(config, method, suffix, payload=None):
-        result = original(config, method, suffix, payload)
+    def request(config, method, suffix, payload=None, **kwargs):
+        result = original(config, method, suffix, payload, **kwargs)
         if suffix == "/me":
             result["mention_policy"]["tool_poll_interval_seconds"] = 10
         return result
@@ -247,8 +249,8 @@ def test_old_server_without_policy_still_delivers_mentions(transport, monkeypatc
     t, _, event, directory, save = transport
     original = client.request
 
-    def request(config, method, suffix, payload=None):
-        result = original(config, method, suffix, payload)
+    def request(config, method, suffix, payload=None, **kwargs):
+        result = original(config, method, suffix, payload, **kwargs)
         if suffix == "/me":
             result.pop("mention_policy", None)
         return result
@@ -279,3 +281,149 @@ def test_explicit_profile_follows_channel_changes_and_never_falls_back(monkeypat
     assert client.routing.setting("AGENT_PTT_WORKSPACE_CHANNEL", "") == "second"
     path.unlink()
     assert client.routing.setting("AGENT_PTT_WORKSPACE_TOKEN", "") == ""
+
+
+def test_hook_checks_in_after_inbox_and_heartbeat_failure_does_not_lose_mention(
+    transport, monkeypatch, capsys
+):
+    t, calls, event, directory, save = transport
+    client.deliver(event, directory, save)
+    capsys.readouterr()
+    assert any(
+        suffix == "/agents/me/check-in" and payload["mode"] == "activity"
+        for _, suffix, payload in calls
+    )
+    agents = t["owner"].get(f"/api/workspace/organizations/{t['org']}/agents").json()
+    assert next(a for a in agents if a["id"] == t["a"])["online_status"] == "online"
+    original = client.request
+
+    def unavailable(config, method, suffix, payload=None, **kwargs):
+        if suffix == "/agents/me/check-in":
+            raise urllib.error.HTTPError("", 503, "unavailable", {}, None)
+        return original(config, method, suffix, payload, **kwargs)
+
+    monkeypatch.setattr(client, "request", unavailable)
+    t["owner"].post(
+        t["base"] + "/messages",
+        json={"text": "Still delivered", "client_id": "checkin-failure", "recipient_ids": [t["a"]]},
+    )
+    client.deliver(event, directory, save)
+    assert "Still delivered" in capsys.readouterr().out
+
+
+def test_poll_transcript_usage_deduplicates_and_ignores_tool_results(tmp_path):
+    path = tmp_path / "session.jsonl"
+    prompt = "[agent-ptt-inbox-check] Check Agent PTT mentions using python3 client.py"
+    records = [
+        {"type": "user", "message": {"content": prompt}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "one",
+                "usage": {"input_tokens": 100, "output_tokens": 2, "cache_read_input_tokens": 500},
+            },
+        },
+        {"type": "user", "message": {"content": [{"type": "tool_result", "content": "[]"}]}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "one",
+                "usage": {"input_tokens": 100, "output_tokens": 12, "cache_read_input_tokens": 500},
+            },
+        },
+        {
+            "type": "assistant",
+            "sessionId": "other",
+            "message": {"id": "other", "usage": {"input_tokens": 999, "output_tokens": 999}},
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n{broken")
+    event = {"session_id": "test", "transcript_path": str(path), "hook_event_name": "Stop"}
+    result = client.transcript_activity(event)
+    assert client.polling_turn(event)
+    assert (
+        result["session"]
+        == result["poll_turn"]
+        == {
+            "input_tokens": 100,
+            "output_tokens": 12,
+            "cache_read_input_tokens": 500,
+            "cache_creation_input_tokens": 0,
+        }
+    )
+    records.append({"type": "user", "message": {"content": "Fix the UI"}})
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    assert not client.polling_turn(event)
+    assert "poll_turn" not in client.transcript_activity(event)
+    assert client.transcript_activity({})["available"] is False
+    assert client.polling_turn(
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "Check Agent PTT mentions using python3 /tmp/old.py inbox",
+        }
+    )
+
+
+def test_usage_presence_reports_real_counters_and_private_receipt(transport, monkeypatch):
+    t, calls, event, directory, _ = transport
+    directory.mkdir()
+    profile = directory / "test.json"
+    monkeypatch.setattr(client.routing, "workspace_profile", lambda: str(profile))
+    # Keep configuration independent of the receipt fixture's profile.
+    config = {
+        "base": "https://workspace.example",
+        "org": t["org"],
+        "channel": t["room"],
+        "token": "test-token",
+    }
+    monkeypatch.setattr(client, "configuration", lambda: config)
+    transcript = directory / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "measured",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 20,
+                        "cache_creation_input_tokens": 30,
+                        "cache_read_input_tokens": 40,
+                    },
+                },
+            }
+        )
+    )
+    client.report_presence(
+        {**event, "hook_event_name": "Stop", "transcript_path": str(transcript)}, directory
+    )
+    payload = calls[-1][2]
+    assert payload["tokens_in"] == 80 and payload["tokens_out"] == 20
+    receipt = profile.with_suffix(".usage.json")
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    assert json.loads(receipt.read_text())["session"]["cache_read_input_tokens"] == 40
+
+
+def test_hook_reads_other_channel_and_replies_to_source(transport, capsys):
+    t, _, event, directory, save = transport
+    base = f"/api/workspace/organizations/{t['org']}"
+    room = t["owner"].post(base + "/channels", json={"name": "project"}).json()
+    message = (
+        t["owner"]
+        .post(
+            base + "/channels/" + room["id"] + "/messages",
+            json={
+                "text": "Project question",
+                "client_id": "project-mention",
+                "recipient_ids": [t["a"]],
+            },
+        )
+        .json()
+    )
+    client.deliver(event, directory, save)
+    output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "--channel " + room["id"] in output
+    assert "Project question" in output
+    assert t["bot"].get(base + "/inbox").json() == []
+    reply = client.send("Project answer", reply_to=message["id"], channel=room["id"])
+    assert reply["channel_id"] == room["id"]

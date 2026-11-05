@@ -81,8 +81,11 @@ def test_migration_preserves_legacy_data_and_adopts_existing_workspace(migration
         assert conn.scalar(text("SELECT name FROM workspace_users WHERE id='u'")) == "User"
         assert conn.scalar(text("SELECT COUNT(*) FROM workspace_organizations")) == 0
         assert conn.scalar(text("SELECT name FROM channels")) == "Existing voice room"
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "20260928_join_links"
+        assert (
+            conn.scalar(text("SELECT version_num FROM alembic_version")) == "20261002_agent_voices"
+        )
     assert "workspace_deliveries" in inspect(engine).get_table_names()
+    assert "workspace_agent_checkins" in inspect(engine).get_table_names()
 
 
 def test_migration_rejects_incompatible_preview_schema(migration_engine):
@@ -160,3 +163,40 @@ def test_migrated_database_runs_authenticated_delivery(migration_engine, monkeyp
             with pytest.raises(IntegrityError):
                 session.commit()
             session.rollback()
+
+
+def test_agent_voice_migration_assigns_once(migration_engine):
+    engine = migration_engine
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "migrations"))
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.upgrade(config, "20261002_legacy_memberships")
+        conn.execute(
+            text(
+                "INSERT INTO workspace_users (id,email,name,password_hash,created_at) "
+                "VALUES ('u','u@test','User','unused',CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO workspace_organizations (id,name,owner_id,created_at) "
+                "VALUES ('o','Org','u',CURRENT_TIMESTAMP)"
+            )
+        )
+        for agent in ("a", "b"):
+            conn.execute(
+                text(
+                    "INSERT INTO workspace_agents (id,org_id,name,active,created_at) "
+                    "VALUES (:id,'o',:id,true,CURRENT_TIMESTAMP)"
+                ),
+                {"id": agent},
+            )
+    upgrade(engine)
+    with engine.connect() as conn:
+        before = dict(conn.execute(text("SELECT id,voice_id FROM workspace_agents")).all())
+        assert all(before.values())
+        assert before["a"] != before["b"]
+    upgrade(engine)
+    with engine.connect() as conn:
+        assert dict(conn.execute(text("SELECT id,voice_id FROM workspace_agents")).all()) == before

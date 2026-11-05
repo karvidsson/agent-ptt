@@ -396,3 +396,90 @@ def test_invitation_revocation_and_agent_cookie_stream_rejected(hosted_client):
         cookie_client.websocket_connect(base + f"/channels/{room(client, org_id)}/stream"),
     ):
         pytest.fail("Agent credential accepted as browser session")
+
+
+@pytest.mark.parametrize("path", ["/", "/workspace", "/workspace/"])
+def test_local_browser_alias_redirects_to_configured_origin(hosted_client, path):
+    response = hosted_client.get("http://127.0.0.1:8770" + path, follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == ORIGIN + "/workspace/"
+    assert hosted_client.get(ORIGIN + "/workspace/", follow_redirects=False).status_code == 200
+
+
+def test_alias_redirect_does_not_relax_origin_checks(hosted_client):
+    response = hosted_client.post(
+        "http://127.0.0.1:8770" + API + "/signup",
+        headers={"Origin": "http://127.0.0.1:8770"},
+        json={},
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid request origin"
+    for base in ["http://evil.example:8770", "http://127.0.0.1:9999"]:
+        assert hosted_client.get(base + "/workspace/", follow_redirects=False).status_code == 200
+
+
+def test_agent_voices_are_saved_and_admin_can_change_them(hosted_client):
+    from agent_ptt.voice_catalog import BUILTIN_VOICES
+    from agent_ptt.workspace_models import Agent
+
+    client = hosted_client
+    org = signup(client)["organizations"][0]["id"]
+    base = f"{API}/organizations/{org}"
+    first = client.post(base + "/agents", json={"name": "First"}).json()
+    second = client.post(base + "/agents", json={"name": "Second"}).json()
+    assert first["voice_id"] in BUILTIN_VOICES
+    assert first["voice_id"] != second["voice_id"]
+    assert len(client.get(base + "/voices").json()) == 28
+    path = base + f"/agents/{first['id']}/voice"
+    assert client.patch(path, json={"voice_id": "/tmp/secret.wav"}).status_code == 422
+    assert client.patch(path, json={"voice_id": "ledger"}).json()["voice_id"] == "ledger"
+    with SessionLocal() as db:
+        assert db.get(Agent, first["id"]).voice_id == "ledger"
+    assert (
+        next(a for a in client.get(base + "/agents").json() if a["id"] == first["id"])["voice_id"]
+        == "ledger"
+    )
+    with second_client() as outsider:
+        other = signup(outsider, "other-voice@example.com")["organizations"][0]["id"]
+        assert outsider.patch(path, json={"voice_id": "fender"}).status_code == 404
+        assert (
+            outsider.patch(
+                f"{API}/organizations/{other}/agents/{first['id']}/voice",
+                json={"voice_id": "fender"},
+            ).status_code
+            == 404
+        )
+    with second_client() as member:
+        token = invite(client, org)
+        signup(member, "member-voice@example.com", organization=None)
+        assert accept(member, token).status_code == 200
+        assert member.patch(path, json={"voice_id": "fender"}).status_code == 403
+        assert member.get(base + "/voices").status_code == 200
+    client.delete(base + f"/agents/{first['id']}")
+    assert client.patch(path, json={"voice_id": "fender"}).status_code == 404
+
+
+def test_voice_allocation_uses_catalog_before_reusing(hosted_client):
+    from collections import Counter
+
+    from agent_ptt.voice_catalog import BUILTIN_VOICES
+    from agent_ptt.workspace_models import Agent
+    from agent_ptt.workspace_voices import assign_missing_voices, choose_voice
+
+    org = signup(hosted_client)["organizations"][0]["id"]
+    with SessionLocal() as db:
+        assigned = []
+        for index in range(len(BUILTIN_VOICES) + 1):
+            voice = choose_voice(org, db)
+            assigned.append(voice)
+            db.add(Agent(org_id=org, name=f"Agent {index}", voice_id=voice))
+            db.flush()
+        assert set(assigned[:-1]) == set(BUILTIN_VOICES)
+        assert max(Counter(assigned).values()) == 2
+        db.add(Agent(id="unassigned", org_id=org, name="Unassigned"))
+        db.flush()
+        assign_missing_voices(db)
+        saved = db.get(Agent, "unassigned").voice_id
+        assign_missing_voices(db)
+        assert db.get(Agent, "unassigned").voice_id == saved

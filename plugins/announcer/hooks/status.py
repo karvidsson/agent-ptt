@@ -21,6 +21,7 @@ key announce.py cached in announcer-state.json, so the voice matches.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -29,6 +30,12 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+
+_routing_spec = importlib.util.spec_from_file_location(
+    "session_routing", Path(__file__).with_name("session_routing.py")
+)
+routing = importlib.util.module_from_spec(_routing_spec)
+_routing_spec.loader.exec_module(routing)
 
 STATE_FILE = Path.home() / ".agent-ptt" / "announcer-state.json"
 STATUS_DIR = Path.home() / ".agent-ptt" / "status"
@@ -92,7 +99,7 @@ def _headers() -> dict:
 def _request(method: str, path: str, payload: dict | None = None, timeout: float = 10.0):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(f"{BASE_URL}{path}", data=data, method=method, headers=_headers())
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with routing.local_urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 

@@ -180,22 +180,43 @@ def join(ctx: typer.Context, channel: str, create: bool = typer.Option(False, "-
             raise typer.BadParameter(
                 "Channel not found. List channels or use --create when none fits"
             )
+        request(data, "PUT", path + "/" + room["id"] + "/membership")
         data["channel"] = room["id"]
+        data["channels"] = [
+            r["id"] for r in request(data, "GET", org_path(data) + "/agents/me/channels")
+        ]
         save(ctx.obj, data)
     typer.echo(f"Joined #{room['name']} ({room['id']}).")
 
 
 @app.command()
 def inbox(ctx: typer.Context):
-    """Read pending mentions in the selected channel; replies mark them answered."""
+    """Read pending mentions across the organization; replies mark them answered."""
     data = config(ctx)
-    typer.echo(json.dumps(request(data, "GET", room_path(data) + "/inbox"), indent=2))
+    messages = request(data, "GET", org_path(data) + "/inbox")
+    try:
+        request(
+            data,
+            "POST",
+            org_path(data) + "/agents/me/check-in",
+            {"channel_id": data["channel"], "mode": "manual"},
+        )
+    except (typer.BadParameter, KeyError):
+        typer.echo("Inbox read succeeded, but online check-in failed.", err=True)
+    typer.echo(json.dumps(messages, indent=2))
 
 
 @app.command()
-def say(ctx: typer.Context, text: str, reply_to: int | None = typer.Option(None, "--reply-to")):
+def say(
+    ctx: typer.Context,
+    text: str,
+    reply_to: int | None = typer.Option(None, "--reply-to"),
+    channel: str | None = typer.Option(None, "--channel"),
+):
     """Send a message or reply to a mention in the selected channel."""
     data = config(ctx)
+    if channel:
+        data = {**data, "channel": channel}
     payload = {"text": text, "client_id": str(uuid.uuid4()), "reply_to": reply_to}
     result = request(data, "POST", room_path(data) + "/messages", payload)
     typer.echo(f"Sent message {result['id']}.")
