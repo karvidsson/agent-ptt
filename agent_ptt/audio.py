@@ -1,7 +1,9 @@
-"""Audio mixer — playback queue, speaker output, and WebSocket streaming.
+"""Audio mixer — playback queue, optional speaker output, and WebSocket streaming.
 
-Plays synthesized audio sequentially through speakers and broadcasts
-to any connected WebSocket spectator listeners.
+Broadcasts synthesized audio sequentially to connected WebSocket spectator
+listeners. Playing it on the host's own speakers is opt-in (see
+``speakers_enabled``); muted, the mixer never touches the audio device but
+keeps the same pacing for listeners.
 """
 
 from __future__ import annotations
@@ -11,14 +13,59 @@ import contextlib
 import io
 import logging
 import os
+import wave
 
 logger = logging.getLogger(__name__)
 
+# Silence between consecutive clips, on the speakers and for listeners alike.
+GAP_SECONDS = 0.2
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def speakers_enabled(flag: bool | None = None) -> bool:
+    """Whether the server plays audio on the host's speakers.
+
+    Off by default. Precedence: an explicit ``flag`` (the CLI's
+    ``--speakers/--no-speakers``) wins; otherwise ``AGENT_PTT_MUTE`` set
+    truthy forces mute; otherwise ``AGENT_PTT_SPEAKERS`` truthy opts in.
+    """
+    if flag is not None:
+        return flag
+    if _env_flag("AGENT_PTT_MUTE"):
+        return False
+    return _env_flag("AGENT_PTT_SPEAKERS")
+
+
+def speaker_mode_message() -> str:
+    """One-line description of the speaker mode, logged at server startup."""
+    if speakers_enabled():
+        return "Host speaker playback: on (disable with --no-speakers or AGENT_PTT_MUTE=1)"
+    return "Host speaker playback: off (muted; enable with --speakers or AGENT_PTT_SPEAKERS=1)"
+
+
+def _clip_duration(audio_bytes: bytes) -> float | None:
+    """Duration in seconds of a WAV clip, or None if it can't be decoded."""
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+            rate = wf.getframerate()
+            return wf.getnframes() / rate if rate else None
+    except Exception:
+        return None
+
+
+# Indirection so tests can patch the pacing wait without sleeping.
+_pace_sleep = asyncio.sleep
+
 
 class AudioMixer:
-    """Per-channel audio playback queue with speaker output + WS streaming."""
+    """Per-channel audio queue: WS streaming plus optional speaker output."""
 
-    def __init__(self, sample_rate: int = 24000, channels: int = 1, muted: bool = False) -> None:
+    def __init__(self, sample_rate: int = 24000, channels: int = 1, muted: bool = True) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.muted = muted
@@ -70,21 +117,20 @@ class AudioMixer:
             self.unregister_stream_listener(q)
 
     async def _playback_loop(self) -> None:
-        """Background loop: dequeue audio and play through speakers."""
-        import numpy as np
-
+        """Background loop: dequeue audio, stream it, and pace (or play) it."""
+        sd = None
+        gap = None
         if self.muted:
-            sd = None
-            logger.info("Speaker playback muted; audio remains available to stream listeners")
+            logger.debug("Mixer muted; audio goes to stream listeners only")
         else:
             try:
+                import numpy as np
                 import sounddevice as sd
+
+                gap = np.zeros(int(self.sample_rate * GAP_SECONDS), dtype=np.float32)
             except Exception as e:
                 logger.warning(f"sounddevice unavailable, speaker output disabled: {e}")
                 sd = None
-
-        # Small silence gap between speakers (200ms)
-        gap = np.zeros(int(self.sample_rate * 0.2), dtype=np.float32)
 
         while self._running:
             try:
@@ -94,13 +140,11 @@ class AudioMixer:
             except asyncio.CancelledError:
                 break
 
-            logger.info(f"🔊 Playing audio from [{handle}]")
-
             # Broadcast raw bytes to WebSocket listeners
             await self._broadcast_to_listeners(audio_bytes)
 
-            # Play through speakers
             if sd is not None:
+                logger.info(f"🔊 Playing audio from [{handle}]")
                 try:
                     await asyncio.to_thread(self._play_audio, sd, audio_bytes)
                     # Small gap between speakers
@@ -109,6 +153,13 @@ class AudioMixer:
                     )
                 except Exception as e:
                     logger.error(f"Speaker playback error: {e}")
+            else:
+                # No speakers: wait as long as playback would have, so listeners
+                # get clips spaced exactly as before (duration + gap).
+                logger.info(f"📡 Streaming audio from [{handle}]")
+                duration = _clip_duration(audio_bytes)
+                if duration is not None:
+                    await _pace_sleep(duration + GAP_SECONDS)
 
     def _play_audio(self, sd, audio_bytes: bytes) -> None:
         """Play audio bytes through speakers (blocking, run in thread)."""
@@ -116,8 +167,6 @@ class AudioMixer:
 
         try:
             # Try to decode as WAV first
-            import wave
-
             with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
                 frames = wf.readframes(wf.getnframes())
                 sample_rate = wf.getframerate()
@@ -186,7 +235,7 @@ _mixers: dict[str, AudioMixer] = {}
 def get_mixer(channel_id: str) -> AudioMixer:
     """Get or create an AudioMixer for a channel."""
     if channel_id not in _mixers:
-        _mixers[channel_id] = AudioMixer(muted=os.environ.get("AGENT_PTT_MUTE") == "1")
+        _mixers[channel_id] = AudioMixer(muted=not speakers_enabled())
         _mixers[channel_id].start()
     return _mixers[channel_id]
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Agent PTT — voice channels for AI agents. Participants (agents/humans) join named channels via CLI or WebSocket and `say` text messages; the server synthesizes them to speech, plays them through the host's speakers, and streams the audio to WebSocket spectators. Python 3.11+, managed with uv.
+Agent PTT — voice channels for AI agents. Participants (agents/humans) join named channels via CLI or WebSocket and `say` text messages; the server synthesizes them to speech and streams the audio to WebSocket spectators (web UI, `listen`); playing it on the host's own speakers is opt-in (`server start --speakers` / `AGENT_PTT_SPEAKERS=1`). Python 3.11+, managed with uv.
 
 For hosted organizations, authentication, and deployment, see [workspaces](docs/workspaces.md).
 Start with the [docs index](docs/README.md); the general organization join link and member channel creation are implemented.
@@ -17,7 +17,7 @@ uv sync                                  # install dependencies (Pocket TTS + to
 uv run agent-ptt server start            # start the FastAPI server (default port 8770)
 uv run agent-ptt channel create "Name"   # create a channel
 uv run agent-ptt join <channel-id> --handle "Name" --voice "marius"
-uv run agent-ptt say "text"              # speak into the joined channel (plays on speakers)
+uv run agent-ptt say "text"              # speak into the joined channel (streamed to listeners)
 uv run agent-ptt listen <channel-id>     # spectate a channel's audio stream
 uv run agent-ptt voices                  # list available TTS voices
 uv run agent-ptt config                  # show current session state
@@ -40,7 +40,7 @@ Run pytest and ruff before committing. Tests fake out TTS and speaker playback (
 
 Single package `agent_ptt/`, three layers: Typer CLI client → FastAPI server → services (channel manager, TTS, audio mixer, DB).
 
-Message flow (the path most changes touch): CLI `say` → agent WebSocket `/channels/{id}/ws?key=...` → `channel.send_message()` (appends to in-memory history, persists `MessageDB`, broadcasts text JSON to connected agents, puts message on an asyncio queue) → per-channel `_tts_worker` background task in `server.py` dequeues → `tts.synthesize()` → `AudioMixer.enqueue()` in `audio.py` → sequential speaker playback (200ms gap between different speakers) + fan-out of raw audio bytes to spectator WebSockets (`/channels/{id}/audio`).
+Message flow (the path most changes touch): CLI `say` → agent WebSocket `/channels/{id}/ws?key=...` → `channel.send_message()` (appends to in-memory history, persists `MessageDB`, broadcasts text JSON to connected agents, puts message on an asyncio queue) → per-channel `_tts_worker` background task in `server.py` dequeues → `tts.synthesize()` → `AudioMixer.enqueue()` in `audio.py` → sequential fan-out of raw audio bytes to spectator WebSockets (`/channels/{id}/audio`), paced at clip duration + 200ms gap; with speakers enabled the pacing comes from actual playback on the host (`sounddevice`), muted (the default, `audio.speakers_enabled()`) it is a sleep and `sounddevice` is never imported.
 
 Key design points:
 

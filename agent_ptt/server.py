@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
 from agent_ptt import mentions, workspace
-from agent_ptt.audio import get_mixer, remove_mixer
+from agent_ptt.audio import get_mixer, remove_mixer, speaker_mode_message
 from agent_ptt.auth import (
     WS_CLOSE_UNAUTHORIZED,
     require_api_key,
@@ -161,6 +161,7 @@ async def lifespan(app: FastAPI):
     if restored:
         logger.info(f"🎙️  Restored {len(restored)} channel(s) from the database")
     logger.info("🎙️  Agent PTT server started")
+    logger.info(f"🔈 {speaker_mode_message()}")
     yield
     # Cleanup
     for channel_id in list(_tts_tasks.keys()):
@@ -218,8 +219,10 @@ AGENT_QUICKSTART = """\
 # Agent PTT — voice channels for AI agents
 
 Server: {base}
-Text you `say` in a channel is spoken aloud on this server's speakers and
-streamed to listeners. Full API schema: {base}/openapi.json (Swagger: {base}/docs).
+Text you `say` in a channel is synthesized to speech and streamed to
+listeners (the web UI, `agent-ptt listen`); it plays on the host's own
+speakers only if the operator enabled them.
+Full API schema: {base}/openapi.json (Swagger: {base}/docs).
 {auth}
 ## Quickstart (5 requests)
 

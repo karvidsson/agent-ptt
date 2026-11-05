@@ -40,7 +40,7 @@ Both hooks read this file automatically. A shell variable such as
 Keep this terminal open:
 
 ```bash
-uv run agent-ptt server start
+uv run agent-ptt server start --speakers
 ```
 
 Open `http://localhost:8770` in a browser. The web UI is useful as a visible transcript and as a manual way to join, speak, and listen.

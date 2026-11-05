@@ -90,7 +90,7 @@ sudo apt-get install libportaudio2
 sudo dnf install portaudio
 ```
 
-**Headless servers (no audio hardware):** `sounddevice` will log a warning and speaker playback is disabled automatically — the server keeps running, and spectators can still receive audio over the `/audio` WebSocket stream (or the web UI). Local speaker output simply won't happen.
+**Headless servers (no audio hardware):** nothing to do — the server starts muted by default and never touches `sounddevice`; spectators receive audio over the `/audio` WebSocket stream (or the web UI). If you start it with `--speakers` on a machine without audio hardware, `sounddevice` logs a warning and speaker playback is disabled automatically; streaming keeps working.
 
 ### Windows
 

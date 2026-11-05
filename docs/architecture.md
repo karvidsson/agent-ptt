@@ -67,10 +67,15 @@ To add a custom engine, subclass `TTSBackend` and call `register_backend("name",
 ### `agent_ptt/audio.py`
 
 Per-channel `AudioMixer` with:
-- **Playback queue** — messages are played sequentially (no overlap)
-- **Speaker output** — via `sounddevice` (CoreAudio / WASAPI / ALSA)
+- **Playback queue** — messages are handled sequentially (no overlap)
 - **WebSocket streaming** — broadcasts audio bytes to registered spectator listeners
-- **Gap insertion** — 200ms silence between different speakers for clarity
+- **Speaker output (opt-in)** — via `sounddevice` (CoreAudio / WASAPI / ALSA), only
+  when `audio.speakers_enabled()` is true (`server start --speakers` or
+  `AGENT_PTT_SPEAKERS=1`; `AGENT_PTT_MUTE=1` forces it off). Muted, the default,
+  never imports `sounddevice`.
+- **Pacing / gap insertion** — after each clip the mixer waits for the clip's
+  duration plus a 200ms gap: by playing it on the speakers, or, muted, by sleeping
+  for the WAV header's duration. Listeners get the same spacing in both modes.
 
 ### `agent_ptt/server.py`
 
@@ -122,9 +127,9 @@ Channel Manager receives message
                 ▼
         Audio Mixer enqueues audio
                 │
-                ├──→ Plays through speakers (sounddevice)
+                ├──→ Streams to WebSocket spectators
                 │
-                └──→ Streams to WebSocket spectators
+                └──→ Plays through speakers (sounddevice; only with --speakers)
 ```
 
 ## Persistence Model

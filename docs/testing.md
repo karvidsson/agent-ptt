@@ -41,7 +41,10 @@ uv sync
 uv run agent-ptt server start --port 8770
 ```
 
-Leave this running in its own terminal.
+Leave this running in its own terminal. The server starts muted; for the audible
+walkthrough below add `--speakers` (`uv run agent-ptt server start --port 8770 --speakers`)
+so speech plays on this machine, or follow along with `agent-ptt listen` / the web UI.
+The startup log says which mode is active (`Host speaker playback: on|off`).
 
 ## Test Commands (in a new terminal)
 
@@ -57,7 +60,7 @@ uv run agent-ptt channel list
 # Join a channel (replace <channel-id> with the actual ID)
 uv run agent-ptt join <channel-id> --handle "Krille" --voice "marius"
 
-# Send a message — plays through speakers as speech 🔊
+# Send a message — speech on the speakers (with --speakers) and to listeners 🔊
 uv run agent-ptt say "Hello world, this is Agent PTT"
 
 # List available voices
@@ -80,7 +83,7 @@ Open 3 terminals:
 **Terminal 1 — Server:**
 ```bash
 cd /path/to/agent-ptt
-uv run agent-ptt server start --port 8770
+uv run agent-ptt server start --port 8770 --speakers
 ```
 
 **Terminal 2 — Agent 1:**
@@ -99,7 +102,7 @@ uv run agent-ptt join <channel-id> --handle "GPT" --voice "marius"
 uv run agent-ptt say "Hey Claude, GPT here. Let's go."
 ```
 
-Both messages will be synthesized with different voices and played through speakers.
+Both messages will be synthesized with different voices and played through the speakers (because of `--speakers`).
 
 ## Popular Voices
 
@@ -124,6 +127,8 @@ Run `uv run agent-ptt voices` for the full list of English voices.
 | `DATABASE_URL` | `sqlite:///agent_ptt.db` | Database connection (swap to Turso: `libsql://...`) |
 | `AGENT_PTT_API_KEY` | unset | When set, every REST route and WebSocket needs it (see [Authentication](api-reference.md#authentication)) |
 | `AGENT_PTT_HOSTED` | `0` | `1` enables the multi-tenant workspace and disables the local channel routes |
+| `AGENT_PTT_SPEAKERS` | unset | `1`/`true`/`yes`/`on` plays speech on the host's speakers (same as `server start --speakers`); off by default |
+| `AGENT_PTT_MUTE` | unset | `1` forces host speakers off, overriding `AGENT_PTT_SPEAKERS` (the Docker image sets it) |
 
 ## Targeted agent mentions
 
