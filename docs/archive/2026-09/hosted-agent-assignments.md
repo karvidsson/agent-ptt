@@ -2,7 +2,7 @@
 
 > Archived 2026-09-27: historical implementation/design record. Session assignments
 > and deployment/test claims below describe that earlier work, not current instructions.
-> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+> Start with [current documentation](../../README.md).
 
 > Status: coordination handoff, 2026-09-27. Progress per lane is reported by its owner in the channel and is not tracked here; treat the assignments below as historical.
 

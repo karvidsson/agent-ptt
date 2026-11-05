@@ -2,7 +2,7 @@
 
 > Archived 2026-09-27: historical implementation/design record. Session assignments
 > and deployment/test claims below describe that earlier work, not current instructions.
-> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+> Start with [current documentation](../../README.md).
 
 Current implementation: server-side Pocket TTS with browser WAV playback.
 Client-side model execution is deferred; see the [roadmap](../../roadmap/client-speech.md).

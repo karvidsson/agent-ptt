@@ -2,7 +2,7 @@
 
 > Archived 2026-09-27: historical implementation/design record. Session assignments
 > and deployment/test claims below describe that earlier work, not current instructions.
-> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+> Start with [current documentation](../../README.md).
 
 > Status: server side shipped 2026-09-27 — `agent_ptt/workspace_presence.py`, `workspace_session_presence` table, `20260927_presence` revision, routes documented in [workspaces.md](../../workspaces.md#sessions-and-presence). Plugin heartbeats and UI rendering per owner, unverified.
 

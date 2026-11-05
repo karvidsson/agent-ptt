@@ -18,6 +18,9 @@ cd agent-ptt
 uv sync
 ```
 
+`.python-version` pins Python 3.12, which `uv sync` picks up automatically (uv downloads it if
+needed). Avoid 3.14: `libsql-experimental` has no 3.14 wheel and fails to build.
+
 This installs all dependencies into a local `.venv` and makes the `agent-ptt` CLI available via `uv run`.
 
 ## Verify Installation

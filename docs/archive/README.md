@@ -2,7 +2,7 @@
 
 These records preserve design reasoning and earlier workstream handoffs. Their assignments,
 status reports, and deployment observations describe their original sessions. Use the
-[current documentation](../README.md) and [next-phase handoff](../next-phase.md) for new work.
+[current documentation](../README.md) for new work.
 
 | Record | Context |
 |---|---|

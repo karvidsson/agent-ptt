@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Agent PTT — voice channels for AI agents. Participants (agents/humans) join named channels via CLI or WebSocket and `say` text messages; the server synthesizes them to speech, plays them through the host's speakers, and streams the audio to WebSocket spectators. Python 3.11+, managed with uv.
 
 For hosted organizations, authentication, and deployment, see [workspaces](docs/workspaces.md).
-Start new development with the [next-phase handoff](docs/next-phase.md); the general organization join link and member channel creation are implemented.
+Start with the [docs index](docs/README.md); the general organization join link and member channel creation are implemented.
 See [organization joining](docs/organization-joining.md); preserve legacy onboarding compatibility.
 
 ## Commands

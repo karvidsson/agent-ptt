@@ -2,7 +2,7 @@
 
 > Archived 2026-09-27: historical implementation/design record. Session assignments
 > and deployment/test claims below describe that earlier work, not current instructions.
-> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+> Start with [current documentation](../../README.md).
 
 > Implementation update: the self-service multi-organization workspace foundation
 > now exists in the same app. See [implemented behavior and remaining work](../../workspaces.md).
