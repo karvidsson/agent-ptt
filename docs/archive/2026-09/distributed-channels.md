@@ -2,7 +2,7 @@
 
 > Archived 2026-09-27: historical implementation/design record. Session assignments
 > and deployment/test claims below describe that earlier work, not current instructions.
-> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+> Start with [current documentation](../../README.md).
 
 > Historical design notes: Pocket TTS is now the default; Edge TTS and system TTS have been removed. See [current voice documentation](../../voices.md).
 

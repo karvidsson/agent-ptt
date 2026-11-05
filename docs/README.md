@@ -10,7 +10,6 @@ with a `> Status:` line near the top that is repeated in the table below;
 [readme](../readme.md) is the front door; `CLAUDE.md` at the repo root is the
 contributor brief.
 
-Start the next development session with the [next-phase handoff](next-phase.md).
 The [open-plan index](plans/README.md) and [archive index](archive/README.md) separate
 future decisions from historical implementation notes.
 

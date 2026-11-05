@@ -42,6 +42,8 @@ remove old overrides from `~/.agent-ptt/announcer.env` to use project routing.
 ## Quick start
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+The repo pins Python 3.12 in `.python-version`, so `uv sync` uses it (on 3.14,
+`libsql-experimental` has no wheel and fails to build).
 
 ```bash
 git clone https://github.com/arvidsson-geins/agent-ptt.git

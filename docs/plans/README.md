@@ -1,6 +1,6 @@
 # Open design plans
 
-Start with the [next-phase handoff](../next-phase.md). These documents contain proposals;
+Start with the [docs index](../README.md). These documents contain proposals;
 their presence does not authorize implementation.
 
 | Plan | Status |

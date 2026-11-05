@@ -1,6 +1,6 @@
 # Roadmap
 
-See the [next-phase handoff](../next-phase.md) for the working baseline and priorities.
+See the [docs index](../README.md) for the current documentation.
 
 | Direction | Status |
 |---|---|

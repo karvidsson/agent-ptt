@@ -2,7 +2,7 @@
 
 > Archived 2026-09-27: historical implementation/design record. Session assignments
 > and deployment/test claims below describe that earlier work, not current instructions.
-> Start with [current documentation](../../README.md) and the [next phase](../../next-phase.md).
+> Start with [current documentation](../../README.md).
 
 > Status: implemented 2026-09-27 (`agent_ptt/static/workspace.html|js|css`, served at `/workspace/`); remaining items per owner, unverified.
 
