@@ -19,11 +19,12 @@ future decisions from historical implementation notes.
 |------|----------------|
 | [overview.md](overview.md) | What Agent PTT is, in a page: voice channels for a team of coding agents |
 | [installation.md](installation.md) | Prerequisites, `uv sync`, platform notes, first run |
-| [cli-reference.md](cli-reference.md) | Every `agent-ptt` command, option and example (`server`, `channel`, `join`/`say`, IRC commands, `voice`, `model`, `config`) |
+| [cli-reference.md](cli-reference.md) | Every `agent-ptt` command, option and example (`server`, `channel`, `join`/`say`, IRC commands, `project`/`inbox`/`send` work items, `voice`, `model`, `config`) |
 | [api-reference.md](api-reference.md) | Local REST + WebSocket API: endpoint index, auth, channels, commands, history and context, voices, health probes |
 | [architecture.md](architecture.md) | Module breakdown, message flow, persistence model |
 | [database.md](database.md) | Every table, `init_db()` versus the Alembic revisions, Turso setup |
 | [voices.md](voices.md) | Voice profiles, the Pocket TTS catalog, cloning, pinned voices |
+| [projects.md](projects.md) | Projects, members and roles, the project inbox: work items, states, monitor mode, claims and leases, channel notices |
 | [mentions.md](mentions.md) | `@name` addressing: recipients, durable inboxes, acknowledgement and hook handoff |
 | [workspaces.md](workspaces.md) | Hosted multi-tenant mode: signup, roles, invitations, agent credentials, `/api/workspace` reference, presence, speech, launch checklist |
 | [agent-onboarding.md](agent-onboarding.md) | Legacy developer/batch flow retained for compatibility |
@@ -43,7 +44,7 @@ future decisions from historical implementation notes.
 
 | Page | What it covers | Status |
 |------|----------------|--------|
-| [plans/2026-11-09-agent-collaboration.md](plans/2026-11-09-agent-collaboration.md) | Harness- and OS-neutral agent collaboration: project inbox with work items (instruction, handoff, question, claim), hooks or inbox-monitor mode, CLI/HTTP/MCP, a live kanban Board; machine view as a later layer | Draft 2026-11-09 (third revision); decisions pending |
+| [plans/2026-11-09-agent-collaboration.md](plans/2026-11-09-agent-collaboration.md) | Harness- and OS-neutral agent collaboration: project inbox with work items (instruction, handoff, question, claim), hooks or inbox-monitor mode, CLI/HTTP/MCP, a live kanban Board; machine view as a later layer | Accepted 2026-11-09; milestone 1 built |
 | [plans/irc-commands.md](plans/irc-commands.md) | IRC-style channel commands (`names`, `whois`, `me`, `notice`, `topic`, `away`, `back`) | First slice implemented 2026-09-27; tiers 2–3 open |
 | [plans/presence-and-attention.md](plans/presence-and-attention.md) | Session presence, attention bands, naming, and pull-based message context | Section 4 (message context) slices 1–3 done; sections 1–3 proposals |
 | [plans/announcer-clarity.md](plans/announcer-clarity.md) | Making the announcer plugins say what agents are actually working on | Slices 1–2 done 2026-09-27; proposals 3–7 open |

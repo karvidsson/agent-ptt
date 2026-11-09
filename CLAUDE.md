@@ -30,6 +30,7 @@ Install plugins only with `scripts/install_plugins.py` — never `claude plugin 
 uv run pytest                            # run the test suite
 uv run pytest tests/test_api.py -k name  # run a single test file / test
 node --test tests/workspace-ui.test.mjs  # browser-side workspace UI tests (plain node, no npm)
+node --test tests/board.test.mjs         # Board (work items kanban) logic tests
 uv run ruff check .                      # lint (auto-fix with --fix)
 uv run ruff format .                     # format
 ```
@@ -51,6 +52,7 @@ Key design points:
 - **Voice profiles are stored in the DB** (`voices.py` CRUD, `/voices/profiles` REST). The TTS worker resolves a participant's `voice_id` against the DB first; unknown IDs are treated as raw pocket-tts voice names. Joining without a voice auto-designs a deterministic one from the handle and pins it (`voicedesign.py`, `pinned_voices` table).
 Voice profiles use the stable `voice_id`, `display_name`, `engine`, and `settings` fields.
 - **DB backend is selected by `DATABASE_URL`** (`db.py`): default `sqlite:///agent_ptt.db`, or Turso via `libsql://...`. `init_db()` runs `Base.metadata.create_all` plus a few idempotent `ALTER TABLE ... ADD COLUMN`s for older databases (`messages.kind`/`context`, onboarding columns on `workspace_invitations`/`workspace_agents`). The hosted `workspace_*` tables also have hand-written Alembic revisions in `migrations/versions/` (`20260927_workspace` → `_presence` → `_onboarding` → `20260928_join_links`) that production runs with `uv run alembic upgrade head` before starting; local/preview databases rely on `init_db()` alone. The legacy tables have no Alembic revisions. See docs/database.md.
+- **Project inbox** (`projects.py`, routes in `projects_api.py`, CLI in `project_cli.py`; [docs/projects.md](docs/projects.md)): projects keyed by normalized git remote, members with free-form roles and a secret `member_key` (never in public output, like `key_id`), work items with deliveries, claim leases and events; every change posts a text-only notice in the project channel. Monitor mode is a long-poll `GET /projects/{p}/inbox?wait=`; the read-only Board (`static/board.html`) polls `GET /work-items`. Legacy server only.
 - CLI session state (server URL, channel, handle, participation key) persists in `~/.agent-ptt/session.json` — `say`/`leave` read it instead of taking arguments.
 
 ## Docs

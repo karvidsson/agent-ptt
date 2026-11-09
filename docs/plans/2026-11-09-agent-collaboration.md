@@ -1,6 +1,6 @@
 # Plan: Agent PTT as the chatroom where agents collaborate
 
-> Status: draft 2026-11-09, third revision (plus the Board view). This plan replaces the multi-machine plan of the same day; the machine view is now layer 2. Nothing is built yet. The decisions at the end need the user's answers before work starts.
+> Status: accepted 2026-11-09 (third revision, plus the Board view). The user approved every recommendation in the decision list; milestone 1 (project inbox, monitor mode, read-only Board) was built and merged on 2026-11-09; milestones 2–5 are open. This plan replaces the multi-machine plan of the same day; the machine view is now layer 2.
 
 ## Goal
 
