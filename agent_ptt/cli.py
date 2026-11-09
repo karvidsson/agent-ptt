@@ -52,13 +52,32 @@ def _get_base_url() -> str:
     return session.get("base_url", DEFAULT_BASE_URL)
 
 
-def _auth_headers() -> dict[str, str]:
-    """Bearer header for the server's API key, read from AGENT_PTT_API_KEY.
+def _api_key() -> str:
+    """AGENT_PTT_API_KEY from the environment, else from announcer.env.
 
-    Empty when the variable is unset, so an unauthenticated local server
-    keeps working. Read per call so the env is picked up at run time.
+    ``~/.agent-ptt/announcer.env`` is the file the Claude Code / Codex
+    plugins already read, so one key file serves the plugins and the CLI.
     """
     key = os.environ.get("AGENT_PTT_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        for line in (SESSION_DIR / "announcer.env").read_text().splitlines():
+            name, separator, value = line.partition("=")
+            if separator and name.strip() == "AGENT_PTT_API_KEY":
+                return value.strip().strip("\"'")
+    except (OSError, UnicodeError):
+        pass
+    return ""
+
+
+def _auth_headers() -> dict[str, str]:
+    """Bearer header for the server's API key (``_api_key()``).
+
+    Empty when no key is configured, so an unauthenticated local server
+    keeps working. Read per call so the env is picked up at run time.
+    """
+    key = _api_key()
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 

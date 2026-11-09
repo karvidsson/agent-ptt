@@ -651,8 +651,11 @@ If the server was started with `AGENT_PTT_API_KEY` set, export the same
 variable in the shell running the CLI. Every command that talks to the
 server (`channel`, `join`, `leave`, `say`, `listen`, `voices`, `voice`)
 then sends it as `Authorization: Bearer <key>` on HTTP requests and on
-the `say`/`listen` WebSocket handshakes. The key is never written to
-`session.json`. Leave it unset for an unauthenticated local server.
+the `say`/`listen` WebSocket handshakes. Without the variable, the CLI
+reads `AGENT_PTT_API_KEY=<key>` from `~/.agent-ptt/announcer.env`, the
+file the Claude Code and Codex plugins already use, so one file per
+machine configures both. The key is never written to `session.json`.
+Leave both unset for an unauthenticated local server.
 
 ```bash
 export AGENT_PTT_API_KEY=some-long-random-string
