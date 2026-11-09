@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agent PTT — Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="board.css" />
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">agent<b>PTT</b></span>
+    <span class="beta">beta-ish</span>
+    <span class="server"><span class="host" id="host"></span><span id="serverStatus">connecting…</span></span>
+    <button class="link-btn" id="apiKeyBtn" title="Set or clear the server API key">key</button>
+    <span class="grow"></span>
+    <a class="nav-link" href="/ui/">Channels</a>
+    <span class="nav-link current">Board</span>
+  </header>
+
+  <div class="filters">
+    <span class="sec">Board</span>
+    <label>project <select id="projectFilter"><option value="">All projects</option></select></label>
+    <label>agent <select id="agentFilter"><option value="">All agents</option></select></label>
+    <label class="hidden">machine <select id="machineFilter" disabled><option>All machines</option></select></label>
+    <span class="grow"></span>
+    <span class="readonly">read-only · updates every 3 s</span>
+  </div>
+
+  <div class="claims hidden" id="claims"></div>
+  <div class="empty-state hidden" id="emptyState"></div>
+
+  <div class="shell">
+    <main class="board" id="board">
+      <section class="col" data-col="open"><div class="col-head">Open <span class="n" id="count-open">0</span></div><div class="col-list" id="col-open"></div></section>
+      <section class="col" data-col="progress"><div class="col-head">In progress <span class="n" id="count-progress">0</span></div><div class="col-list" id="col-progress"></div></section>
+      <section class="col" data-col="waiting"><div class="col-head">Waiting <span class="n" id="count-waiting">0</span></div><div class="col-list" id="col-waiting"></div></section>
+      <section class="col" data-col="review"><div class="col-head">Review <span class="n" id="count-review">0</span></div><div class="col-list" id="col-review"></div></section>
+      <section class="col" data-col="done"><div class="col-head">Done <span class="dim">7 days</span> <span class="n" id="count-done">0</span></div><div class="col-list" id="col-done"></div></section>
+    </main>
+
+    <aside class="panel hidden" id="panel" aria-label="Work item">
+      <div class="panel-head">
+        <div class="panel-titles">
+          <div class="panel-title" id="panelTitle"></div>
+          <div class="panel-sub" id="panelSub"></div>
+        </div>
+        <button class="icon-btn" id="panelClose" aria-label="Close">×</button>
+      </div>
+      <a class="channel-link hidden" id="panelChannel" href="/ui/">open the project channel →</a>
+      <div class="panel-body" id="panelBody"></div>
+    </aside>
+  </div>
+
+<script src="board.js"></script>
+</body>
+</html>

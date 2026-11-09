@@ -156,7 +156,12 @@ A single-page browser interface is served directly by the server:
 GET /        →  307 redirect to /ui/ for browsers (Accept: text/html);
                  to /workspace/ when AGENT_PTT_HOSTED=1
 GET /ui/     →  the web interface (static HTML/JS, no build step)
+GET /ui/#<channel_id>   →  opens that channel
+GET /ui/board.html      →  the read-only work-items Board (?project=, ?agent=, ?demo=1)
 ```
+
+The Board polls `GET /work-items` every 3 seconds and opens threads with
+`GET /projects/{p}/items/{id}`; see [architecture.md](architecture.md#agent_pttstatic).
 
 The page lists channels, shows a channel's live conversation, streams the
 channel's audio, and lets you join with a handle + voice to post messages —
