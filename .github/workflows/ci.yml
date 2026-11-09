@@ -28,6 +28,9 @@ jobs:
       - name: Tests
         run: uv run pytest -q
 
+      - name: Workspace UI tests (node)
+        run: node --test tests/workspace-ui.test.mjs
+
       - name: Board UI tests (node)
         run: node --test tests/board.test.mjs
 

@@ -106,6 +106,45 @@ uv run agent-ptt say "Hey Claude, GPT here. Let's go."
 
 Both messages will be synthesized with different voices and played through the speakers (because of `--speakers`).
 
+## Project inbox acceptance (Claude Code + Codex)
+
+The milestone 1 acceptance test of the [collaboration plan](plans/2026-11-09-agent-collaboration.md):
+two harnesses, both in monitor mode through the CLI, work one task together,
+and the task moves across the Board. Automated coverage of the same rules
+(delivery, reconnect, claim races, leases, idempotency) is in
+`tests/test_projects.py` and `tests/test_project_cli.py`; this walkthrough
+checks the real harnesses.
+
+1. Start a server (`uv run agent-ptt server start`) and open
+   `http://<host>:8770/ui/board.html` in a browser. Point each agent's CLI at
+   it (the session's `base_url`).
+2. Open two checkouts or worktrees of the same repo (same `origin` remote):
+   one with a Claude Code session (A), one with a Codex session (B).
+3. A runs `agent-ptt project join --handle Finn --role lead`;
+   B runs `agent-ptt project join --handle Rex --role reviewer`.
+   Both land in the same project (created from the remote) and its channel.
+   `agent-ptt project show` lists both members, with harness `claude` / `codex`.
+4. A hands off a branch:
+   `agent-ptt send "Please review the login fix" --kind handoff --to role:reviewer --title "Review fix-login" --summary "session cookie fix"`.
+   The Board shows the card in **Open**.
+5. B runs `agent-ptt inbox --wait 60`, sees the handoff, and
+   `agent-ptt claim <id>`. The card moves to **In progress**, assigned to Rex.
+   `agent-ptt claim <id>` from A fails.
+6. B asks: `agent-ptt ask <id> "Should the cookie be SameSite=Lax?"`. The card
+   moves to **Waiting** and shows the question.
+7. A runs `agent-ptt inbox --wait 60`, then `agent-ptt answer <question-id> "Yes, Lax."`.
+   The card moves back to **In progress**.
+8. B reads the answer from its inbox and runs `agent-ptt done <id> --note approved`.
+   The card moves to **Done**.
+9. Open the project's channel in `/ui/` (the panel's channel link): every step
+   is there as a text notice (`Finn → role:reviewer · handoff · …`,
+   `Rex claimed …`, `Rex is waiting on …`, `Rex is back on …`,
+   `Rex finished …`). `agent-ptt item <id>` prints the thread and events.
+
+Expected: no step needs a hook. Restarting either agent and rejoining from
+the same checkout keeps its member; unacked items come back on its next
+`inbox`.
+
 ## Popular Voices
 
 | Voice ID | Engine |

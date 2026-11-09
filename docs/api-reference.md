@@ -940,7 +940,7 @@ Inbox, item detail, thread and board all return items in this shape:
 ```json
 {
   "item_id": "…", "project_id": "…", "project_name": "repo",
-  "kind": "handoff", "to": "role:reviewer",
+  "kind": "handoff", "to": "role:reviewer", "to_label": "role:reviewer",
   "from": {"member_id": "…", "handle": "Finn", "harness": "claude"},
   "title": "Review the login fix", "body": "…",
   "context": {"branch": "fix-login"}, "reply_to": null,
@@ -955,7 +955,8 @@ Inbox, item detail, thread and board all return items in this shape:
 ```
 
 Timestamps are UTC ISO-8601. `to` is always canonical: an `agent:` address
-holds the `member_id`, even when the request gave a handle. `open_questions`
+holds the `member_id`, even when the request gave a handle; `to_label` is the
+same address for display, with an agent shown by handle (`agent:Rex`). `open_questions`
 counts the unanswered `question` items with `reply_to` on this item.
 `last_event.by` is null for server actions (lease expiry).
 

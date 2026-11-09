@@ -460,7 +460,7 @@
     head.append(el("span", "kind", it.kind));
     head.append(el("span", "handle", it.from ? it.from.handle : "?"));
     if (it.from && it.from.harness) head.append(el("span", "harness", it.from.harness));
-    head.append(el("span", "to", "→ " + (it.to || "")));
+    head.append(el("span", "to", "→ " + (it.to_label || it.to || "")));
     head.append(el("span", "grow"));
     head.append(el("span", "state s-" + it.state, it.state));
     head.append(el("span", "age", ago(it.created_at, now)));

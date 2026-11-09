@@ -477,6 +477,7 @@ def test_agent_addressed_items(client):
     ada = join(client, "Ada")
     by_handle = send(client, finn, kind="instruction", to="agent:rex", body="Just you")
     assert by_handle["to"] == f"agent:{rex['member']['member_id']}"
+    assert by_handle["to_label"] == "agent:Rex"
     assert by_handle["item_id"] not in ids(inbox(client, ada))
     act(client, ada, by_handle["item_id"], "claim", expect=403)
     act(client, ada, by_handle["item_id"], "ack", expect=403)

@@ -500,6 +500,8 @@ class WorkItemOut(BaseModel):
     project_name: str
     kind: WorkItemKind
     to: str
+    # `to` with an agent address shown by handle (`agent:Finn`), for display.
+    to_label: str = ""
     from_: MemberRef | None = Field(alias="from", serialization_alias="from")
     title: str
     body: str

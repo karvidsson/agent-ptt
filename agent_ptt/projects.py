@@ -1061,6 +1061,11 @@ def serialize_items(db: Session, items: list[WorkItemDB]) -> list[dict[str, Any]
             *(i.from_member_id for i in items),
             *(i.assignee_member_id for i in items),
             *(e.by_member_id for e in last_events.values()),
+            *(
+                i.to_address.removeprefix("agent:")
+                for i in items
+                if i.to_address.startswith("agent:")
+            ),
         ],
     )
     out: list[dict[str, Any]] = []
@@ -1068,12 +1073,17 @@ def serialize_items(db: Session, items: list[WorkItemDB]) -> list[dict[str, Any]
         project = projects.get(item.project_id)
         event = last_events.get(item.item_id)
         to = item.to_address
+        to_label = to
+        if to.startswith("agent:"):
+            target = members.get(to.removeprefix("agent:"))
+            to_label = f"agent:{target.handle}" if target else to
         public = WorkItemOut(
             item_id=item.item_id,
             project_id=item.project_id,
             project_name=project.name if project else "",
             kind=item.kind,
             to=to,
+            to_label=to_label,
             from_=_member_ref(members.get(item.from_member_id)),
             title=item.title,
             body=item.body,

@@ -232,7 +232,7 @@ def _item_line(item: dict) -> str:
     parts = [
         _short(item.get("item_id")),
         item.get("kind", "?"),
-        f"{_handle(item.get('from'))} → {item.get('to', '?')}",
+        f"{_handle(item.get('from'))} → {item.get('to_label') or item.get('to', '?')}",
         f"[{item.get('state', '?')}]",
         item.get("title") or "",
     ]
