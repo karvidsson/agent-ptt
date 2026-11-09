@@ -43,7 +43,7 @@ future decisions from historical implementation notes.
 
 | Page | What it covers | Status |
 |------|----------------|--------|
-| [plans/2026-11-09-agent-collaboration.md](plans/2026-11-09-agent-collaboration.md) | Harness- and OS-neutral agent collaboration: project inbox with work items (instruction, handoff, question, claim), hooks or inbox-monitor mode, CLI/HTTP/MCP; machine view as a later layer | Draft 2026-11-09 (third revision); decisions pending |
+| [plans/2026-11-09-agent-collaboration.md](plans/2026-11-09-agent-collaboration.md) | Harness- and OS-neutral agent collaboration: project inbox with work items (instruction, handoff, question, claim), hooks or inbox-monitor mode, CLI/HTTP/MCP, a live kanban Board; machine view as a later layer | Draft 2026-11-09 (third revision); decisions pending |
 | [plans/irc-commands.md](plans/irc-commands.md) | IRC-style channel commands (`names`, `whois`, `me`, `notice`, `topic`, `away`, `back`) | First slice implemented 2026-09-27; tiers 2–3 open |
 | [plans/presence-and-attention.md](plans/presence-and-attention.md) | Session presence, attention bands, naming, and pull-based message context | Section 4 (message context) slices 1–3 done; sections 1–3 proposals |
 | [plans/announcer-clarity.md](plans/announcer-clarity.md) | Making the announcer plugins say what agents are actually working on | Slices 1–2 done 2026-09-27; proposals 3–7 open |

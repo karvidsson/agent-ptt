@@ -1,6 +1,6 @@
 # Plan: Agent PTT as the chatroom where agents collaborate
 
-> Status: draft 2026-11-09, third revision. This plan replaces the multi-machine plan of the same day; the machine view is now layer 2. Nothing is built yet. The decisions at the end need the user's answers before work starts.
+> Status: draft 2026-11-09, third revision (plus the Board view). This plan replaces the multi-machine plan of the same day; the machine view is now layer 2. Nothing is built yet. The decisions at the end need the user's answers before work starts.
 
 ## Goal
 
@@ -28,6 +28,7 @@ and any number of machines.
 | `kind` | `instruction`, `handoff`, `question`, `answer`, `claim`, `release`, `note` |
 | `to` | `agent:<member>`, `role:<role>` or `project` |
 | `from` | the authenticated member; it can't be chosen by the client |
+| `title` | a short line for lists and board cards (defaults to the first line of `body`) |
 | `body` | the text |
 | `context` | for handoffs: `{repo, branch, commit, files[], summary, links[]}`; free-form keys are allowed |
 | `reply_to` | the item being answered or continued (answer → question, follow-up → handoff) |
@@ -35,8 +36,13 @@ and any number of machines.
 | `state` | see below |
 
 **States.** `pending` → `delivered` (handed to a session) → `acked` (the
-recipient has read it) → `claimed` → `done` or `declined`. A `release` puts a
-claimed item back to `pending`. Rules by kind and address:
+recipient has read it) → `claimed` → `done` or `declined`. Two optional states
+sit between `claimed` and `done`, and the claimant sets them: `waiting` (it has
+asked a question or needs an approval; an unanswered `question` with `reply_to`
+on the item sets this automatically) and `review` (it has handed the work to a
+reviewer). A `release` puts a claimed item back to `pending`. Every change
+stores who made it and when, which gives the board its "last update". Rules by
+kind and address:
 - **To an agent:** one recipient; there is no claim step.
 - **To a role or the project:** visible to every matching member. Work kinds
   (`instruction`, `handoff`, `question`) are **claimable**: the first atomic
@@ -80,6 +86,36 @@ Shared guarantees: items are durable once the send returns. Retries with the
 same `client_id` never duplicate. Ack, claim and done are idempotent and check
 the caller. A claim lease that runs out returns the item to `pending` and says
 so in the channel.
+
+## UI: channels and the Board
+
+The channel view stays as it is, with the work-item notices in it. A project
+inbox panel comes in milestone 2. The **Board** is a new kanban view of every
+work item that is being worked on:
+
+| Column | Work-item states |
+|---|---|
+| **Open** | `pending`, `delivered`, `acked` (not yet claimed) |
+| **In progress** | `claimed` |
+| **Waiting** | `waiting`: an open question or approval; the card shows the question |
+| **Review** | `review` |
+| **Done** | `done` and `declined`, from the last 7 days; older items are hidden |
+
+- **A card** shows the title, the project, the assignee (member name, harness
+  such as claude or codex, and the machine once layer 2 provides it, otherwise
+  blank), the item's age, and its last update (who did what, and when). Clicking
+  it opens the item's thread, meaning the item with its `reply_to` chain, with a
+  link to the channel at that point.
+- **Filters:** project, machine and agent. **All projects** is the default
+  mode; picking one project narrows the board. The filters are kept in the URL,
+  so a board can be bookmarked or opened on the phone.
+- **Live:** the board subscribes to the same item-change stream the inbox
+  uses. A card moves when an agent claims, asks, hands off or finishes.
+- **Read-only at first.** Whether humans may drag cards (claim for someone,
+  send back to Open, mark done) is decision 8. Until then, people act through
+  the inbox panel and the channel.
+- When the orch adapter exists (layer 2), orch tasks can appear on the board
+  as cards with an `orch` badge, mapped to the same columns.
 
 ## Integrations
 
@@ -138,8 +174,14 @@ sessions, and `orch send`.
    branch to `role:reviewer`; B claims it, asks a question, A answers, and B
    marks it done. The whole exchange is visible in the channel. This goes in
    docs/testing.md as a manual walkthrough.
+   **A read-only Board** comes with milestone 1, because the items exist from
+   then on. It has the five columns, all-projects mode and filters by project
+   and agent. Live updates use a simple poll of `GET /work-items?updated_after=…`
+   until the stream lands in milestone 2. The acceptance task must move across
+   it: Open → In progress → Waiting → In progress → Done.
 2. **Hooks mode and humans.** `receive.py` also delivers project inbox items,
-   and join records the mode. The inbox WebSocket stream. A project inbox panel
+   and join records the mode. The inbox WebSocket stream, which also drives
+   the Board live. A project inbox panel
    in the web UI, where people send instructions, answer questions and see
    claims.
 3. **MCP server and Windows.** `agent-ptt mcp`, the portable
@@ -174,3 +216,10 @@ sessions, and `orch send`.
    tests? *Recommendation:* milestone 1 with Claude Code and Codex on Linux;
    milestone 3 with one more (Copilot CLI or Gemini CLI) plus a Windows machine
    if there is one.
+8. **Moving cards on the Board by hand.** Should humans be able to drag cards
+   (claim or assign to someone, send back to Open, mark done or declined), or
+   should the board stay a read-only view of what agents report?
+   *Recommendation:* read-only in milestone 1. From milestone 2, humans may
+   send a card back to Open or mark it done, with each move recorded as an item
+   update and posted to the channel. Assigning a card to an agent equals
+   sending it an `instruction`.
