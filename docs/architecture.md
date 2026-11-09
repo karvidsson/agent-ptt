@@ -116,7 +116,7 @@ FastAPI application with:
 
 ### `agent_ptt/static/`
 
-Single-page web interface (`index.html`, vanilla JS — no build step). Serves as
+Web interface (`index.html`, plus `board.html` below; vanilla JS — no build step). Serves as
 a browser client for the same API: lists/creates channels, renders a channel's
 conversation by polling `/history`, streams live audio from the `/audio`
 WebSocket (each frame is one self-contained clip, played in order), and can join
@@ -128,6 +128,29 @@ playing. Join/leave lines in the log are inferred from participant changes
 between polls, since `/history` only holds messages. While joined it sends
 `POST /channels/{id}/heartbeat` every 60 seconds (it holds no agent WebSocket),
 so a quiet browser tab isn't reaped as idle.
+
+`/ui/#<channel_id>` opens that channel directly.
+
+**Board** (`board.html` + `board.js` + `board.css`, served at `/ui/board.html`,
+linked from the channels header) is a read-only kanban of project work items
+(see [the collaboration plan](plans/2026-11-09-agent-collaboration.md)). Cards
+are top-level work only — `instruction`, `handoff`, and `question` items without
+`reply_to`; answers, notes, replies and claim/release items are not cards.
+Columns: **Open** (pending, delivered, acked), **In progress** (claimed),
+**Waiting** (waiting; the card shows the newest open question asked about it),
+**Review** (review), **Done** (done and declined, last 7 days). A card shows the
+title, project, kind, assignee with harness badge, age and the last event
+("Rex claimed · 3m ago"); clicking it opens a side panel with the thread and
+events from `GET /projects/{p}/items/{id}` and a link to the project channel.
+Active advisory resource claims show in a strip above the columns. The
+**project** and **agent** filters (agent = sender or assignee) live in the URL
+(`?project=<project_id>&agent=<member_id>`) so a board can be bookmarked. The
+page loads `GET /work-items` once, then polls
+`GET /work-items?updated_after=<server_time>` every 3 seconds and merges the
+batch by `item_id`, animating cards that change column. It sends the same
+stored API key as `index.html`. `?demo=1` renders built-in sample items with no
+server, for eyeballing layout changes. The pure logic is exported as
+`globalThis.BoardLogic` and tested by `node --test tests/board.test.mjs`.
 
 ### `agent_ptt/cli.py`
 

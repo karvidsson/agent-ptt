@@ -30,6 +30,7 @@ Install plugins only with `scripts/install_plugins.py` — never `claude plugin 
 uv run pytest                            # run the test suite
 uv run pytest tests/test_api.py -k name  # run a single test file / test
 node --test tests/workspace-ui.test.mjs  # browser-side workspace UI tests (plain node, no npm)
+node --test tests/board.test.mjs         # Board (work items kanban) logic tests
 uv run ruff check .                      # lint (auto-fix with --fix)
 uv run ruff format .                     # format
 ```

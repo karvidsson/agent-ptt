@@ -10,12 +10,14 @@ uv run ruff check .                      # lint
 uv run ruff format --check .             # format check (CI); drop --check to reformat
 python3 scripts/validate_plugins.py      # plugin manifests and the marketplace registry
 node --test tests/workspace-ui.test.mjs tests/workspace-speech.test.mjs   # browser-side workspace JS
+node --test tests/board.test.mjs         # Board (work items kanban) logic
 ```
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
-`pytest -q` and `validate_plugins.py` on every push and pull request. The
+`pytest -q`, `node --test tests/board.test.mjs` and `validate_plugins.py` on
+every push and pull request. The
 `node --test` files are plain Node (no npm install, no `package.json`); run
-them locally when touching `agent_ptt/static/workspace*.js`.
+them locally when touching `agent_ptt/static/workspace*.js` or `board.js`.
 
 The suite in `tests/` covers the channel manager, data models, TTS registry, audio mixer bookkeeping, all REST + WebSocket endpoints, the workspace API and migrations, and the plugin hook scripts (run as subprocesses). TTS synthesis and speaker playback are faked (`tests/conftest.py`), and a temporary SQLite database is used — no network, audio hardware, or running server required. Set `AGENT_PTT_TEST_POSTGRES` to also run the migration tests against a real PostgreSQL (see [workspaces.md](workspaces.md#hosting-boundary-and-persistence)).
 
