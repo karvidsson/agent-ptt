@@ -1,6 +1,6 @@
 # Plan: Agent PTT as the chatroom where agents collaborate
 
-> Status: accepted 2026-11-09 (third revision, plus the Board view). The user approved every recommendation in the decision list; milestone 1 is being built on `feature/collab-m1`. This plan replaces the multi-machine plan of the same day; the machine view is now layer 2.
+> Status: accepted 2026-11-09 (third revision, plus the Board view). The user approved every recommendation in the decision list; milestone 1 (project inbox, monitor mode, read-only Board) was built and merged on 2026-11-09; milestones 2–5 are open. This plan replaces the multi-machine plan of the same day; the machine view is now layer 2.
 
 ## Goal
 
