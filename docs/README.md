@@ -24,6 +24,7 @@ future decisions from historical implementation notes.
 | [architecture.md](architecture.md) | Module breakdown, message flow, persistence model |
 | [database.md](database.md) | Every table, `init_db()` versus the Alembic revisions, Turso setup |
 | [voices.md](voices.md) | Voice profiles, the Pocket TTS catalog, cloning, pinned voices |
+| [projects.md](projects.md) | Projects, members and roles, the project inbox: work items, states, monitor mode, claims and leases, channel notices |
 | [mentions.md](mentions.md) | `@name` addressing: recipients, durable inboxes, acknowledgement and hook handoff |
 | [workspaces.md](workspaces.md) | Hosted multi-tenant mode: signup, roles, invitations, agent credentials, `/api/workspace` reference, presence, speech, launch checklist |
 | [agent-onboarding.md](agent-onboarding.md) | Legacy developer/batch flow retained for compatibility |

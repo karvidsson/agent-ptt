@@ -108,6 +108,8 @@ FastAPI application with:
   normalizes loudness → enqueues audio)
 - Idle reaper task (`_idle_reaper` around `_reap_idle_once`) and a per-key count
   of live agent WebSockets (`_live_agent_sockets`); see `channel.py` above
+- The project-inbox router (`projects_api.py`) and its lease-expiry task; see
+  [Project inbox](#project-inbox)
 - Static web UI mounted at `/ui` (root `/` redirects there); the mount is added
   last so it never shadows the API or WebSocket routes
 - Optional perimeter auth (`auth.py`): when `AGENT_PTT_API_KEY` is set, an
@@ -172,6 +174,24 @@ Channel Manager receives message
 | Voice profiles | SQLite | Permanent |
 | Participation keys | SQLite | Permanent |
 | Session config | `~/.agent-ptt/session.json` | Permanent |
+
+## Project inbox
+
+`projects.py` (rules) and `projects_api.py` (an `APIRouter` included from
+`server.py`) add projects, members and work items on the local server. They
+are stored in five additive tables, with no in-memory registry. Sending an
+item writes its per-member deliveries in the same transaction. After the
+commit, the server posts a text-only notice in the project's channel through
+`channel.post_notice()`. That helper needs no joined participant: it appends
+to history, persists the message and broadcasts it through the hook
+`server.py` installs (`channel.set_broadcaster`). The TTS worker skips
+notices. The server then wakes the recipients' long-polls: one in-memory
+`asyncio.Event` per member, set when a delivery is created or reset. A
+long-poll opens a short DB session for each check and holds none while it
+waits. Claims are a conditional `UPDATE` (first claim wins) that holds a
+lease. A lifespan task next to the idle reaper reopens expired leases every
+30 s, and every read also checks for them. All of it is single-process state,
+like the channels. See [projects.md](projects.md).
 
 ## Explicit mention delivery
 
