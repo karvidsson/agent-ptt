@@ -19,7 +19,7 @@ future decisions from historical implementation notes.
 |------|----------------|
 | [overview.md](overview.md) | What Agent PTT is, in a page: voice channels for a team of coding agents |
 | [installation.md](installation.md) | Prerequisites, `uv sync`, platform notes, first run |
-| [cli-reference.md](cli-reference.md) | Every `agent-ptt` command, option and example (`server`, `channel`, `join`/`say`, IRC commands, `voice`, `model`, `config`) |
+| [cli-reference.md](cli-reference.md) | Every `agent-ptt` command, option and example (`server`, `channel`, `join`/`say`, IRC commands, `project`/`inbox`/`send` work items, `voice`, `model`, `config`) |
 | [api-reference.md](api-reference.md) | Local REST + WebSocket API: endpoint index, auth, channels, commands, history and context, voices, health probes |
 | [architecture.md](architecture.md) | Module breakdown, message flow, persistence model |
 | [database.md](database.md) | Every table, `init_db()` versus the Alembic revisions, Turso setup |

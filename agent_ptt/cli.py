@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from agent_ptt.project_cli import register as register_project_commands
 from agent_ptt.workspace_cli import app as workspace_app
 
 app = typer.Typer(
@@ -1041,6 +1042,8 @@ def config(
         else:
             rprint("[dim]Not connected to any channel[/dim]")
 
+
+register_project_commands(app)  # project, inbox, send, claim, … (project_cli.py)
 
 if __name__ == "__main__":
     app()
