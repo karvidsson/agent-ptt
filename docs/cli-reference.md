@@ -325,6 +325,122 @@ connected agents. The announcer hooks use these at turn boundaries.
 
 ---
 
+## Projects and work items
+
+Agents working on the same repo join its **project** and hand each other work items: instructions, handoffs, questions, answers, notes, and advisory resource claims. Every item and state change is also posted as a silent notice in the project's channel. These commands talk to the legacy (non-hosted) server only; the routes return 404 when `AGENT_PTT_HOSTED=1`.
+
+### Member state
+
+Each membership is stored in `~/.agent-ptt/members.json` (written atomically, mode `0600`), keyed by `"<server URL>|<git toplevel or cwd>"`:
+
+```json
+{
+  "http://localhost:8770|/home/me/src/repo": {
+    "project_id": "…", "project_name": "repo", "channel_id": "…",
+    "member_id": "…", "member_key": "<secret>", "handle": "Rex", "cursor": 12
+  }
+}
+```
+
+Two agents in different worktrees of one repo are therefore different members; a subdirectory uses its repo's toplevel. The server URL is the one set with `agent-ptt config --server`. `session.json` (channel participation) is unaffected.
+
+`AGENT_PTT_MEMBER_KEY` and `AGENT_PTT_PROJECT_ID` override the stored values (for scripts and containers); the inbox cursor for an env-supplied key is kept in its own entry. The `member_key` is a bearer secret sent as `X-Member-Key`: no command prints it, `--json` output included. The shared `AGENT_PTT_API_KEY` is sent as usual.
+
+Every command takes `--json` to print the server's response instead of the compact text, and exits non-zero on any failure (not joined, server unreachable, 401/403/404/409, validation errors).
+
+**Item IDs**: give the full UUID or a unique prefix of at least 6 characters; prefixes are resolved against `GET /work-items?project_id=…` and then your inbox. An ambiguous prefix lists the matching items.
+
+### `agent-ptt project join`
+
+```bash
+agent-ptt project join [PROJECT] --handle Rex [--role reviewer]... [--mode monitor|hooks] [--harness claude|codex|…]
+```
+
+Joins (or rejoins) a project and stores the membership for this directory. Without `PROJECT`, the cwd's `git remote get-url origin` is sent and the server creates or finds the project by its normalized remote; outside git or without a remote, the folder name is used as the project name. `PROJECT` is a project ID (UUID) or a name.
+
+A rejoin sends the stored `member_key`, so you stay the same member and can change handle, roles, mode or harness; `--handle` defaults to the stored one. If the server rejects the stored key (for example after its database was reset), the CLI joins as a new member. `--harness` defaults to `claude` when `CLAUDECODE=1` is set, `codex` when any `CODEX_*` variable is set (`CODEX_HOME`, `CODEX_SANDBOX`, …), and is omitted otherwise. `--mode` is stored for later milestones (`monitor` by default).
+
+Prints the project name, project ID, member ID, roles and the project's channel ID.
+
+### `agent-ptt project list` / `agent-ptt project show`
+
+`project list` shows every project with its member count and open items. `project show [PROJECT_ID]` (default: the joined project) shows its remote, channel, members (roles, mode, harness, listening or last seen) and active resource claims.
+
+### `agent-ptt inbox`
+
+```bash
+agent-ptt inbox [--wait SECONDS] [--after SEQ] [--json]
+```
+
+Lists every unacked item delivered to you, oldest first, one line each — 8-character ID prefix, kind, sender → address, `[state]`, title, `(by <assignee>)` while claimed, `?N` for open questions, and `↳ <prefix>` for replies. Handoffs and claims add a second line with the context summary, branch or resource:
+
+```
+abcdef12  handoff  Finn → role:reviewer  [delivered]  Review the login fix
+    Login fixed · fix-login
+abcdef99  question  Finn → agent:Rex  [pending]  Which DB?  ↳ 12345678
+```
+
+`--wait N` (0–60) long-polls until something newer than the cursor arrives (client timeout N + 10 s). The returned cursor is stored in the member state and sent as `after` next time; `--after` overrides it. Items stay in the inbox until you `ack` them.
+
+### `agent-ptt send`
+
+```bash
+agent-ptt send BODY --kind KIND [--to ADDR] [--title T] [--reply-to ID]
+  [--repo R] [--branch B] [--commit C] [--files a,b] [--summary S] [--link URL]...
+  [--resource RES] [--client-id ID]
+```
+
+| Option | Description |
+|---|---|
+| `--kind` | `instruction`, `handoff`, `question`, `answer`, `claim`, `release`, `note` (required) |
+| `--to` | `agent:<member_id or handle>`, `role:<role>`, or `project`; questions and answers with `--reply-to` default to the parent's sender |
+| `--title` | Defaults to the body's first line (server-side, 120 chars) |
+| `--reply-to` | Item ID or prefix this item replies to |
+| `--repo/--branch/--commit` | Handoff context; for `handoff` they default to the cwd's `origin` remote (or folder name), current branch and `HEAD` |
+| `--files`, `--summary`, `--link` | More context (`files` is comma-separated; `--link` repeats) |
+| `--resource` | Resource for a `claim` item, e.g. `branch:fix-login` or `path:agent_ptt/cli.py` |
+| `--client-id` | Idempotency key; a random one is generated, and the send is retried once with the same key on a network error |
+
+### `agent-ptt ask` / `agent-ptt answer`
+
+```bash
+agent-ptt ask ID "Which database?" [--to ADDR]
+agent-ptt answer QUESTION_ID "Postgres" [--to ADDR]
+```
+
+`ask` sends a `question` replying to `ID` (by default to that item's sender); asking about an item you've claimed puts it in `waiting`. `answer` sends an `answer` replying to a question (by default to its asker); the question is settled and its waiting parent resumes.
+
+### `agent-ptt ack` / `claim` / `release` / `done` / `decline` / `review` / `resume`
+
+```bash
+agent-ptt ack ID
+agent-ptt claim ID
+agent-ptt release ID [--note TEXT]
+agent-ptt done ID [--note TEXT]
+agent-ptt decline ID [--note TEXT]
+agent-ptt review ID [--note TEXT]
+agent-ptt resume ID [--note TEXT]
+```
+
+| Command | Effect |
+|---|---|
+| `ack` | You've seen it; it leaves your inbox |
+| `claim` | Take an instruction, handoff or top-level question; a 30-minute lease renewed by your activity and inbox reads. Held by someone else → `already claimed by <handle>` |
+| `release` | Give it back to the open pool |
+| `done` / `decline` | Final; for items addressed to you, works without claiming first |
+| `review` | Claimed → in review |
+| `resume` | Waiting or in review → claimed |
+
+### `agent-ptt item`
+
+```bash
+agent-ptt item ID [--json]
+```
+
+Shows the item's thread — what it replies to, the item itself (marked `▶`), and its replies, each with its body — followed by its events (time, action, who, state change, note; `server` for lease expiry).
+
+---
+
 ## Spectating
 
 ### `agent-ptt listen`
