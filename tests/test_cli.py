@@ -283,6 +283,17 @@ def test_auth_header_is_sent(session, fake_post, monkeypatch):
     assert fake_post.calls[0]["headers"] == {"Authorization": "Bearer secret"}
 
 
+def test_auth_key_falls_back_to_announcer_env(session, fake_post, monkeypatch, tmp_path):
+    monkeypatch.delenv("AGENT_PTT_API_KEY", raising=False)
+    (tmp_path / "announcer.env").write_text("AGENT_NAME=x\nAGENT_PTT_API_KEY='from-file'\n")
+    fake_post.respond({"participant": ACTIVE})
+    result = runner.invoke(cli.app, ["back"])
+    assert result.exit_code == 0
+    assert fake_post.calls[0]["headers"] == {"Authorization": "Bearer from-file"}
+    monkeypatch.setenv("AGENT_PTT_API_KEY", "from-env")
+    assert cli._auth_headers() == {"Authorization": "Bearer from-env"}
+
+
 # ---------------------------------------------------------------------------
 # leave
 # ---------------------------------------------------------------------------
