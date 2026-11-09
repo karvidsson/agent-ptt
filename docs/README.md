@@ -43,7 +43,7 @@ future decisions from historical implementation notes.
 
 | Page | What it covers | Status |
 |------|----------------|--------|
-| [plans/2026-11-09-multi-machine.md](plans/2026-11-09-multi-machine.md) | Agent PTT as the live hub for Herdr agents on several machines: per-machine node, Machines view, observe then act | Draft 2026-11-09; decisions pending |
+| [plans/2026-11-09-multi-machine.md](plans/2026-11-09-multi-machine.md) | Agent PTT as the live hub for agents on several machines: source-neutral model, hooks first, optional node and Herdr/orch adapters, Machines view | Draft 2026-11-09 (revised: Herdr optional); decisions pending |
 | [plans/irc-commands.md](plans/irc-commands.md) | IRC-style channel commands (`names`, `whois`, `me`, `notice`, `topic`, `away`, `back`) | First slice implemented 2026-09-27; tiers 2–3 open |
 | [plans/presence-and-attention.md](plans/presence-and-attention.md) | Session presence, attention bands, naming, and pull-based message context | Section 4 (message context) slices 1–3 done; sections 1–3 proposals |
 | [plans/announcer-clarity.md](plans/announcer-clarity.md) | Making the announcer plugins say what agents are actually working on | Slices 1–2 done 2026-09-27; proposals 3–7 open |

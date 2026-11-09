@@ -1,165 +1,159 @@
 # Plan: Agent PTT as the hub for agents on several machines
 
-> Status: draft 2026-11-09. Nothing is built yet. The decisions at the end need the user's answers before work starts.
+> Status: draft 2026-11-09, revised the same day so that Herdr is optional. Nothing is built yet. The decisions at the end need the user's answers before work starts.
 
 ## Goal
 
-The user runs Herdr on three machines and drives them from a laptop. Agent PTT
-should show what all of them are doing, live, in one place. It already carries
-the agents' voices and text. Now it also needs to show the structure behind them:
+The user runs coding agents on several machines and drives them from a laptop.
+Agent PTT should show what all of them are doing, live, in one place:
+machines → projects → agent sessions → tasks. It already carries the agents'
+voices and text. Now it also needs to show the structure behind them. Channels
+stay the centre: a project row links to its repo channel, and a session row
+links to its participant there.
 
-```
-machine (kbot, …)            online / unreachable, last seen
-└── project                  a Herdr workspace, e.g. "agent-ptt", "pengrid"
-    ├── channel              the repo channel the announcer already joins (the spine)
-    ├── task                 an orch registry entry: lead, workers, state, last status line
-    └── agent                a Herdr pane: claude/codex, idle | working | blocked | done
-```
+**No machine needs Herdr or orch.** A machine with only Claude Code or Codex
+and the announcer plugin shows up. Herdr and the orch registries are optional
+adapters that add detail when they are present.
 
-Channels stay the centre. A project row links to its channel. An agent row
-links to its participant there, so "who is talking" and "what is running" are
-the same view.
+## One source-neutral model
 
-## What exists to build on
+Every source maps into the same four records. The server merges them. The UI
+renders only the fields some source has filled in, so a Herdr-less machine
+looks complete, just with less detail.
 
-- **Herdr** (v0.9, socket API protocol 22) already models most of this tree.
-  `herdr api snapshot` returns workspaces, tabs, panes and agents as JSON. Each
-  agent carries `agent`, `agent_status` (`idle|working|blocked|done|unknown`),
-  `agent_session.value` (the Claude/Codex session id), `cwd`, the tab and the
-  workspace. `events.subscribe` pushes `pane.agent_status_changed`,
-  `pane.created`, `pane.closed` and similar events. `agent.prompt` submits a
-  prompt to an agent.
-- **herdr-orchestra registries** in `~/.claude/orchestra/projects/<p>/tasks/*/`
-  on each machine. `task.json` holds the lead, workers, panes, worktrees and
-  state. `status.md` holds timestamped report lines. `question-*.md` holds open
-  questions. `inbox.md` holds queued tasks. Several projects run side by side.
-- **Announcer hooks** join every session to its repo channel. They post
-  presence (away/back, `doing`) and get reaped when idle (`channel.py`). They
-  know the session id, which matches Herdr's `agent_session.value`. That id is
-  the join key between a participant and a pane.
-- **The hosted workspace layer** ([workspaces.md](../workspaces.md)) has the
-  right *shapes*: per-principal credentials, a session presence contract with
-  `presumed_hung`/`stale`, a durable inbox with delivery receipts, and
-  organizations. It runs only in hosted mode (`AGENT_PTT_HOSTED=1`, Postgres,
-  no legacy channel restore). The tailnet server on kbot runs in legacy mode.
-  Recommendation: build on the legacy server the user actually runs, reuse
-  those shapes (presence states, hashed credentials, inbox and ack), and don't
-  require hosted mode. See decision 3.
+| Record | Key | Fields | Filled by |
+|---|---|---|---|
+| **Machine** | `machine` name (configured, default hostname) | hostname, os, `last_seen`, `reachable` (derived), `sources[]` | hooks, node |
+| **Project** | repo identity: normalized git remote URL, else the repo folder name | name, `channel_id`, per-machine paths | hooks (cwd), node |
+| **Session** | agent `session_id` (Claude/Codex id) | `agent` (claude/codex), machine, project, cwd, `state`, `doing`, `participant_id`, `started`, `last_seen`, `pid`?, `herdr`? (pane, tab, workspace) | hooks, node scan, Herdr |
+| **Task** | source plus id, e.g. `orch:agent-ptt/area-planning#2` | title, project, `state`, lead and worker sessions, last status line | orch adapter; later free-standing tasks from the UI |
 
-## How machines report in
+An **attention item** (question, approval, blocked agent, task waiting) points at
+a session or task and records how it can be answered (see *Acting*).
 
-**A small per-machine daemon, `agent-ptt node`**, runs next to Herdr on each
-machine. The hooks stay as they are.
+- **States** use one enum across sources: `idle | working | blocked | away | offline`,
+  plus the derived `presumed_hung`/`stale` flags borrowed from the hosted
+  presence contract ([workspaces.md](../workspaces.md#sessions-and-presence)).
+- **Merge rule:** each field remembers its source and `observed_at`. Hooks win
+  for `doing` and presence. Herdr wins for `blocked` and pane placement. A
+  process scan only proves that a session exists: when its process is gone,
+  the session is `offline` at once, without waiting for the idle reaper.
+- **Projects span machines.** agent-ptt on two machines is one project with
+  sessions on both. The tree can be grouped by machine or by project.
 
-- The hooks only see their own session, and only while hooks fire. They can't
-  see panes without an agent, closed panes, `blocked` (a permission prompt) or
-  orch tasks. Herdr sees all of that, so one process per machine reads Herdr.
-- The node sends one full snapshot on connect, then deltas from
-  `events.subscribe`, plus a full snapshot every 60 s to recover from drift. It
-  also watches the orch registries (inotify or a 5 s poll) and sends task
-  states and new status lines.
-- Transport: one outbound WebSocket to the server (`/machines/{name}/ws`).
-  Machines dial the server, never the other way round, so no inbound ports are
-  needed and a laptop behind NAT works too.
-- Alternative: one collector on the laptop that runs `herdr --machine X …`
-  over SSH. There is nothing to install, but the view goes dark whenever the
-  laptop sleeps. Not recommended.
+## Sources, from required to optional
 
-**Auth over the tailnet.** Each machine is enrolled once
-(`agent-ptt node enroll`). The server issues a machine token, stores only its
-hash (the hosted agent-credential pattern) and binds it to the machine name.
-Tailscale stays the network boundary. The token separates machines from each
-other and makes it possible to revoke one. The browser view uses the existing
-`AGENT_PTT_API_KEY` if one is set. Today none is set on kbot (decision 4).
+**0. The announcer hooks: the baseline, already installed.** They join every
+session to its repo channel and report session start and end, presence
+(away/back) and `doing`, and the idle reaper cleans up after them. They miss
+three things: the machine, the repo path, and anything between hook events. The
+fix is cheap. On join and on presence updates, the hooks also send `machine`
+(`AGENT_PTT_MACHINE`, defaulting to the hostname), `cwd` and the git remote.
+These are optional fields on the existing join request. The server then derives
+the whole machine → project → session tree from participants. **No daemon is
+needed for milestone 1.** The limit is that a machine with no live sessions
+looks the same as a machine that is switched off. The view says "no live
+sessions, last seen 14:02".
 
-**Offline.** The node heartbeats every 15 s. After 45 s of silence the machine
-shows *unreachable* with "last seen", and its agents are greyed out, not
-removed. The last known tree stays visible. On reconnect the full snapshot
-replaces the machine's state. If the server is down, the node keeps only the
-latest snapshot and retries with backoff; there is no event backlog. Server
-state is in memory plus a `machines` table (name, token hash, last seen), and
-nothing else persists in milestone 1.
+**1. `agent-ptt node`: an optional per-machine process, with no Herdr needed.**
+It adds what the hooks can't see:
+- a machine heartbeat (15 s; *unreachable* after 45 s), so a machine that is
+  down is told apart from one that is idle;
+- a process scan (`/proc` on Linux, `ps` on macOS) for `claude` and `codex`
+  processes: pid, cwd, repo and start time. This catches sessions without the
+  plugin, and it marks a session offline as soon as its process exits;
+- enrollment: a per-machine token, stored only as a hash on the server (the
+  hosted agent-credential pattern), so that the machine identity is no longer
+  self-asserted;
+- the acting endpoint (below).
 
-## Observe, then act
+It dials out to the server over one WebSocket (`/machines/{name}/ws`). It sends
+a full snapshot on connect and every 60 s, with deltas in between. When the
+server is down it keeps only the latest snapshot. Tailscale stays the network
+boundary.
 
-**Observe first** (milestones 1–2). Acting is the valuable part, but it amounts
-to remote input into agents on three machines, so it comes after the read path
-is trusted.
+**2. Adapters inside the node, used only when present.**
+- **Herdr**, detected with `herdr api snapshot`. It adds workspaces, tabs, the
+  pane for each session (joined on `agent_session.value` = `session_id`), the
+  `blocked` status from `events.subscribe`, and the `agent.prompt` action.
+- **orch registries**, detected through `~/.claude/orchestra/projects/*`. They
+  add tasks, leads, workers, states, status lines and open `question-*.md`
+  files, and the `orch send` action.
 
-**Act** (milestone 3), opt-in per machine (`agent-ptt node --allow-actions`):
+**What fits from the hosted workspace layer.** It has the right shapes: hashed
+per-principal credentials, the presence contract, and a durable inbox with
+receipts. It runs only in hosted mode (Postgres, accounts, no legacy channel
+restore). The tailnet server on kbot runs in legacy mode. Recommendation: build
+on the legacy server, reuse those shapes, and leave hosted mode for later
+(decision 3).
 
-- **Questions and approvals to the user.** These come from Herdr
-  `blocked`/`done` events, orch `question-*.md` files and `state waiting`. They
-  appear in one *attention* queue in the UI, and their channel announces them
-  by voice. An answer goes back through the node as a fixed action: for an orch
-  task, `orch send <area> "task N: <answer>"`; for a bare agent,
-  `agent.prompt` to that pane.
-- **Send a task.** Pick machine → project → area, type the task, and the node
-  runs `orch send <area> "<task>"` (or `agent.prompt` to the main
-  orchestrator). The project's own rules still apply, including the user's OK
-  before push or deploy.
-- The node accepts only an allowlist of verbs (`orch.send`, `agent.prompt`,
-  `orch.answer`). Raw `send-keys` and shell commands are never accepted from
-  the web. Every action is posted to the project channel as a notice
-  (who, what, which machine) as the audit trail.
+## Acting degrades gracefully
+
+Each attention item and each "send" offers only the routes its machine
+supports. The UI says which route a message takes, and every action is posted
+to the project channel as the audit trail.
+
+| Route | Needs | What it can do | Limit |
+|---|---|---|---|
+| **Inbox** (mentions, exists today) | hooks only | answer an agent's question; give a running session a new instruction | delivered at the session's next hook event; an idle session waits until someone touches it |
+| **Headless run** | node, opt-in | send a task to a machine: run `claude -p` or `codex exec` in a project folder on it; its hooks report into the channel like any session | a new session, not the one that asked; allowlisted projects only |
+| **Prompt a pane** | node + Herdr | wake an idle session: `agent.prompt` | — |
+| **orch send** | node + orch | give a task, an answer or an approval to an area lead: `orch send <area> "task N: …"` | — |
+
+Two things remain outside the routes:
+- **Permission prompts** (`blocked`) are only visible through Herdr. Answering
+  them from the web is out of scope. Claude Code's permission hooks may allow
+  it later; that needs investigating first.
+- **Arbitrary keystrokes or shell commands** are never accepted from the web.
+  The node accepts a fixed set of verbs and is opt-in per machine
+  (`--allow-actions`).
 
 ## UI
 
-A new **Machines** view in the existing no-build web UI (`agent_ptt/static/`),
-next to the channel view:
-
-- **Attention strip** on top: blocked agents, open questions and tasks waiting
-  for approval, oldest first. In milestone 3 each one gets an answer box.
-- **Tree** below: one card per machine (online dot, last seen), with projects
-  inside and their tasks and agents as rows. A row shows a status chip, the
-  agent name, the task title and the lead's last status line. Clicking a
-  project opens its channel. Clicking an agent highlights its participant.
-- Narrow screens collapse to a list, because the phone is a likely client
-  (Remote Control links are already in `status.md`).
-- **Voice** speaks attention events only ("agent-ptt planning lead is waiting
-  for you"), not every status flip.
-- Pane terminal output is **not** shown by default (it may contain secrets).
-  See decision 6.
+A **Machines** view next to the channel view in the no-build web UI:
+- **Attention strip** on top: questions, approvals, blocked agents and waiting
+  tasks, oldest first, each with an answer box that names its route.
+- **Tree** below, grouped by machine or by project. Rows show a state chip, the
+  agent, `doing`, the task, and small source badges (hooks / node / herdr /
+  orch). Columns no source has filled in (tab, task) are hidden.
+- The layout collapses to a list on the phone. Voice speaks attention events
+  only. Pane terminal output is not shown (decision 6).
 
 ## Milestones
 
-1. **Read-only machine list (small, shippable).** `agent-ptt node` polls
-   `herdr api snapshot` every 5 s and `POST`s it to `/machines/{name}/snapshot`
-   (shared API key or none, tailnet only). The server keeps the latest snapshot
-   per machine in memory and serves `GET /machines`. A Machines page shows
-   machines → workspaces → agents with status chips and unreachable after 45 s.
-   Run it on all three machines. No orch data, no actions, no new tables.
-2. **Live and joined up.** WebSocket plus `events.subscribe` instead of
-   polling. Machine enrollment and tokens (`machines` table, `init_db` path).
-   Orch registries: tasks, states and status lines. Panes joined to channel
-   participants by session id. Attention strip, with voice for attention
-   events.
-3. **Act.** Answer questions and approvals, and send a task to an area or an
-   orchestrator. Allowlisted verbs, per-machine opt-in, audit notices in the
-   channel.
-4. **Later.** A per-project activity timeline (status lines and channel
-   messages merged), a mobile polish pass, and optionally carrying the machine
-   model into hosted mode.
+1. **Hooks-only machine view, with no daemon.** The announcer and
+   codex-announcer send `machine`, `cwd` and the git remote on join and
+   presence. The server stores them on the participant (`init_db`
+   add-column path), and `GET /machines` derives the tree. A Machines page
+   shows machine → project → session with state and `doing`. Answering through
+   the existing inbox works from day one. It runs on any machine with the
+   plugin, Herdr or not. A plugin version bump is required.
+2. **Plain node.** Heartbeat, process scan, enrollment tokens, a
+   reachable/unreachable machine state, and sessions without hooks.
+3. **Adapters.** Herdr (tabs, blocked, panes) and orch (tasks, status lines,
+   questions). The attention strip, with voice for attention events.
+4. **Act beyond the inbox.** Headless runs, `agent.prompt` and `orch send`
+   through the node's allowlisted verbs, opt-in per machine.
+5. **Later.** A per-project timeline, investigating permission-prompt
+   answering, and optionally hosted mode.
 
 ## Decisions for the user
 
-1. **Machines.** Which three machines, and what should they be called? Does
-   the server stay on kbot? Is the laptop only a client, or does it also run
-   agents and need a node? *Recommendation:* server stays on kbot; a node on
-   each Herdr host.
-2. **How far toward acting.** Observe only, or also answer questions and
-   approvals and send tasks from the web/phone (milestone 3)?
-   *Recommendation:* yes, after milestones 1–2, opt-in per machine, allowlisted
-   verbs only.
-3. **Base.** Build on the legacy tailnet server (no accounts) or move to hosted
-   workspace mode (accounts, organizations, Postgres)? *Recommendation:*
-   legacy server now, reusing hosted shapes; revisit at milestone 4.
-4. **Auth on the tailnet server.** Today kbot runs without
-   `AGENT_PTT_API_KEY`, so anyone on the tailnet can read and, with acting,
-   control. Set a key before milestone 3? *Recommendation:* tailnet only for
-   milestone 1, then machine tokens plus an API key before any action ships.
-5. **Voice.** Speak attention events only, or every task state change too?
-   *Recommendation:* attention events only.
-6. **Terminal output.** Show the last lines of each agent pane in the UI?
-   They help with "what is it doing", but they can leak secrets.
-   *Recommendation:* off, with a per-machine opt-in later.
+1. **Machines and names.** Which machines will report? Use the hostname, or a
+   name set per machine (`AGENT_PTT_MACHINE`)? Does the server stay on kbot?
+   *Recommendation:* hostname by default, with an override; server on kbot.
+2. **Project identity.** Is one repo on two machines one project, or two?
+   *Recommendation:* one project, keyed by git remote, shown per machine
+   inside it.
+3. **Base.** The legacy tailnet server (no accounts), or hosted workspace mode?
+   *Recommendation:* the legacy server now, reusing hosted shapes.
+4. **How far toward acting.** Inbox answers only, or also headless runs started
+   from the web or phone (a new agent session on a machine), and Herdr/orch
+   actions where present? *Recommendation:* inbox from milestone 1; the rest at
+   milestone 4, opt-in per machine.
+5. **Auth.** kbot runs without `AGENT_PTT_API_KEY`, so on the tailnet anyone
+   can read, and once milestone 4 ships, anyone can start runs. Set a key and
+   machine tokens before milestone 4? *Recommendation:* yes.
+6. **Voice and privacy.** Speak attention events only? Keep pane terminal
+   output and process command lines out of the UI? *Recommendation:* yes to
+   both.
