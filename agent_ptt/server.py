@@ -29,7 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
-from agent_ptt import mentions, workspace
+from agent_ptt import mentions, projects, workspace
 from agent_ptt.audio import get_mixer, remove_mixer, speaker_mode_message
 from agent_ptt.auth import (
     WS_CLOSE_UNAUTHORIZED,
@@ -49,6 +49,7 @@ from agent_ptt.models import (
     VoiceProfile,
     public_participant_id,
 )
+from agent_ptt.projects_api import router as projects_router
 from agent_ptt.session_identity import get_session_identity
 from agent_ptt.tts import get_backend, synthesize_speech
 from agent_ptt.voicedesign import (
@@ -228,12 +229,15 @@ async def lifespan(app: FastAPI):
         logger.info(f"🧹 {ch.idle_reap_message(grace)}")
         if grace > 0:
             reaper = asyncio.create_task(_idle_reaper(grace))
+    # Claim leases on project work items (projects.py) expire in the background too.
+    leases = None if hosted() else asyncio.create_task(projects.lease_expiry_loop())
     yield
     # Cleanup
-    if reaper is not None:
-        reaper.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await reaper
+    for task in (reaper, leases):
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
     for channel_id in list(_tts_tasks.keys()):
         _stop_tts_worker(channel_id)
     logger.info("🎙️  Agent PTT server stopped")
@@ -329,6 +333,39 @@ Keep lines short and spoken-friendly: no code, paths or markdown.
      POST {base}/channels/<channel_id>/command  {{"key_id": ..., "name": "names"}}
 - Voices: GET {base}/voices; pass "voice_id" when joining.
 - Claude Code and Codex plugins announce automatically: set AGENT_PTT_URL={base}
+
+## Projects and work items (monitor mode)
+
+Agents on one project pass work through a project inbox. The CLI wraps all of
+this (`agent-ptt project join`, `inbox`, `send`, `claim`, `done`, …).
+
+1. Join the project (created from the git remote on first join):
+     POST {base}/projects/join  {{"remote": "<git remote get-url origin>",
+          "handle": "<handle>", "roles": ["reviewer"], "harness": "claude"}}
+     -> {{"project": {{"project_id": ..., "channel_id": ...}},
+         "member": {{"member_id": ...}}, "member_key": ...}}
+   member_key is your secret; send it as the header `X-Member-Key` below and
+   pass it back as "member_key" to rejoin as the same member. Never log it.
+2. Hand work over (to "agent:<handle or member_id>", "role:<role>" or "project"):
+     POST {base}/projects/<project_id>/items  {{"kind": "handoff",
+          "to": "role:reviewer", "body": "Review the login fix",
+          "context": {{"branch": "fix-login"}}, "client_id": "<unique id>"}}
+3. Wait on your inbox (long-poll up to 60 s; unacked items come back again):
+     GET  {base}/projects/<project_id>/inbox?wait=60&after=<cursor>
+     -> {{"items": [...], "cursor": ...}}
+4. Take an item (409 if someone else holds it; the claim is a 30-minute
+   lease, renewed by your inbox reads and actions):
+     POST {base}/projects/<project_id>/items/<item_id>/claim
+5. Ask and answer (a question on your claimed item marks it waiting until
+   the answer arrives):
+     POST {base}/projects/<project_id>/items  {{"kind": "question",
+          "reply_to": "<item_id>", "body": "Which branch?"}}
+     POST {base}/projects/<project_id>/items  {{"kind": "answer",
+          "reply_to": "<question_id>", "body": "fix-login"}}
+6. Finish (or decline, or release it back to open):
+     POST {base}/projects/<project_id>/items/<item_id>/done  {{"note": "merged"}}
+
+Every item and state change posts a text-only notice in the project's channel.
 """
 
 
@@ -1165,6 +1202,9 @@ async def spectator_audio_stream(websocket: WebSocket, channel_id: str):
 # ---------------------------------------------------------------------------
 
 app.include_router(api)
+app.include_router(projects_router)  # /projects and /work-items; 404 when hosted
+# Server-side notices (channel.post_notice) reach agent WebSockets like any message.
+ch.set_broadcaster(lambda msg: _broadcast_to_channel(msg.channel_id, _message_event(msg)))
 app.mount("/ui", StaticFiles(directory=_STATIC_DIR, html=True), name="ui")
 
 

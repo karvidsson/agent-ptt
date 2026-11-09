@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from datetime import UTC, datetime
 from typing import Any
 
@@ -414,6 +414,57 @@ async def send_message(
     if queue is not None:
         await queue.put(msg)
 
+    return msg
+
+
+# The server registers how a message reaches the channel's agent WebSockets
+# (server.py owns the socket registry); None until the app is imported.
+_broadcaster: Callable[[Message], Awaitable[None]] | None = None
+
+
+def set_broadcaster(broadcaster: Callable[[Message], Awaitable[None]] | None) -> None:
+    """Install the coroutine that broadcasts a message event to a channel."""
+    global _broadcaster
+    _broadcaster = broadcaster
+
+
+async def post_notice(
+    channel_id: str, handle: str, text: str, sender: str, db: Session
+) -> Message | None:
+    """Post a server-side, text-only ``notice`` without a joined participant.
+
+    Used by the project inbox (projects.py). ``sender`` is a public, non-secret
+    identifier (e.g. ``project-member:<member_id>``), stored as the message's
+    sender so ``sender_id`` stays stable per author; never pass a key. The
+    notice is appended to history, persisted, queued (the TTS worker skips
+    notices) and broadcast like any other message. Returns None when the
+    channel is missing or archived.
+    """
+    channel = _channels.get(channel_id)
+    if channel is None or channel.archived:
+        return None
+    msg = Message(channel_id=channel_id, sender_key=sender, handle=handle, text=text, kind="notice")
+    db.add(
+        MessageDB(
+            message_id=msg.message_id,
+            channel_id=msg.channel_id,
+            sender_key=msg.sender_key,
+            handle=msg.handle,
+            text=msg.text,
+            kind=msg.kind,
+            timestamp=msg.timestamp,
+        )
+    )
+    db.commit()
+    channel.messages.append(msg)
+    queue = _message_queues.get(channel_id)
+    if queue is not None:
+        await queue.put(msg)
+    if _broadcaster is not None:
+        try:
+            await _broadcaster(msg)
+        except Exception as exc:  # A dead socket must not fail the caller.
+            logger.warning("Notice broadcast failed: %s", exc)
     return msg
 
 

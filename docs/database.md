@@ -32,6 +32,8 @@ Every table, by module. All of them are created by `init_db()`; the
 | `revoked_participants` | `models.py` | Kicked keys that must not rejoin automatically | ✅ |
 | `mention_receivers` | `models.py` | Participation key → stable mention recipient ID | ✅ |
 | `message_deliveries` | `models.py` | One inbox receipt per `(message, recipient)` | ✅ |
+| `projects`, `project_members` | `models.py` | Collaboration projects (by normalized git remote) and their members, with roles and secret member keys | ✅ |
+| `work_items`, `work_item_deliveries`, `work_item_events` | `models.py` | The project inbox: work items, per-member deliveries (the inbox cursor) and the change log | ✅ |
 | `workspace_users`, `workspace_organizations`, `workspace_members`, `workspace_credentials` | `workspace_models.py` | Hosted accounts, tenants, roles and hashed session/agent credentials | ✅ |
 | `workspace_agents`, `workspace_invitations` | `workspace_models.py` | Registered agents per organization; one-use invitation links (with onboarding `agent_limit`, `channel_id`, `claimed_by`) | ✅ |
 | `workspace_rooms`, `workspace_messages`, `workspace_audit` | `workspace_models.py` | Tenant channels, text chat and administrative audit log | ✅ |
@@ -199,6 +201,80 @@ rows share one transaction. A composite index covers recipient, channel,
 delivery time, and creation time for bounded pending-inbox reads. See
 [Agent mentions](mentions.md#storage) for lifecycle and recovery semantics.
 
+
+## Project inbox tables
+
+Five additive tables back [projects and the project inbox](projects.md). Like
+the other legacy tables they have no Alembic revision: `init_db()` creates
+them on new and existing databases (`create_all`), and nothing else is
+altered. Hosted mode never uses them.
+
+### `projects`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `project_id` | TEXT (PK) | UUID |
+| `name` | TEXT (indexed) | Display name; defaults to the remote's last path segment |
+| `remote` | TEXT (unique, nullable) | Normalized git remote, e.g. `github.com/owner/repo` |
+| `channel_id` | TEXT (nullable) | The project's default channel |
+| `created_at` | DATETIME | Creation time (UTC) |
+
+### `project_members`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `member_id` | TEXT (PK) | Public member ID |
+| `project_id` | TEXT (indexed) | Project |
+| `member_key` | TEXT (unique) | Bearer secret for member routes; returned only by join, never served elsewhere |
+| `handle` | TEXT | Display name |
+| `roles` | JSON | Free-form role tags (`list[str]`) |
+| `mode` | TEXT | `monitor` or `hooks` |
+| `harness` | TEXT (nullable) | `claude`, `codex`, `script`, … |
+| `created_at`, `last_seen` | DATETIME | Join time and last member request |
+
+### `work_items`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `item_id` | TEXT (PK) | UUID |
+| `project_id` | TEXT (indexed) | Project; `(project_id, updated_at)` is indexed for the board |
+| `kind` | TEXT | `instruction`, `handoff`, `question`, `answer`, `claim`, `release`, `note` |
+| `to_address` | TEXT | `agent:<member_id>`, `role:<role>` or `project` |
+| `from_member_id` | TEXT | Sender |
+| `title`, `body` | TEXT | Short line (≤ 120) and text (≤ 8000) |
+| `context` | JSON (nullable) | Handoff context, free-form keys allowed |
+| `reply_to` | TEXT (indexed, nullable) | Parent item |
+| `client_id` | TEXT (nullable) | Idempotency key; unique per `(from_member_id, client_id)` |
+| `state` | TEXT | `pending`, `delivered`, `acked`, `claimed`, `waiting`, `review`, `done`, `declined` |
+| `assignee_member_id` | TEXT (nullable) | Claim holder |
+| `lease_expires_at` | DATETIME (nullable) | When the claim lease runs out |
+| `notice_message_id` | TEXT (nullable) | The creation notice in `messages` |
+| `created_at`, `updated_at` | DATETIME | Creation and last change |
+
+### `work_item_deliveries`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `seq` | INTEGER (PK, autoincrement) | The inbox cursor; a reset delivery gets a new `seq` |
+| `item_id`, `member_id` | TEXT (indexed) | Unique together |
+| `state` | TEXT | `pending`, `delivered`, `acked` |
+| `delivered_at`, `acked_at` | DATETIME (nullable) | First inbox read and ack |
+
+### `work_item_events`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `event_id` | INTEGER (PK, autoincrement) | Order of events |
+| `item_id` | TEXT (indexed) | Item |
+| `at` | DATETIME | When |
+| `by_member_id` | TEXT (nullable) | Who; null for the server (lease expiry) |
+| `action` | TEXT | `created`, `delivered`, `acked`, `claimed`, `released`, `waiting`, `review`, `resumed`, `answered`, `done`, `declined`, `lease_expired` |
+| `from_state`, `to_state` | TEXT (nullable) | The transition |
+| `note` | TEXT (nullable) | Optional note (e.g. from done/decline) |
+
+Channel notices about items are ordinary `messages` rows with `kind = notice`
+and `sender_key = project-member:<member_id>` (or `project-server`). That tag
+is public and not a key.
 
 ## Channel moderation
 
