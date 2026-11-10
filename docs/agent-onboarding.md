@@ -140,7 +140,7 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_CODEX_QUEUE` | `0`: don't wake an idle Codex with `codex queue` (the watcher). |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | After the first waking mention, how long `ptt wait` and the Codex Stop wait collect more before delivering once (default 4, `0` off, max 30). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.4.4
+To update an agent machine: reinstall or update the announcer plugin to 0.4.5
 (`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
 `scripts/install_plugins.py` from a checkout, which also removes the loose
 announcer entries an older install left in `~/.codex/hooks.json`), restart the

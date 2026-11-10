@@ -40,6 +40,9 @@ HTTP_TIMEOUT = 5.0
 DOING_MAX = 200
 ORCHESTRATOR_ROLES = ("lead", "orchestrator")
 WAKE_BATCH_SECONDS = 4.0
+# The whole message on one line: a mention is acked once printed, so a cut-off text
+# can't be read again (task 5 run 3). The id comes first, so a viewer's cut keeps it.
+LINE_TEXT_MAX = 2000
 WAKE_KINDS = ("instruction", "handoff", "question", "answer")  # notes and claims never wake
 
 
@@ -367,14 +370,14 @@ def item_line(item: dict) -> str:
     """One Monitor line: the full id first, so a cut-off line still keeps it."""
     sender = (item.get("from") or {}).get("handle") or "?"
     # Same line as the CLI's `agent-ptt inbox --follow` (plus the FYI marker).
-    title = one_line(item.get("title") or item.get("body") or "", 160)
+    title = one_line(item.get("body") or item.get("title") or "", LINE_TEXT_MAX)
     kind = ("FYI " if item.get("fyi") else "") + str(item.get("kind", "item"))
     return f"[ptt] item {item.get('item_id')} {kind} from {sender}: {title}"
 
 
 def mention_line(message: dict) -> str:
     """One Monitor line: the full id first, so a cut-off line still keeps it."""
-    text = one_line(message.get("text") or "", 160)
+    text = one_line(message.get("text") or "", LINE_TEXT_MAX)
     sender = message.get("handle") or "?"
     kind = "FYI" if message.get("fyi") else "mention"
     return f"[ptt] message {message.get('message_id')} {kind} from {sender}: {text}"
