@@ -367,7 +367,8 @@ def cmd_wait(session: Session, args) -> None:
         return
     waiter.heartbeat = lambda: os.utime(lock)
     me = session.member.get("handle") or session.agent
-    waiter.emit(f"[ptt] waiting for mentions and work items as {me}")
+    # stderr: a Monitor turns each stdout line into a turn; this one carries nothing to act on.
+    print(f"[ptt] waiting for mentions and work items as {me}", file=sys.stderr, flush=True)
     try:
         waiter.run()
     except KeyboardInterrupt:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -68,6 +69,8 @@ def update(event: dict) -> bool:
 
 
 def main() -> None:
+    if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
+        return
     with contextlib.suppress(Exception):
         update(json.load(sys.stdin))
 

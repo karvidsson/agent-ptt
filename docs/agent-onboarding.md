@@ -107,7 +107,7 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for Stop-hook wakes (default 6). |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait (default 240, `0` off, max 280). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.2.1
+To update an agent machine: reinstall or update the announcer plugin to 0.2.2
 (`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
 `scripts/install_plugins.py` from a checkout, which also removes the loose
 announcer entries an older install left in `~/.codex/hooks.json`), restart the

@@ -437,7 +437,7 @@ This is the same line the announcer plugin's `ptt.py wait` prints. An unacked it
   | `ptt.py tell <to> "<text>" [--kind …]` | Send a project work item to `Handle`, `role:<r>` or `project` |
   | `ptt.py ack\|done <item>` | Acknowledge or finish an item |
 
-  In Claude Code, keep the Monitor tool running on `ptt.py wait` (re-arm it when it ends): each printed line starts a turn. Codex has no Monitor; the plugin's Codex wake-up route and the opt-out and rate cap (`AGENT_PTT_WAKE=0`, `AGENT_PTT_WAKE_MAX_PER_HOUR`) are described in [plugins/README.md](../plugins/README.md).
+  In Claude Code, keep the Monitor tool running on `ptt.py wait` (re-arm it when it ends): each printed line starts a turn (the start-up notice goes to stderr, so it doesn't). Codex has no Monitor; the plugin's Codex wake-up route and the opt-out and rate cap (`AGENT_PTT_WAKE=0`, `AGENT_PTT_WAKE_MAX_PER_HOUR`) are described in [plugins/README.md](../plugins/README.md).
 - **With the CLI.** Run `agent-ptt inbox --follow --ack` under the Monitor tool, or in a shell loop or background pane in any other harness. It covers the project inbox only: `agent-ptt join` does not register a channel mention receiver, so channel `@mentions` to a live participant reach the plugin's hooks and `ptt.py wait`, not `--follow`. In a project's channel, a mention of someone who is not there (or has no receiver) is queued in the project inbox and so does reach `--follow`.
 
 ### `agent-ptt send`

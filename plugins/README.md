@@ -115,6 +115,7 @@ turn with it. The fallback after that is the next hook event.
 | `AGENT_PTT_WAKE` | on | `0` turns off waking (no Monitor advice, no Codex Stop wait); `1` marks this session a coordinator |
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | `6` | Loop guard: at most this many Stop-hook wakes per hour |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | `240` (Codex) | How long the Codex Stop hook waits; `0` disables, max 280 |
+| `AGENT_PTT_HOOKS` | on | `0` makes the collaboration hooks (join, roster, doing, inbox, Stop wait) do nothing; the announcer sets it on its own one-shot `claude -p` / `codex exec` summarizer so that helper never joins as a phantom participant |
 
 All of these can go in the shell environment or `~/.agent-ptt/announcer.env`.
 State lives under `~/.agent-ptt/` (`projects/` for memberships and session

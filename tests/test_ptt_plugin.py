@@ -178,6 +178,21 @@ def test_session_start_is_a_noop_in_workspace_mode_and_for_subagents(env, capsys
     assert env["calls"] == []
 
 
+def test_summarizer_child_runs_no_collaboration_hook(env, capsys, monkeypatch):
+    """announce.py's one-shot `claude -p` / `codex exec` loads the plugin too: it must not
+    join, set doing, get inbox checks or block in the Stop wait."""
+    monkeypatch.setenv("AGENT_PTT_HOOKS", "0")
+    event = {"hook_event_name": "SessionStart", "session_id": "s1", "cwd": "/work/proj"}
+    for module in (session_start, doing, receive):
+        saved, sys.stdin = sys.stdin, io.StringIO(json.dumps(event))
+        try:
+            module.main()
+        finally:
+            sys.stdin = saved
+    assert capsys.readouterr().out == ""
+    assert env["calls"] == []
+
+
 def test_roster_orders_present_first_and_skips_me():
     members = [
         {"member_id": "a", "handle": "Away", "presence": "away"},

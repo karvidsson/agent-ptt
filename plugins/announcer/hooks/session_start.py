@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -160,6 +161,8 @@ def start(event: dict) -> str | None:
 
 
 def main() -> None:
+    if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
+        return
     with contextlib.suppress(Exception):
         event = json.load(sys.stdin)
         if event.get("hook_event_name", "SessionStart") != "SessionStart":
