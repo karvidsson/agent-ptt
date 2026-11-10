@@ -109,7 +109,7 @@
           {
             "type": "command",
             "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/announce.py\"",
-            "timeout": 5
+            "timeout": 3
           }
         ]
       }

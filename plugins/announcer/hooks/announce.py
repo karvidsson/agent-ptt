@@ -82,7 +82,7 @@ PROGRESS_INTERVAL = 45
 MAX_PROGRESS_FACTS = 3
 # SessionEnd runs while the host is exiting: keep every leave request short.
 LEAVE_TIMEOUT = 2.0
-LEAVE_BUDGET = 3.0  # total seconds for all leave requests of one session
+LEAVE_BUDGET = 2.5  # total seconds for all leave requests; Codex kills SessionEnd hooks at 3s
 ENDED_TTL = 60 * 60  # how long a session-ended marker blocks late Stop hooks
 INBOX_DIR = Path.home() / ".agent-ptt" / "inboxes"  # receive.py's per-session state
 STATUS_DIR = Path.home() / ".agent-ptt" / "status"  # status.py's per-session files
