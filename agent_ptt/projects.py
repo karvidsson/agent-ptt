@@ -708,6 +708,7 @@ def create_item(db: Session, member: ProjectMemberDB, req: WorkItemCreate) -> Cr
         context=context,
         reply_to=parent.item_id if parent else None,
         client_id=req.client_id,
+        fyi=req.fyi,
         state="pending",
         created_at=now,
         updated_at=now,
@@ -999,14 +1000,16 @@ def _visible_to(item: WorkItemDB, member: ProjectMemberDB) -> bool:
 
 
 def read_inbox(
-    db: Session, member: ProjectMemberDB, after: int, limit: int
+    db: Session, member: ProjectMemberDB, after: int, limit: int, wake_only: bool = False
 ) -> tuple[list[tuple[WorkItemDB, WorkItemDeliveryDB]], bool]:
     """The member's unacked deliveries, oldest first; marks them ``delivered``.
 
     Returns the entries and whether any has ``seq > after`` (what a long-poll
-    waits for). Also renews the member's leases and records it as seen.
+    waits for). ``wake_only`` leaves FYI items out (untouched, still pending
+    for the next ordinary read). Also renews the member's leases and records
+    it as seen.
     """
-    rows = (
+    query = (
         db.query(WorkItemDeliveryDB, WorkItemDB)
         .join(WorkItemDB, WorkItemDB.item_id == WorkItemDeliveryDB.item_id)
         .filter(
@@ -1014,9 +1017,10 @@ def read_inbox(
             WorkItemDeliveryDB.state != "acked",
             WorkItemDB.project_id == member.project_id,
         )
-        .order_by(WorkItemDeliveryDB.seq)
-        .all()
     )
+    if wake_only:
+        query = query.filter(WorkItemDB.fyi.is_(False))
+    rows = query.order_by(WorkItemDeliveryDB.seq).all()
     entries = [(item, delivery) for delivery, item in rows if _visible_to(item, member)][:limit]
     now = now_utc()
     for item, delivery in entries:
@@ -1041,11 +1045,12 @@ def read_inbox(
 
 
 async def wait_for_inbox(
-    member_id: str, project_id: str, after: int, limit: int, wait: float
+    member_id: str, project_id: str, after: int, limit: int, wait: float, wake_only: bool = False
 ) -> tuple[list[dict[str, Any]], int]:
     """Read the inbox, long-polling up to ``wait`` s for a delivery past ``after``.
 
-    No DB session is held while waiting: each check opens and closes one.
+    With ``wake_only`` only non-FYI items are read and end the wait. No DB
+    session is held while waiting: each check opens and closes one.
     """
     from agent_ptt.db import SessionLocal
 
@@ -1061,7 +1066,7 @@ async def wait_for_inbox(
                 member = db.get(ProjectMemberDB, member_id)
                 if member is None:
                     raise ProjectError(401, "Unknown member")
-                entries, fresh = read_inbox(db, member, after, limit)
+                entries, fresh = read_inbox(db, member, after, limit, wake_only)
                 remaining = deadline - loop.time()
                 if fresh or remaining <= 0 or wait <= 0:
                     items = serialize_items(db, [item for item, _ in entries])
@@ -1188,6 +1193,7 @@ def serialize_items(db: Session, items: list[WorkItemDB]) -> list[dict[str, Any]
             channel_id=project.channel_id if project else None,
             notice_message_id=item.notice_message_id,
             open_questions=open_questions.get(item.item_id, 0),
+            fyi=bool(item.fyi),
         )
         out.append(public.model_dump(mode="json", by_alias=True))
     return out
@@ -1342,6 +1348,7 @@ def create_mention_items(
     channel_id: str,
     text: str,
     addresses: list[str],
+    fyi: bool = False,
 ) -> tuple[list[dict[str, Any]], Effects]:
     """One ``instruction`` work item per durable address of a channel message.
 
@@ -1364,6 +1371,7 @@ def create_mention_items(
                     body=text[:WORK_ITEM_BODY_MAX],
                     context={"channel_id": channel_id, "message_id": message_id},
                     client_id=f"mention:{message_id}:{address}",
+                    fyi=fyi,
                 ),
             )
         except ProjectError as exc:  # The message is committed; log and go on.

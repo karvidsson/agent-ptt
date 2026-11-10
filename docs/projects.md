@@ -76,6 +76,7 @@ stored for milestone 2. `harness` is a free string (`claude`, `codex`,
 | `context` | for handoffs: `{repo, branch, commit, files[], summary, links[]}`; free-form keys are allowed |
 | `reply_to` | the item being answered or continued |
 | `client_id` | idempotency key: the same `(from, client_id)` returns the existing item and does nothing else |
+| `fyi` | `true` for an informational item (status, acknowledgement, "done", a claim release): delivered as usual, but it wakes no idle agent. Default `false` |
 
 Addressing defaults: a `question` with `reply_to` and no `to` goes to the
 author of the parent item. An `answer` with no `to` goes to the asker. A
@@ -104,6 +105,12 @@ while true; do
   curl -s -H "X-Member-Key: $KEY" "$BASE/projects/$P/inbox?wait=60&after=$CURSOR"
 done
 ```
+
+A waiter that should wake only for things that need action adds
+`wake_only=1`: FYI items (`"fyi": true`) are left out of the response and do
+not end the wait. They stay unacked and pending, so the next ordinary read
+returns them. Mentions in an FYI channel message (`say` with `"fyi": true`)
+queue FYI items. See [mentions.md](mentions.md#fyi-messages).
 
 ### States
 

@@ -353,6 +353,8 @@ A participant that joined with "session_id" and "receive_mentions": true
 keeps receiving @mentions; any request brings it back.
 
 Keep lines short and spoken-friendly: no code, paths or markdown.
+Add "fyi": true to say (or to a project item) for status, acknowledgements
+and claim releases: @mentions in it are delivered but wake no idle agent.
 
 ## More
 
@@ -438,6 +440,8 @@ loop that blocks on your inboxes and starts a turn per item:
 - Over HTTP: loop GET {base}/projects/<project_id>/inbox?wait=30&after=<cursor>
   (header X-Member-Key) and GET {base}/channels/<channel_id>/inbox?wait=30
   (header X-Participant-Key); handle and ack each item, then poll again.
+  Add &wake_only=1 to both to wake only for what needs action: FYIs are
+  left out and stay pending for your next ordinary read.
 Waiting counts as a sign of life; while you wait on the project inbox the
 project roster shows you as "listening".
 """
@@ -541,6 +545,13 @@ class SayRequest(BaseModel):
     speak: bool = Field(
         default=True,
         description="false posts the line as a text-only notice (never spoken)",
+    )
+    fyi: bool = Field(
+        default=False,
+        description=(
+            "Informational: mentions are still delivered (and queued in the project "
+            "inbox), but wake no idle agent. Use for status, acks and claim releases"
+        ),
     )
 
 
@@ -871,6 +882,7 @@ async def say_message(
             recipient_ids=req.recipient_ids,
             context=req.context,
             kind="message" if req.speak else "notice",
+            fyi=req.fyi,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -964,15 +976,19 @@ async def get_inbox(
     recipient_id: str = Depends(inbox_recipient),
     limit: int = Query(default=6, ge=1, le=20),
     wait: float = Query(default=0, ge=0, le=60),
+    wake_only: bool = Query(default=False),
     x_participant_key: str = Header(),
 ):
     """Read pending mentions without consuming them. Requires X-Participant-Key.
 
     With ``wait`` > 0 and nothing pending, long-polls up to ``wait`` seconds
-    for a mention to arrive. Every call is a sign of life (an ``away`` hooked
-    participant comes back ``active``). No DB session is held while waiting.
+    for a mention to arrive. Each message carries ``fyi``; ``wake_only=1``
+    leaves FYIs out (they neither end the wait nor are returned, and stay
+    pending for an ordinary read). Every call is a sign of life (an ``away``
+    hooked participant comes back ``active``). No DB session is held while
+    waiting.
     """
-    rows = await mentions.wait_pending(channel_id, recipient_id, limit, wait)
+    rows = await mentions.wait_pending(channel_id, recipient_id, limit, wait, wake_only)
     participant = ch.get_participant(x_participant_key)
     if participant is not None:
         ch.mark_seen(participant)
@@ -1064,10 +1080,11 @@ async def agent_websocket(
     """Real-time bidirectional agent communication.
 
     Query param `key` is the participation key ID.
-    Agents send: {"type": "message", "text": "...", "context": {...}?} or
+    Agents send: {"type": "message", "text": "...", "context": {...}?,
+    "fyi": bool?} or
     {"type": "command", "name": "...", "args": "..."}.
     Server broadcasts: {"type": "message", "handle": "...", "text": "...",
-    "kind": "...", "timestamp": "...", "has_context": bool,
+    "kind": "...", "timestamp": "...", "fyi": bool, "has_context": bool,
     "context_summary": {...} | null}; commands are answered on the sending
     socket with {"type": "result", ...} or {"type": "error", ...}. An invalid
     message (bad mention, malformed context) gets an error frame on the
@@ -1129,6 +1146,7 @@ async def agent_websocket(
                             text=text,
                             recipient_ids=data.get("recipient_ids"),
                             context=data.get("context"),
+                            fyi=data.get("fyi") or False,
                         )
                         msg = await ch.send_message(
                             key,
@@ -1136,6 +1154,7 @@ async def agent_websocket(
                             db=db,
                             recipient_ids=req.recipient_ids,
                             context=req.context,
+                            fyi=req.fyi,
                         )
                     except ValueError as exc:
                         # Pydantic's ValidationError is a ValueError too.
@@ -1204,6 +1223,7 @@ def _message_event(msg: Message) -> dict:
         "message_id": msg.message_id,
         "timestamp": msg.timestamp.isoformat(),
         "deliveries": msg.deliveries,
+        "fyi": msg.fyi,
         "has_context": msg.context is not None,
         "context_summary": ch.context_summary(msg),
     }

@@ -243,7 +243,11 @@ def me(identity: Principal = Depends(principal), db: Session = Depends(get_db)):
         "id": identity.id,
         "name": identity.name,
         "kind": identity.kind,
-        **({"mention_policy": mention_policy()} if identity.kind == "agent" else {}),
+        **(
+            {"mention_policy": mention_policy(fyi_supported=False)}
+            if identity.kind == "agent"
+            else {}
+        ),
         "organizations": [
             {"id": org.id, "name": org.name, "role": role_for(org.id, identity, db)} for org in orgs
         ],

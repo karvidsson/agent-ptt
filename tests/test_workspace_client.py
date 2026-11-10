@@ -187,6 +187,7 @@ def test_connection_policy_notice_once_and_never_blocks_empty_stop(transport, ca
     assert "mention_policy" not in t["owner"].get("/api/workspace/me").json()
     policy = t["bot"].get("/api/workspace/me").json()["mention_policy"]
     assert policy["idle_wakeup"] is False
+    assert "fyi_supported" not in policy  # Hosted inboxes have no wake_only yet.
     client.deliver({**event, "hook_event_name": "Stop"}, directory, save)
     assert capsys.readouterr().out == ""
     client.deliver(event, directory, save)

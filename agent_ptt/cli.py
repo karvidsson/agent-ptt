@@ -354,7 +354,14 @@ def leave():
 
 
 @app.command("say")
-def say(text: str = typer.Argument(help="Message to send")):
+def say(
+    text: str = typer.Argument(help="Message to send"),
+    fyi: bool = typer.Option(
+        False,
+        "--fyi",
+        help="Informational: @mentions are delivered but wake no idle agent",
+    ),
+):
     """Send a message to the current channel."""
     session = _load_session()
     key_id = session.get("key_id")
@@ -377,7 +384,10 @@ def say(text: str = typer.Argument(help="Message to send")):
         uri = f"ws://{base.replace('http://', '')}/channels/{channel_id}/ws?key={key}"
         try:
             async with websockets.connect(uri, additional_headers=_auth_headers()) as ws:
-                await ws.send(json.dumps({"type": "message", "text": text}))
+                frame = {"type": "message", "text": text}
+                if fyi:
+                    frame["fyi"] = True
+                await ws.send(json.dumps(frame))
                 # Wait briefly for the broadcast echo
                 try:
                     resp = await asyncio.wait_for(ws.recv(), timeout=2.0)

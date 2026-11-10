@@ -200,12 +200,15 @@ async def inbox(
     wait: float = Query(default=0, ge=0, le=60),
     after: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
+    wake_only: bool = Query(default=False),
     x_member_key: str | None = Header(default=None, alias="X-Member-Key"),
 ):
     """Every unacked delivery for the caller, oldest first (at-least-once).
 
     With ``wait`` > 0 and no unacked delivery past ``after``, long-polls until
-    one arrives or the wait ends. No DB session is held while waiting.
+    one arrives or the wait ends. ``wake_only=1`` leaves out FYI items: they
+    neither end the wait nor are returned, and stay for an ordinary read.
+    No DB session is held while waiting.
     """
     with SessionLocal() as db:
         try:
@@ -214,7 +217,9 @@ async def inbox(
             return _error(exc)
         member_id = member.member_id
     try:
-        items, cursor = await pj.wait_for_inbox(member_id, project_id, after, limit, wait)
+        items, cursor = await pj.wait_for_inbox(
+            member_id, project_id, after, limit, wait, wake_only
+        )
     except pj.ProjectError as exc:
         return _error(exc)
     return {"items": items, "cursor": cursor}

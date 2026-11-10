@@ -157,7 +157,10 @@ def resolve_recipients(
 
 
 def persist_deliveries(msg: Message, recipients: dict[str, str], db: Session) -> None:
-    """Participate in the caller's message transaction; do not commit here."""
+    """Participate in the caller's message transaction; do not commit here.
+
+    An FYI message's deliveries are stored with ``wake=False``.
+    """
     for recipient_id, handle in recipients.items():
         db.add(
             MessageDeliveryDB(
@@ -166,6 +169,7 @@ def persist_deliveries(msg: Message, recipients: dict[str, str], db: Session) ->
                 channel_id=msg.channel_id,
                 handle=handle,
                 created_at=msg.timestamp,
+                wake=not msg.fyi,
             )
         )
     msg.deliveries = [
@@ -189,20 +193,35 @@ def attach_receipts(messages: list[Message], channel_id: str, db: Session) -> No
             )
 
 
-def pending(channel_id: str, recipient_id: str, db: Session, limit: int = 6) -> list[dict]:
-    rows = (
-        db.query(MessageDB)
+def pending(
+    channel_id: str, recipient_id: str, db: Session, limit: int = 6, wake_only: bool = False
+) -> list[dict]:
+    """Unacked mentions, oldest first; ``wake_only`` leaves out FYIs.
+
+    Each message carries ``fyi`` (true when its delivery does not wake).
+    """
+    query = (
+        db.query(MessageDB, MessageDeliveryDB.wake)
         .join(MessageDeliveryDB, MessageDB.message_id == MessageDeliveryDB.message_id)
         .filter(
             MessageDeliveryDB.channel_id == channel_id,
             MessageDeliveryDB.recipient_id == recipient_id,
             MessageDeliveryDB.delivered_at.is_(None),
         )
-        .order_by(MessageDeliveryDB.created_at, MessageDeliveryDB.message_id)
+    )
+    if wake_only:
+        query = query.filter(MessageDeliveryDB.wake.is_(True))
+    rows = (
+        query.order_by(MessageDeliveryDB.created_at, MessageDeliveryDB.message_id)
         .limit(limit)
         .all()
     )
-    return [Message.model_validate(row).model_dump(mode="json") for row in rows]
+    out = []
+    for row, wake in rows:
+        data = Message.model_validate(row).model_dump(mode="json")
+        data["fyi"] = wake is False
+        out.append(data)
+    return out
 
 
 def acknowledge(channel_id: str, recipient_id: str, ids: list[str], db: Session) -> None:
@@ -243,10 +262,14 @@ def reset_runtime_state() -> None:
     _inbox_events.clear()
 
 
-async def wait_pending(channel_id: str, recipient_id: str, limit: int, wait: float) -> list[dict]:
+async def wait_pending(
+    channel_id: str, recipient_id: str, limit: int, wait: float, wake_only: bool = False
+) -> list[dict]:
     """``pending``, long-polling up to ``wait`` s while the inbox is empty.
 
-    No DB session is held while waiting: each check opens and closes one.
+    With ``wake_only`` an FYI neither ends the wait nor is returned; it stays
+    pending for the next ordinary read. No DB session is held while waiting:
+    each check opens and closes one.
     """
     from agent_ptt.db import SessionLocal
 
@@ -257,7 +280,7 @@ async def wait_pending(channel_id: str, recipient_id: str, limit: int, wait: flo
         event = _inbox_events.setdefault(key, asyncio.Event())
         event.clear()
         with SessionLocal() as db:
-            rows = pending(channel_id, recipient_id, db, limit)
+            rows = pending(channel_id, recipient_id, db, limit, wake_only)
         remaining = deadline - loop.time()
         if rows or remaining <= 0:
             return rows

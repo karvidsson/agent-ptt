@@ -103,6 +103,26 @@ the sender gets a `{"type": "queued", "message_id", "queued_items"}` frame.
 
 Outside project channels nothing changes, apart from the clearer `422`.
 
+
+## FYI messages
+
+Not every mention needs an answer. A status line, an acknowledgement, a "done"
+or a claim release can go out as an FYI: `POST /channels/{id}/say` with
+`"fyi": true` (CLI `agent-ptt say --fyi`, plugin `ptt say --fyi`). Its mentions
+resolve and fan out as usual, including durable project-inbox items for away
+members, roles and `@project`, but every delivery and item it creates is
+non-waking:
+
+- a waiter that reads with `wake_only=1` (the plugins' `ptt wait` and Codex
+  Stop wait) neither sees it nor wakes for it;
+- it stays pending, not acked and not hidden, so the agent's next ordinary
+  read (its next prompt or tool hook, or a wake for something else) delivers it;
+- inbox messages and project items carry `"fyi": true`.
+
+Questions and handoffs should go without `fyi`, so they wake the recipient.
+The project-channel notices the server posts itself (claims, releases, state
+changes) are text-only notices and wake no one, FYI or not.
+
 ## API
 
 Register a receiver with the usual join endpoint:
@@ -135,7 +155,7 @@ Message/history responses include `deliveries`, each containing `recipient_id`,
 
 | Endpoint | Request | Result |
 |----------|---------|--------|
-| `GET /channels/{id}/inbox?limit=6&wait=0` | `X-Participant-Key` header; limit 1–20; `wait` 0–60 s | Oldest pending messages; reading does not consume them. With `wait` > 0 and nothing pending, long-polls until a mention arrives or the wait ends. Every read is a sign of life. |
+| `GET /channels/{id}/inbox?limit=6&wait=0&wake_only=0` | `X-Participant-Key` header; limit 1–20; `wait` 0–60 s | Oldest pending messages, each with `fyi`; reading does not consume them. With `wait` > 0 and nothing pending, long-polls until a mention arrives or the wait ends. `wake_only=1` leaves FYIs out: they neither end the wait nor are returned, and stay pending for the next ordinary read. Every read is a sign of life. |
 | `POST /channels/{id}/inbox/ack` | Same header; `{"message_ids": ["..."]}` (1–20 IDs) | Idempotent acknowledgement of this recipient's deliveries. |
 
 Both endpoints also require the configured server API key, like other REST
@@ -155,8 +175,11 @@ Two additive tables are created by `init_db()` without altering existing tables:
 
 - `mention_receivers`: participation key → stable recipient ID and channel.
 - `message_deliveries`: composite `(message_id, recipient_id)` key, channel,
-  display name snapshot, creation time, and optional delivery time. A composite
-  index supports pending inbox queries.
+  display name snapshot, creation time, optional delivery time, and `wake`
+  (false for an FYI). A composite index supports pending inbox queries.
+
+`init_db()` adds `message_deliveries.wake` (default true) and `messages.fyi`
+(default false) to older databases with an idempotent `ALTER TABLE`.
 
 Deleting a channel removes its receiver bindings and delivery rows. Existing
 messages are not retroactively converted to mentions.
@@ -165,6 +188,8 @@ messages are not retroactively converted to mentions.
 
 `tests/test_mentions.py` covers REST/WebSocket routing, restart/rejoin recovery,
 transaction failures, receipts, and receiver/channel isolation.
+`tests/test_fyi.py` covers FYI deliveries, `wake_only` reads and long-polls on
+both inboxes, and the database upgrade.
 `tests/test_receive.py` runs the hook against the test API, including stdout
 handoff, acknowledgement retry, concurrency, throttling, and channel switching.
 
@@ -191,9 +216,15 @@ receive the same contract through authenticated `GET /api/workspace/me`.
   "check_on": ["UserPromptSubmit", "PostToolUse", "Stop"],
   "idle_wakeup": false,
   "wait_supported": true,
-  "wait_max_seconds": 60
+  "wait_max_seconds": 60,
+  "fyi_supported": true
 }
 ```
+
+`fyi_supported` means `say` and project items take `"fyi": true` and both
+inboxes take `?wake_only=1` (see [FYI messages](#fyi-messages)). A plugin
+sends either only when the server advertises it. Hosted workspaces leave the
+key out: their inbox has no `wake_only` yet.
 
 `wait_supported` / `wait_max_seconds` advertise the inbox long-poll. They are
 additive keys on version 1, so plugins that accept only version 1 with

@@ -279,6 +279,8 @@ def _item_line(item: dict) -> str:
         line += f"  ?{item['open_questions']}"
     if item.get("reply_to"):
         line += f"  ↳ {_short(item['reply_to'])}"
+    if item.get("fyi"):
+        line += "  FYI"
     return line
 
 
@@ -707,8 +709,11 @@ def _send(
     reply_to: str | None = None,
     context: dict | None = None,
     client_id: str | None = None,
+    fyi: bool = False,
 ) -> dict:
     payload: dict = {"kind": kind, "body": body, "client_id": client_id or str(uuid.uuid4())}
+    if fyi:
+        payload["fyi"] = True
     if to:
         payload["to"] = to
     if title:
@@ -750,6 +755,9 @@ def send(
     links: list[str] = typer.Option(None, "--link", help="A related URL (repeatable)"),
     resource: str = typer.Option(None, "--resource", help="Resource for claim, e.g. branch:x"),
     client_id: str = typer.Option(None, "--client-id", help="Idempotency key (default: random)"),
+    fyi: bool = typer.Option(
+        False, "--fyi", help="Informational: delivered, but wakes no idle agent"
+    ),
     as_json: bool = _JSON,
 ):
     """Send a work item to an agent, a role or the whole project."""
@@ -779,6 +787,7 @@ def send(
         reply_to=reply_to,
         context=context or None,
         client_id=client_id,
+        fyi=fyi,
     )
     _report_sent(item, as_json)
 

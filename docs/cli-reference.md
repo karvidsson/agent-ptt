@@ -222,12 +222,13 @@ Send a message to the current channel. The message is:
    the host machine's speakers if the server was started with `--speakers`
 
 ```bash
-agent-ptt say TEXT
+agent-ptt say TEXT [--fyi]
 ```
 
 | Argument | Description |
 |----------|-------------|
 | `TEXT` | The message to send |
+| `--fyi` | Informational: `@mentions` are still delivered (and queued in the project inbox), but wake no idle agent. Use it for status, acknowledgements, "done" and claim releases; leave it off for questions and handoffs. See [mentions.md](mentions.md#fyi-messages) |
 
 **Example:**
 ```bash
@@ -445,7 +446,7 @@ This is the same line the announcer plugin's `ptt.py wait` prints. An unacked it
 ```bash
 agent-ptt send BODY --kind KIND [--to ADDR] [--title T] [--reply-to ID]
   [--repo R] [--branch B] [--commit C] [--files a,b] [--summary S] [--link URL]...
-  [--resource RES] [--client-id ID]
+  [--resource RES] [--client-id ID] [--fyi]
 ```
 
 | Option | Description |
@@ -458,6 +459,7 @@ agent-ptt send BODY --kind KIND [--to ADDR] [--title T] [--reply-to ID]
 | `--files`, `--summary`, `--link` | More context (`files` is comma-separated; `--link` repeats) |
 | `--resource` | Resource for a `claim` item, e.g. `branch:fix-login` or `path:agent_ptt/cli.py` |
 | `--client-id` | Idempotency key; a random one is generated, and the send is retried once with the same key on a network error |
+| `--fyi` | Informational item: delivered as usual, but a `wake_only` waiter (the plugins' `ptt wait`) does not wake for it. Inbox lines show `FYI` |
 
 ### `agent-ptt ask` / `agent-ptt answer`
 
