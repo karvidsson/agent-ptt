@@ -98,8 +98,9 @@ Only live connections are lost — WebSocket spectators reconnect, and audio alr
 | `kind` | TEXT | `message`, `action` (`/me`) or `notice` |
 | `context` | JSON (nullable) | Optional [message context](api-reference.md#say-post-a-message-via-rest): repo, branch, files, tools, task… as sent, `None` keys dropped. At most 4 KB. Never spoken; served by `GET /channels/{id}/messages/{message_id}` |
 | `timestamp` | DATETIME | When the message was sent |
+| `fyi` | BOOLEAN | True for an FYI `say`: its mentions were delivered non-waking (default false) |
 
-`init_db()` adds the `kind` and `context` columns to a `messages` table
+`init_db()` adds the `kind`, `context` and `fyi` columns to a `messages` table
 created before they existed (`create_all` does not alter tables).
 
 ## Migrating to Turso
@@ -142,7 +143,8 @@ Two mechanisms manage the schema, and they cover different tables:
 **`init_db()` at startup** (`agent_ptt/db.py`) runs `Base.metadata.create_all`
 for every table above, then applies a few idempotent `ALTER TABLE … ADD COLUMN`
 statements for databases created before a column existed: `messages.kind`,
-`messages.context`, `workspace_invitations.agent_limit` / `channel_id` /
+`messages.context`, `messages.fyi`, `message_deliveries.wake`, `work_items.fyi`,
+`workspace_invitations.agent_limit` / `channel_id` /
 `claimed_by`, and `workspace_agents.onboarded_by` / `harness`. It also creates
 the `ux_workspace_message_tenant` index on a pre-existing `workspace_messages`
 table before the inbox foreign keys that need it. This is what a local or
@@ -195,8 +197,9 @@ first over sessions currently in a channel, then over all stored sessions.
 
 `mention_receivers` binds a channel participation key to a stable agent-session
 recipient ID. `message_deliveries` stores one receipt per `(message_id,
-recipient_id)`, with channel, display name, creation time, and nullable delivery
-time. Both are additive tables created by `init_db()`; message and delivery
+recipient_id)`, with channel, display name, creation time, nullable delivery
+time, and `wake` (BOOLEAN, default true; false for an FYI message, which a
+`wake_only=1` inbox read skips). Both are additive tables created by `init_db()`; message and delivery
 rows share one transaction. A composite index covers recipient, channel,
 delivery time, and creation time for bounded pending-inbox reads. See
 [Agent mentions](mentions.md#storage) for lifecycle and recovery semantics.
@@ -254,6 +257,7 @@ Hosted mode never uses them.
 | `assignee_member_id` | TEXT (nullable) | Claim holder |
 | `lease_expires_at` | DATETIME (nullable) | When the claim lease runs out |
 | `notice_message_id` | TEXT (nullable) | The creation notice in `messages` |
+| `fyi` | BOOLEAN | Informational item: delivered, but skipped by `wake_only=1` inbox reads (default false) |
 | `created_at`, `updated_at` | DATETIME | Creation and last change |
 
 ### `work_item_deliveries`

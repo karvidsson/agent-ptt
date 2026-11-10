@@ -20,7 +20,19 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import JSON, Column, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    true,
+)
 from sqlalchemy.orm import DeclarativeBase
 
 # ---------------------------------------------------------------------------
@@ -128,6 +140,8 @@ class MessageDB(Base):
     timestamp = Column(DateTime, default=lambda: datetime.now(UTC))
     # Optional MessageContext (see the Pydantic model); never spoken.
     context = Column(JSON, nullable=True)
+    # FYI: its mentions are delivered but wake no one (see docs/mentions.md).
+    fyi = Column(Boolean, nullable=False, default=False, server_default=false())
 
 
 class MentionReceiverDB(Base):
@@ -154,6 +168,8 @@ class MessageDeliveryDB(Base):
     handle = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
     delivered_at = Column(DateTime, nullable=True)
+    # False for an FYI: still delivered, but a ``wake_only`` long-poll skips it.
+    wake = Column(Boolean, nullable=False, default=True, server_default=true())
 
 
 class ProjectDB(Base):
@@ -211,6 +227,8 @@ class WorkItemDB(Base):
     assignee_member_id = Column(String, nullable=True)
     lease_expires_at = Column(DateTime, nullable=True)
     notice_message_id = Column(String, nullable=True)
+    # FYI: delivered like any item, but a ``wake_only`` inbox read skips it.
+    fyi = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
@@ -376,6 +394,8 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     deliveries: list[dict[str, Any]] = Field(default_factory=list)
     context: MessageContext | None = None
+    # FYI: mentions are delivered but wake no idle agent.
+    fyi: bool = False
     # Durable mentions queued in the project inbox by this message:
     # [{"item_id", "to", "to_label"}]. Returned by say, not stored on the row.
     _queued_items: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -395,6 +415,11 @@ class Message(BaseModel):
     def _default_kind(cls, value: Any) -> Any:
         # Rows archived before `kind` existed (and unflushed ORM rows) carry None.
         return "message" if value is None else value
+
+    @field_validator("fyi", mode="before")
+    @classmethod
+    def _default_fyi(cls, value: Any) -> Any:
+        return False if value is None else value
 
 
 class Channel(BaseModel):
@@ -567,6 +592,8 @@ class WorkItemOut(BaseModel):
     channel_id: str | None = None
     notice_message_id: str | None = None
     open_questions: int = 0
+    # FYI: delivered, but wakes no idle agent (``wake_only`` reads skip it).
+    fyi: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -579,6 +606,10 @@ class WorkItemCreate(BaseModel):
     context: dict[str, Any] | None = None
     reply_to: str | None = None
     client_id: str | None = Field(default=None, min_length=1, max_length=200)
+    fyi: bool = Field(
+        default=False,
+        description="Informational: delivered as usual, but wakes no idle agent",
+    )
 
     @field_validator("body")
     @classmethod

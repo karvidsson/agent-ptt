@@ -538,6 +538,15 @@ def test_send_note_has_no_context_and_claim_has_resource(joined):
     assert joined.last("POST")["json"]["context"] == {"resource": "branch:x"}
 
 
+def test_send_fyi_flag(joined):
+    joined.on("POST", f"/projects/{PROJECT}/items", _echo_item)
+    run("send", "Released branch:x", "--kind", "note", "--to", "project")
+    assert "fyi" not in joined.last("POST")["json"]
+    result = run("send", "Released branch:x", "--kind", "note", "--to", "project", "--fyi")
+    assert result.exit_code == 0, result.output
+    assert joined.last("POST")["json"]["fyi"] is True
+
+
 def test_send_retries_once_with_same_client_id(joined):
     joined.on("POST", f"/projects/{PROJECT}/items", _echo_item)
     joined.fail_next = 1

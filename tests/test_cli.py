@@ -371,6 +371,16 @@ def test_say_sends_with_saved_key(session, fake_ws, monkeypatch):
     assert f"key={KEY}" in fake_ws.sent[0][0]
 
 
+def test_say_fyi_flag_marks_the_frame(session, fake_ws, monkeypatch):
+    fake_ws.refused = set()
+    _route_posts(monkeypatch, {})
+    assert runner.invoke(cli.app, ["say", "plain"]).exit_code == 0
+    assert "fyi" not in fake_ws.sent[-1][1]  # Old servers see the same frame as before.
+    result = runner.invoke(cli.app, ["say", "--fyi", "build is green"])
+    assert result.exit_code == 0, result.output
+    assert fake_ws.sent[-1][1] == {"type": "message", "text": "build is green", "fyi": True}
+
+
 def test_say_rejoins_once_when_key_was_dropped(session, fake_ws, monkeypatch):
     saved = json.loads(session.read_text())
     session.write_text(json.dumps({**saved, "voice": "marius"}))

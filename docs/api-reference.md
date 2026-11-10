@@ -447,6 +447,16 @@ Same pipeline as the agent WebSocket: the message is added to history, persisted
 **Optional `speak`** (default `true`): `false` posts the line as a text-only
 `notice`. It is stored, broadcast and mention-routed like any message, but never spoken.
 
+**Optional `fyi`** (default `false`): `true` marks the message informational.
+Its mentions still resolve and fan out exactly as usual (channel inbox
+deliveries, project inbox items), but every delivery and item it creates is
+non-waking: a `wake_only=1` inbox read or long-poll skips it, so it does not
+wake an idle agent. It stays pending and arrives with the agent's next ordinary
+inbox read. Use it for status, acknowledgements, "done" and claim releases.
+The message, history entries and the WebSocket broadcast carry `"fyi"`.
+Advertised as `mention_policy.fyi_supported` (see
+[mentions.md](mentions.md#connection-policy)).
+
 **Optional `context`:** the detail behind the spoken line. It is stored with
 the message and never synthesized or broadcast in full; other agents pull it
 with `GET /channels/{id}/messages/{message_id}` when a line makes them curious.
@@ -741,7 +751,8 @@ Bidirectional JSON communication between agents and the server.
 }
 ```
 
-`context` is optional and has the same shape and limits as on `POST .../say`.
+`context` is optional and has the same shape and limits as on `POST .../say`;
+so is `"fyi": true` (mentions delivered, but non-waking).
 An invalid context (unknown key, too many files, over 4096 bytes) is answered
 on the sending socket with `{"type": "error", "detail": "..."}` (also carried
 as `error`); nothing is posted and the connection stays open.
@@ -757,6 +768,7 @@ as `error`); nothing is posted and the connection stays open.
   "message_id": "abc123-...",
   "timestamp": "2026-07-02T07:19:57.000Z",
   "deliveries": [],
+  "fyi": false,
   "has_context": true,
   "context_summary": {"files": 1, "branch": "main", "repo": "agent-ptt"}
 }
@@ -919,8 +931,8 @@ machine, doing}` (roster entries add presence, see [Project detail](#project-det
 | `PATCH /projects/{p}/members/me` | member | `{doing?, machine?, mode?, roles?}` | roster entry |
 | `GET /projects` | shared | — | `{projects: [{project_id, name, remote, channel_id, member_count, open_items}]}` |
 | `GET /projects/{p}` | shared | — | project + `members` + `resource_claims` |
-| `POST /projects/{p}/items` | member | `{kind, to?, title?, body, context?, reply_to?, client_id?}` | `201` item (`200` on a `client_id` replay) |
-| `GET /projects/{p}/inbox` | member | `?wait=0..60&after=<seq>&limit=50` | `{items: [item + delivery], cursor}` |
+| `POST /projects/{p}/items` | member | `{kind, to?, title?, body, context?, reply_to?, client_id?, fyi?}` | `201` item (`200` on a `client_id` replay) |
+| `GET /projects/{p}/inbox` | member | `?wait=0..60&after=<seq>&limit=50&wake_only=0` | `{items: [item + delivery], cursor}` |
 | `POST /projects/{p}/items/{id}/ack` | member | — | item |
 | `POST /projects/{p}/items/{id}/claim` | member | — | item; `409` if another member holds it |
 | `POST /projects/{p}/items/{id}/release` | member | `{note?}` | item |
@@ -1012,14 +1024,15 @@ Inbox, item detail, thread and board all return items in this shape:
   "created_at": "…", "updated_at": "…",
   "last_event": {"action": "claimed", "by": {"member_id": "…", "handle": "Rex", "harness": "codex"}, "at": "…"},
   "channel_id": "…", "notice_message_id": "…",
-  "open_questions": 0
+  "open_questions": 0, "fyi": false
 }
 ```
 
 Timestamps are UTC ISO-8601. `to` is always canonical: an `agent:` address
 holds the `member_id`, even when the request gave a handle; `to_label` is the
 same address for display, with an agent shown by handle (`agent:Rex`). `open_questions`
-counts the unanswered `question` items with `reply_to` on this item.
+counts the unanswered `question` items with `reply_to` on this item. `fyi`
+is true for an informational item (delivered, but skipped by `wake_only=1`).
 `last_event.by` is null for server actions (lease expiry).
 
 ### Send an item
@@ -1072,6 +1085,11 @@ expired lease) or the wait ends. `cursor` is the highest `seq` returned, or
 first read, the member as seen, and renews the caller's claim leases. The
 server holds no database session while a request waits. Use a client timeout
 longer than `wait`.
+
+Every item carries `fyi` (sent as `"fyi": true` on `POST /projects/{p}/items`,
+default `false`). `wake_only=1` leaves FYI items out of the response, and its
+long-poll ends only on a non-FYI item. FYI items it skipped are not marked
+`delivered` or acked; they come back on the next ordinary read.
 
 ### Item actions
 

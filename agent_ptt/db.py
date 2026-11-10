@@ -50,6 +50,15 @@ def init_db() -> None:
             )
         if "context" not in columns:
             connection.execute(text("ALTER TABLE messages ADD COLUMN context JSON"))
+        # FYI messages and items (legacy tables; no Alembic revision).
+        for table, name, definition in (
+            ("messages", "fyi", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("message_deliveries", "wake", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("work_items", "fyi", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ):
+            existing = {c["name"] for c in inspect(connection).get_columns(table)}
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
         # Project member presence (legacy table; no Alembic revision).
         if inspect(connection).has_table("project_members"):
             existing = {c["name"] for c in inspect(connection).get_columns("project_members")}

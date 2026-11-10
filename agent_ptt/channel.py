@@ -146,6 +146,7 @@ def restore_channels(db: Session) -> list[Channel]:
                     kind=msg_row.kind or "message",
                     timestamp=_as_utc(msg_row.timestamp),
                     context=msg_row.context,
+                    fyi=bool(msg_row.fyi),
                 )
             )
 
@@ -424,6 +425,7 @@ async def send_message(
     recipient_ids: list[str] | None = None,
     kind: MessageKind = "message",
     context: MessageContext | None = None,
+    fyi: bool = False,
 ) -> Message | None:
     """Post a text message from a participant.
 
@@ -432,7 +434,8 @@ async def send_message(
     for TTS synthesis. ``kind`` marks ``/me`` actions and ``/notice``
     notices; the TTS worker decides how (and whether) to speak them.
     ``context`` is the optional detail behind the line; it is stored and
-    served on request but never spoken or broadcast in full.
+    served on request but never spoken or broadcast in full. ``fyi`` marks
+    every mention delivery and project-inbox item it creates as non-waking.
     """
     participant = get_participant(key_id)
     if participant is None or participant.channel_id is None:
@@ -459,6 +462,7 @@ async def send_message(
         text=text,
         kind=kind,
         context=context,
+        fyi=fyi,
     )
 
     # Persist to DB
@@ -472,6 +476,7 @@ async def send_message(
             kind=msg.kind,
             timestamp=msg.timestamp,
             context=context.model_dump(mode="json", exclude_none=True) if context else None,
+            fyi=fyi,
         )
         db.add(db_msg)
         persist_deliveries(msg, recipients, db)
@@ -486,6 +491,7 @@ async def send_message(
                 channel.channel_id,
                 text,
                 durable,
+                fyi=fyi,
             )
             msg._queued_items = refs
             msg._followups = (project.project_id, effects)
