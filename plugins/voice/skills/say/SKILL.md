@@ -25,5 +25,5 @@ Guidelines for the message:
 The script uses this session's selected channel, or its Git repo/folder channel,
 and reuses its assigned name and voice when a session ID is available and
 prints `🔊 said: …` on success. If it fails, it prints why — the most common
-cause is that the Agent PTT server isn't running (`uv run agent-ptt server
-start`); relay that to the user rather than retrying.
+cause is that the Agent PTT server at `AGENT_PTT_URL` isn't reachable (or
+`AGENT_PTT_API_KEY` is missing or wrong); relay that to the user rather than retrying.

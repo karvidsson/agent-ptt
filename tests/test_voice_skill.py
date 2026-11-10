@@ -55,7 +55,7 @@ def test_fails_loud_when_server_down():
     proc = _run_say(["announce the deploy"], "http://localhost:19999")
     assert proc.returncode == 1
     assert "agent-ptt say failed" in proc.stderr
-    assert "uv run agent-ptt server start" in proc.stderr
+    assert "AGENT_PTT_URL" in proc.stderr
 
 
 def test_usage_error_without_message():

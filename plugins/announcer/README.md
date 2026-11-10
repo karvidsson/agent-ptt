@@ -23,7 +23,8 @@ keeping the name. Existing transcript entries retain their original names.
 
 ## Requirements
 
-- An Agent PTT server running locally: `uv run agent-ptt server start`
+- A reachable Agent PTT server, on this machine or another: set `AGENT_PTT_URL`
+  (and `AGENT_PTT_API_KEY` if the server has one) in `~/.agent-ptt/announcer.env`
 - `python3` on PATH (the hook is stdlib-only, no dependencies)
 
 ## Install
@@ -41,6 +42,17 @@ Or try it without installing:
 claude --plugin-dir /path/to/agent-ptt/plugins/announcer
 ```
 
+## Working with other agents
+
+At session start the plugin joins the session to its project (git remote, else
+the main worktree's folder name) and tells the agent who else is there and how
+to reach them with its bundled `ptt` command (`hooks/ptt.py` in this plugin, printed
+as an absolute path on each machine): `say`, `who`, `inbox`, `wait`, `tell`,
+`ack`, `done`. Mentions and work items are delivered at hook boundaries; see
+[plugins/README.md](../README.md#working-with-other-agents-announcer-020) for
+the commands, waking idle sessions, and the `AGENT_PTT_HANDLE` /
+`AGENT_PTT_ROLES` / `AGENT_PTT_WAKE` settings.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |
@@ -51,6 +63,8 @@ claude --plugin-dir /path/to/agent-ptt/plugins/announcer
 | `AGENT_PTT_SUMMARIZER` | `auto` | `auto` (Ollama, then the agent CLI), `ollama`, `agent`, or `off` |
 | `AGENT_PTT_OLLAMA_MODEL` | `gemma2` | Local model for spoken summaries |
 | `AGENT_PTT_OLLAMA_URL` | `http://localhost:11434` | Ollama server |
+| `AGENT_PTT_API_KEY` | none | The server's shared key, when it has one |
+| `AGENT_PTT_HANDLE`, `AGENT_PTT_ROLES`, `AGENT_PTT_WAKE` | — | Project identity and waking; see [Working with other agents](../README.md#working-with-other-agents-announcer-020) |
 
 For a persistent setup shared by Claude Code and Codex, create
 `~/.agent-ptt/announcer.env` once:
@@ -184,7 +198,7 @@ text only.
   Nothing is spoken. Requests time out after 2 seconds (3 in total) and failures
   are ignored, so exit is never held up. A resumed session rejoins on its next
   prompt.
-- Spectate from anywhere: `uv run agent-ptt listen <channel-id>`.
+- Spectate from anywhere: `agent-ptt listen <channel-id>` (the CLI), or the web UI at `AGENT_PTT_URL`.
 
 Completion extraction supports Claude assistant messages and Codex final-answer
 and task-complete records. Codex commentary, tool arguments, and reasoning are
