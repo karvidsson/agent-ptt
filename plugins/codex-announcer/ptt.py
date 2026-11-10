@@ -626,10 +626,12 @@ POKE = (
     " Agent PTT hook attaches them to this prompt; handle them as its context says (if"
     " nothing is attached, they were handled already: just end the turn)."
 )
-REPOKE_SECONDS = 90.0
-MAX_POKES = 2
+# One poke per wake: Codex keeps queued input until the thread can take it, so a second
+# poke would only run later as a duplicate turn.
+MAX_POKES = 1
+STUCK_SECONDS = 90.0  # a poke no hook reacted to by then: the session is paused or closed
 WATCH_LIFETIME = 24 * 3600.0
-GIVE_UP_SECONDS = MAX_POKES * REPOKE_SECONDS + 30.0
+GIVE_UP_SECONDS = 210.0
 
 
 class CodexWatch:
@@ -653,6 +655,7 @@ class CodexWatch:
         self.batch = link.wake_batch_seconds()
         self.heartbeat = None
         self.unanswered_since: float | None = None  # first poke no hook has reacted to
+        self.stuck_noticed = False
 
     def _codex_queue(self, message: str) -> bool:
         binary = link.codex_binary()
@@ -679,9 +682,16 @@ class CodexWatch:
         if not pointer or pointer.get("ended"):
             return False
         if self.unanswered_since is not None:
+            waited = self.clock() - self.unanswered_since
             if float(pointer.get("turn_at") or 0) > self.unanswered_since:
                 self.unanswered_since = None  # a hook ran after our poke: the TUI is there
-            elif self.clock() - self.unanswered_since > GIVE_UP_SECONDS:
+                self.stuck_noticed = False
+            elif waited > STUCK_SECONDS and not self.stuck_noticed:
+                # Codex holds queued input after Esc (AgentStatus::Interrupted) until the
+                # user's next prompt; a closed window never takes it. Say so once.
+                self.stuck_noticed = True
+                self.notice_stuck()
+            if self.unanswered_since is not None and waited > GIVE_UP_SECONDS:
                 # In daemon mode we follow Codex's shared app-server, not the TUI: pokes
                 # nobody picks up mean the window was closed. The next session restarts us.
                 print("[ptt] codex-watch: pokes unanswered, the TUI is gone", file=sys.stderr)
@@ -708,16 +718,12 @@ class CodexWatch:
         return ids
 
     def due(self, ids: list[str]) -> list[str]:
+        if self.unanswered_since is not None:
+            return []  # a queued poke is still waiting: it delivers everything pending
         pointer = link.load_session(self.session.base, self.session.session_id)
         if link.is_busy(pointer, self.clock()):
             return []  # the hooks deliver during a turn and at its Stop
-        now = self.clock()
-        out = []
-        for entry_id in ids:
-            at, tries = self.poked.get(entry_id, (0.0, 0))
-            if not tries or (now - at > REPOKE_SECONDS and tries < MAX_POKES):
-                out.append(entry_id)
-        return out
+        return [i for i in ids if self.poked.get(i, (0.0, 0))[1] < MAX_POKES]
 
     def poke(self, ids: list[str]) -> bool:
         base, sid = self.session.base, self.session.session_id
@@ -741,6 +747,24 @@ class CodexWatch:
 
     def notice_cap(self, until: float) -> None:
         cap_notice(self.session, until, self.clock())
+
+    def notice_stuck(self) -> None:
+        me = self.session.member.get("handle") or self.session.agent
+        text = (
+            f"{me} isn't picking up wake-ups (its Codex window is paused after Esc, or"
+            " closed): new mentions wait for its next prompt."
+        )
+        with contextlib.suppress(Exception):
+            self.session.channel_call(
+                "POST",
+                "/channels/{cid}/say",
+                lambda state: {
+                    "key_id": state["key_id"],
+                    "text": text,
+                    "speak": False,
+                    "fyi": True,
+                },
+            )
 
     def step(self, wait: int, sleep) -> None:
         ids = self.waking(wait)

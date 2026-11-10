@@ -983,17 +983,13 @@ def test_codex_watch_pokes_an_idle_session_once_and_never_acks(env, capsys):
     ptt.link.mark_turn(session.base, "s1", False)
     watch.step(0, lambda s: None)
     assert queued == [ptt.POKE]
+    _mention_me(env, session, text_fmt="@{me} another")
+    now[0] += ptt.STUCK_SECONDS + 1
     watch.step(0, lambda s: None)
-    assert len(queued) == 1  # same mention: no second poke right away
-    now[0] += ptt.REPOKE_SECONDS + 1
-    watch.step(0, lambda s: None)
-    assert len(queued) == 2  # nobody picked it up: one retry
-    now[0] += ptt.REPOKE_SECONDS + 1
-    watch.step(0, lambda s: None)
-    assert len(queued) == 2  # at most MAX_POKES
+    assert len(queued) == 1  # the queued poke delivers everything: never a second one
     _, pending = session.channel_call("GET", "/channels/{cid}/inbox")
-    assert len(pending) == 1  # still pending: the UserPromptSubmit hook delivers and acks
-    assert len(ptt.link.load_session(session.base, "s1")["wakes"]) == 2
+    assert len(pending) == 2  # still pending: the UserPromptSubmit hook delivers and acks
+    assert len(ptt.link.load_session(session.base, "s1")["wakes"]) == 1
 
 
 def test_codex_watch_skips_busy_turns_and_fyis(env, capsys):
@@ -1021,10 +1017,18 @@ def test_codex_watch_honours_the_wake_cap_and_says_so_once(env, capsys, monkeypa
     now = [ptt.time.time()]
     watch, queued = _watch(env, session, now)
     ptt.link.mark_turn(session.base, "s1", False)
+
+    def turn_ran():  # the poke was picked up: a hook ran, the turn ended
+        ptt.link.save_session(session.base, "s1", turn="idle", turn_at=now[0] + 1)
+        now[0] += 2
+        assert watch.alive()
+
     _mention_me(env, session, text_fmt="@{me} first")
     watch.step(0, lambda s: None)
+    turn_ran()
     _mention_me(env, session, text_fmt="@{me} second")
     watch.step(0, lambda s: None)
+    turn_ran()
     _mention_me(env, session, text_fmt="@{me} third")
     watch.step(0, lambda s: None)
     assert len(queued) == 1
@@ -1225,8 +1229,12 @@ def test_codex_watch_gives_up_when_pokes_go_unanswered(env, capsys):
     _mention_me(env, session)
     watch.step(0, lambda s: None)
     assert queued and watch.alive()
-    now[0] += ptt.GIVE_UP_SECONDS + 1
-    assert not watch.alive()  # nobody picked the pokes up: the TUI is gone
+    now[0] += ptt.STUCK_SECONDS + 1
+    assert watch.alive() and watch.stuck_noticed  # paused or closed: say so once
+    history = env["client"].get(f"/channels/{session.channel()['channel_id']}/history").json()
+    assert sum("isn't picking up wake-ups" in m["text"] for m in history) == 1
+    now[0] += ptt.GIVE_UP_SECONDS
+    assert not watch.alive()  # nobody picked the poke up: give up
     watch.unanswered_since = now[0] - 10
     ptt.link.save_session(session.base, "s1", turn="busy", turn_at=now[0])  # a hook ran
     assert watch.alive() and watch.unanswered_since is None

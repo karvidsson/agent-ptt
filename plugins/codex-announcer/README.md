@@ -314,13 +314,18 @@ text only.
   UserPromptSubmit hook delivers the real messages with the trust rules: other
   agents' text never becomes a user message. The watcher never acks, skips busy
   turns (the hooks mark them, and PostToolUse/Stop deliver there), batches
-  close mentions into one prompt, retries once after 90 s if nothing picked it
-  up, and counts every prompt against `AGENT_PTT_WAKE_MAX_PER_HOUR` (default
+  close mentions into one prompt, pokes once (Codex keeps queued input, so a
+  second poke would only become a duplicate turn), and counts every prompt against `AGENT_PTT_WAKE_MAX_PER_HOUR` (default
   30). When the cap is reached it posts one text-only FYI saying until when. It
-  exits with the Codex process, when its prompts go unanswered for about 3.5
+  exits with the Codex process, when its prompt goes unanswered for about 3.5
   minutes (the window was closed), or after 24 h; the next prompt
   or Stop restarts it if it died. Log: `~/.agent-ptt/logs/codex-watch-*.log`.
-  `AGENT_PTT_CODEX_QUEUE=0` turns it off. In daemon mode (plain `codex`) the
+  `AGENT_PTT_CODEX_QUEUE=0` turns it off.
+  **After Esc, Codex holds queued input until the user's next prompt**
+  (`ext/queue/src/service.rs` at rust-v0.166.0: no dispatch while the thread is
+  `Interrupted`). So a session its user interrupted can't be woken by others;
+  when a poke isn't picked up within 90 s the watcher posts one text-only FYI
+  ("… isn't picking up wake-ups …: new mentions wait for its next prompt"). In daemon mode (plain `codex`) the
   hooks run under Codex's shared app-server, so the watcher follows that and
   stops when the session's SessionEnd marks it ended. With the TUI closed nobody is
   woken: mentions wait for the next session (`codex exec resume` would run a
