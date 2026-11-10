@@ -224,8 +224,10 @@ def mark_seen(participant: ParticipantKey) -> None:
     """
     now = datetime.now(UTC)
     participant.last_seen = now
-    if participant.state == "offline":
+    if participant.state == "offline" or (participant.state == "away" and participant.idle_away):
         participant.state = "active"
+        participant.away_reason = None
+        participant.idle_away = False
         participant.since = now
 
 
@@ -265,13 +267,45 @@ def idle_reap_message(grace: int) -> str:
     )
 
 
+DEFAULT_AWAY_REAP_SECONDS = 604800
+
+
+def away_reap_seconds() -> int:
+    """How long a hooked participant may stay away before it is removed; 0 = never.
+
+    Read from ``AGENT_PTT_AWAY_REAP_SECONDS`` (default 604800, 7 days); counted
+    on top of the idle grace. A bad value falls back to the default.
+    """
+    raw = os.environ.get("AGENT_PTT_AWAY_REAP_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_AWAY_REAP_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        logger.warning(
+            "Ignoring AGENT_PTT_AWAY_REAP_SECONDS=%r (not a non-negative integer); using %d",
+            raw,
+            DEFAULT_AWAY_REAP_SECONDS,
+        )
+        return DEFAULT_AWAY_REAP_SECONDS
+    return value
+
+
 def idle_participants(
-    now: datetime, grace: float, live_keys: Collection[str]
+    now: datetime, grace: float, live_keys: Collection[str], away_grace: float | None = None
 ) -> list[ParticipantKey]:
     """Participants to reap: no live agent WebSocket and unseen for over ``grace`` s.
 
-    Archived channels are skipped (their participants are already revoked).
+    A hooked participant (one with a mention receiver) is not reaped at the
+    grace (see ``idle_receivers``): only once unseen for ``grace + away_grace``
+    s, and never when ``away_grace`` is 0. ``away_grace`` None reads
+    ``AGENT_PTT_AWAY_REAP_SECONDS``. Archived channels are skipped (their
+    participants are already revoked).
     """
+    if away_grace is None:
+        away_grace = away_reap_seconds()
     stale: list[ParticipantKey] = []
     for channel in _channels.values():
         if channel.archived:
@@ -279,9 +313,41 @@ def idle_participants(
         for participant in channel.participants.values():
             if participant.key_id in live_keys:
                 continue
-            if (now - participant.last_seen).total_seconds() > grace:
+            unseen = (now - participant.last_seen).total_seconds()
+            if participant.mention_id:
+                if away_grace > 0 and unseen > grace + away_grace:
+                    stale.append(participant)
+            elif unseen > grace:
                 stale.append(participant)
     return stale
+
+
+def idle_receivers(now: datetime, grace: float, live_keys: Collection[str]) -> list[ParticipantKey]:
+    """Hooked participants unseen past ``grace`` that are not yet ``away``.
+
+    The reaper marks them away (``idle_away``) instead of removing them: they
+    keep their seat and keep receiving mentions in their channel inbox.
+    """
+    found: list[ParticipantKey] = []
+    for channel in _channels.values():
+        if channel.archived:
+            continue
+        for participant in channel.participants.values():
+            if (
+                participant.mention_id
+                and participant.key_id not in live_keys
+                and participant.state != "away"
+                and (now - participant.last_seen).total_seconds() > grace
+            ):
+                found.append(participant)
+    return found
+
+
+def mark_idle_away(participant: ParticipantKey, now: datetime | None = None) -> None:
+    participant.state = "away"
+    participant.away_reason = "idle"
+    participant.idle_away = True
+    participant.since = now or datetime.now(UTC)
 
 
 def leave_channel(channel_id: str, key_id: str, db: Session) -> bool:
@@ -376,10 +442,15 @@ async def send_message(
     if channel is None or channel.archived:
         return None
 
-    from agent_ptt.mentions import persist_deliveries, resolve_recipients
+    from agent_ptt import projects as pj
+    from agent_ptt.mentions import notify, persist_deliveries, resolve_recipients
 
-    recipients = resolve_recipients(channel, key_id, text, recipient_ids)
-    if recipients and len(text) > 8000:
+    # In a project's default channel, mentions of roles, the project and
+    # absent members are queued in the project inbox (see docs/mentions.md).
+    project = pj.project_for_channel(db, channel.channel_id) if db is not None else None
+    members = pj.project_members(db, project.project_id) if project is not None else None
+    recipients, durable = resolve_recipients(channel, key_id, text, recipient_ids, members)
+    if (recipients or durable) and len(text) > 8000:
         raise ValueError("Mention messages must be at most 8000 characters")
     msg = Message(
         channel_id=channel.channel_id,
@@ -405,6 +476,19 @@ async def send_message(
         db.add(db_msg)
         persist_deliveries(msg, recipients, db)
         db.commit()
+        notify(channel.channel_id, recipients)
+        if project is not None and durable:
+            refs, effects = pj.create_mention_items(
+                db,
+                project,
+                participant.handle,
+                msg.message_id,
+                channel.channel_id,
+                text,
+                durable,
+            )
+            msg._queued_items = refs
+            msg._followups = (project.project_id, effects)
 
     # Publish only after the message and its deliveries are durably committed.
     channel.messages.append(msg)
@@ -415,6 +499,25 @@ async def send_message(
         await queue.put(msg)
 
     return msg
+
+
+async def publish_followups(msg: Message) -> None:
+    """Post the notices and wake-ups of a message's durable mentions, once.
+
+    Callers run this after broadcasting the message itself, so listeners see
+    the line before the "X → role:reviewer · instruction · …" notice.
+    """
+    followups, msg._followups = msg._followups, None
+    if not followups:
+        return
+    from agent_ptt import projects as pj
+    from agent_ptt.db import SessionLocal
+
+    project_id, effects = followups
+    with SessionLocal() as db:
+        project = db.get(pj.ProjectDB, project_id)
+        if project is not None:
+            await pj.publish(db, project, effects)
 
 
 # The server registers how a message reaches the channel's agent WebSockets
@@ -623,6 +726,7 @@ async def run_command(
     if name == "away":
         participant.state = "away"
         participant.away_reason = args or None
+        participant.idle_away = False
         participant.since = datetime.now(UTC)
         return {"participant": participant.model_dump(mode="json")}
 
@@ -631,4 +735,5 @@ async def run_command(
         participant.since = datetime.now(UTC)
     participant.state = "active"
     participant.away_reason = None
+    participant.idle_away = False
     return {"participant": participant.model_dump(mode="json")}

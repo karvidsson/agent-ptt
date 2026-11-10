@@ -114,7 +114,10 @@ def test_join_auto_creates_project_and_channel_and_rejoins_by_key(client):
 def test_rejoin_keeps_roles_mode_and_harness_when_omitted(client):
     first = join(client, "Finn", roles=["dev"], mode="hooks", harness="codex")
     again = join(client, "Finn", member_key=first["member_key"])
-    assert again["member"] == {**first["member"], "handle": "Finn"}
+    moving = ("last_seen",)
+    assert {k: v for k, v in again["member"].items() if k not in moving} == {
+        k: v for k, v in first["member"].items() if k not in moving
+    }
     assert again["member"]["mode"] == "hooks"
     changed = join(client, "Finn", roles=[], mode="monitor", member_key=first["member_key"])
     assert changed["member"]["roles"] == []
@@ -489,6 +492,8 @@ def test_agent_addressed_items(client):
         "member_id": rex["member"]["member_id"],
         "handle": "Rex",
         "harness": "codex",
+        "machine": None,
+        "doing": None,
     }
 
     send(client, finn, expect=422, kind="instruction", to="agent:nobody", body="?")

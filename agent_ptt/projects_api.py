@@ -19,6 +19,7 @@ from agent_ptt.auth import require_api_key
 from agent_ptt.db import SessionLocal, get_db
 from agent_ptt.models import (
     MemberOut,
+    MemberPatch,
     ProjectDB,
     ProjectJoinRequest,
     ProjectJoinResponse,
@@ -76,6 +77,21 @@ def _member_out(member: ProjectMemberDB) -> MemberOut:
     )
 
 
+def _public_member(member: ProjectMemberDB, now: datetime | None = None) -> dict:
+    """The roster entry: presence and the mention text; never the member_key."""
+    now = now or pj.now_utc()
+    return ProjectMemberOut(
+        **_member_out(member).model_dump(),
+        last_seen=pj.as_utc(member.last_seen),
+        listening=pj.listening(member.member_id, now),
+        machine=member.machine,
+        doing=member.doing,
+        doing_at=pj.as_utc(member.doing_at),
+        presence=pj.presence(member, now),
+        mention=pj.mention_text(member.handle),
+    ).model_dump(mode="json")
+
+
 def _start_channel_worker(channel_id: str) -> None:
     # server.py owns the TTS workers; imported lazily (it includes this router).
     from agent_ptt import server
@@ -96,11 +112,14 @@ async def join_project(req: ProjectJoinRequest, db: Session = Depends(get_db)):
     if result.channel_created and result.project.channel_id:
         _start_channel_worker(result.project.channel_id)
     await pj.publish(db, result.project, result.effects)
-    return ProjectJoinResponse(
+    body = ProjectJoinResponse(
         project=ProjectOut(**_project_out(result.project)),
         member=_member_out(result.member),
         member_key=result.member.member_key,
     ).model_dump(mode="json")
+    body["member"] = _public_member(result.member)
+    body["resumed"] = result.resumed
+    return body
 
 
 @router.get("/projects")
@@ -128,19 +147,32 @@ async def project_detail(project_id: str, db: Session = Depends(get_db)):
     if project is None:
         raise HTTPException(404, "Project not found")
     now = pj.now_utc()
-    members = [
-        ProjectMemberOut(
-            **_member_out(member).model_dump(),
-            last_seen=pj.as_utc(member.last_seen),
-            listening=pj.listening(member.member_id, now),
-        ).model_dump(mode="json")
-        for member in pj.project_members(db, project_id)
-    ]
+    members = [_public_member(member, now) for member in pj.project_members(db, project_id)]
     return {
         **_project_out(project),
         "members": members,
         "resource_claims": pj.serialize_items(db, pj.active_resource_claims(db, project_id)),
     }
+
+
+@router.patch("/projects/{project_id}/members/me")
+async def update_me(
+    project_id: str,
+    req: MemberPatch,
+    x_member_key: str | None = Header(default=None, alias="X-Member-Key"),
+    db: Session = Depends(get_db),
+):
+    """Update your own presence (``doing``, ``machine``) or ``mode`` / ``roles``.
+
+    ``doing: ""`` clears it. Counts as seen. Returns your public roster entry.
+    """
+    try:
+        member = _authenticate(db, project_id, x_member_key)
+        effects = pj.update_member(db, member, req)
+    except pj.ProjectError as exc:
+        return _error(exc)
+    await pj.publish(db, db.get(ProjectDB, project_id), effects)
+    return _public_member(member)
 
 
 @router.post("/projects/{project_id}/items", status_code=201)
