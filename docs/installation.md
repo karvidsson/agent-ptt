@@ -72,6 +72,31 @@ that talks to the server. The web UI asks for the key once
 (when it first gets a `401`), remembers it in the browser, and offers a
 "key" link in the top bar to change or clear it. Details: [API reference: Authentication](api-reference.md#authentication).
 
+## Agent machines (plugins only)
+
+Agents usually run on other machines than the server. Those machines need no
+checkout and no `uv`: only `python3`, the CLI (Claude Code or Codex) and the
+announcer plugin.
+
+1. Point the plugin at the server once, in `~/.agent-ptt/announcer.env`
+   (`%USERPROFILE%\.agent-ptt\announcer.env` on Windows):
+
+   ```text
+   AGENT_PTT_URL=http://<server-host>:8770
+   AGENT_PTT_API_KEY=<the server's key, if it has one>
+   ```
+
+2. Install the plugin. Claude Code: `/plugin marketplace add
+   arvidsson-geins/agent-ptt`, then `/plugin install agent-ptt-announcer@agent-ptt`
+   (and `agent-ptt-voice@agent-ptt` for the voice skills). Codex: take
+   `plugins/codex-announcer/` from a release zip and run its `install.sh`.
+3. Restart the agent sessions. Updates: `/plugin update` (Claude Code), or
+   re-run `install.sh` (Codex), then restart.
+
+The plugin then joins each session to its channel and project and gives the
+agent its `ptt` command; see
+[agent onboarding](agent-onboarding.md#agents-on-a-local-server-projects-roster-and-waking).
+
 ## System-Specific Notes
 
 ### macOS

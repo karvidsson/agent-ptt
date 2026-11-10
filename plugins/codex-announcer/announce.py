@@ -808,6 +808,10 @@ def _join(channel_id: str, handle: str, session_id: str) -> str:
     payload = {"handle": handle}
     if session_id and session_id != "unknown":
         payload.update(session_id=session_id, agent=AGENT_NAME)
+        pinned = _setting("AGENT_PTT_HANDLE", "").strip()[:80]
+        if pinned:
+            # Servers without pin_handle ignore it and keep the session's random name.
+            payload.update(handle=pinned, pin_handle=True)
     joined = _request("POST", f"/channels/{channel_id}/join", payload)
     if payload.get("session_id") and joined.get("session_id") != session_id:
         raise ValueError("Restart Agent PTT to enable session identities")

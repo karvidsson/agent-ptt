@@ -161,8 +161,8 @@ def main() -> int:
     except Exception as e:
         print(
             f"agent-ptt say failed: {e}\n"
-            f"Is the server running? Start it with: uv run agent-ptt server start "
-            f"(server: {BASE_URL})",
+            f"Is the server at {BASE_URL} reachable? Set AGENT_PTT_URL (and "
+            "AGENT_PTT_API_KEY if it has one) in ~/.agent-ptt/announcer.env.",
             file=sys.stderr,
         )
         return 1

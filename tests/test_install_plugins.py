@@ -64,6 +64,7 @@ def test_install_codex_writes_fresh_hooks_json(tmp_path):
     command = config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert str(REPO_ROOT / "plugins" / "codex-announcer" / "announce.py") in command
     assert set(config["hooks"]) == {
+        "SessionStart",
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
@@ -90,7 +91,10 @@ def test_install_codex_replaces_stale_paths_and_keeps_other_hooks(tmp_path):
 
     config = json.loads(installer.install_codex(REPO_ROOT, codex_home).read_text())
 
-    assert config["hooks"]["SessionStart"] == [other]
+    # Other tools' hooks are kept; the announcer adds its own SessionStart entry
+    assert config["hooks"]["SessionStart"][0] == other
+    assert len(config["hooks"]["SessionStart"]) == 2
+    assert "session_start.py" in config["hooks"]["SessionStart"][1]["hooks"][0]["command"]
     assert "/gone/" not in json.dumps(config)
     assert len(config["hooks"]["Stop"]) == 1  # replaced, not duplicated
 

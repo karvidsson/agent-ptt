@@ -22,7 +22,8 @@ keeping the name. Existing transcript entries retain their original names.
 
 ## Requirements
 
-- An Agent PTT server running locally: `uv run agent-ptt server start`
+- A reachable Agent PTT server, on this machine or another: set `AGENT_PTT_URL`
+  (and `AGENT_PTT_API_KEY` if the server has one) in `~/.agent-ptt/announcer.env`
 - Codex CLI with hooks support
 - `python3` on PATH (the hook script is stdlib-only)
 - Optional: [Ollama](https://ollama.com) with `gemma2` for local spoken summaries
@@ -59,6 +60,17 @@ command = 'AGENT_PTT_AGENT=Codex python3 "/absolute/path/to/agent-ptt/plugins/co
 timeout = 60
 ```
 
+## Working with other agents
+
+At session start the plugin joins the session to its project (git remote, else
+the main worktree's folder name) and tells the agent who else is there and how
+to reach them with its bundled `ptt` command (`ptt.py` in this plugin, printed
+as an absolute path on each machine): `say`, `who`, `inbox`, `wait`, `tell`,
+`ack`, `done`. Mentions and work items are delivered at hook boundaries; see
+[plugins/README.md](../README.md#working-with-other-agents-announcer-020) for
+the commands, waking idle sessions, and the `AGENT_PTT_HANDLE` /
+`AGENT_PTT_ROLES` / `AGENT_PTT_WAKE` settings.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |
@@ -70,6 +82,8 @@ timeout = 60
 | `AGENT_PTT_SUMMARIZER` | `auto` | `auto` (Ollama, then the agent CLI), `ollama`, `agent`, or `off` |
 | `AGENT_PTT_OLLAMA_MODEL` | `gemma2` | Local model for spoken summaries |
 | `AGENT_PTT_OLLAMA_URL` | `http://localhost:11434` | Ollama server |
+| `AGENT_PTT_API_KEY` | none | The server's shared key, when it has one |
+| `AGENT_PTT_HANDLE`, `AGENT_PTT_ROLES`, `AGENT_PTT_WAKE` | — | Project identity and waking; see [Working with other agents](../README.md#working-with-other-agents-announcer-020) |
 
 Claude and Codex share the persistent settings in
 `~/.agent-ptt/announcer.env`, for server and summarizer settings:
@@ -164,9 +178,15 @@ text only.
 
 ## Behavior notes
 
-- **Never blocks Codex.** The script forks immediately after parsing the
-  event, so the hook returns instantly while the announcement happens in
+- **Announcing never blocks Codex.** The script forks immediately after parsing
+  the event, so the hook returns instantly while the announcement happens in
   the background; every failure path exits silently.
+- **The Stop hook may wait for a mention.** When someone else is present in
+  the project, `receive.py` keeps the Stop hook open for up to 240 s
+  (`AGENT_PTT_STOP_WAIT_SECONDS`, `AGENT_PTT_WAKE=0` to turn off) and, if a
+  mention or a work item addressed to this session arrives, continues the turn
+  with it — capped at `AGENT_PTT_WAKE_MAX_PER_HOUR` (6) wakes. Never on
+  narration, notices or your own messages. Interrupting Codex ends the wait.
 - **Sessions leave when they end.** Codex CLI (0.166+) has a `SessionEnd`
   hook, which the template registers: it leaves the channel with the session's
   cached key (`POST /channels/{id}/leave` with `{"key_id": …}`, falling back to

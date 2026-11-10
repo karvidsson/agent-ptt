@@ -23,5 +23,5 @@ fi
 mkdir -p "$CODEX_DIR"
 printf '%s\n' "$RENDERED" > "$TARGET"
 echo "✅ Installed Codex hooks to $TARGET"
-echo "   Announcements go to the 'Claude Code' channel on http://localhost:8770"
-echo "   Start the server with: uv run agent-ptt server start"
+echo "   Announcements go to your project's channel on ${AGENT_PTT_URL:-http://localhost:8770}"
+echo "   Another machine's server: set AGENT_PTT_URL (and AGENT_PTT_API_KEY) in ~/.agent-ptt/announcer.env"

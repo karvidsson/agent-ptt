@@ -19,7 +19,8 @@ identity as the [announcer plugin](../announcer/)).
 
 ## Requirements
 
-- An Agent PTT server running locally: `uv run agent-ptt server start`
+- A reachable Agent PTT server, on this machine or another: set `AGENT_PTT_URL`
+  (and `AGENT_PTT_API_KEY` if the server has one) in `~/.agent-ptt/announcer.env`
 - `python3` on PATH (the script is stdlib-only)
 
 ## Install

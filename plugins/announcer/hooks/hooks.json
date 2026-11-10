@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session_start.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
@@ -15,6 +27,12 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workspace_dispatch.py \"${CLAUDE_PLUGIN_ROOT}\"/hooks/status.py",
             "async": true,
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/doing.py",
+            "async": true,
+            "timeout": 10
           },
           {
             "type": "command",
