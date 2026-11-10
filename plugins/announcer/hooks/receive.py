@@ -425,6 +425,8 @@ class Project:
 
 
 def main() -> None:
+    if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
+        return
     with contextlib.suppress(Exception):
         deliver(json.load(sys.stdin))
 

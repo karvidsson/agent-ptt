@@ -263,6 +263,8 @@ def _summarize_with_cli(prompt: str, limit: int) -> str:
     """A one-shot call to the current agent's own CLI (slower, uses its account)."""
     env = os.environ.copy()
     env["AGENT_PTT_ANNOUNCE"] = "0"
+    # The one-shot CLI loads this plugin too: no join, roster, doing or inbox for it.
+    env["AGENT_PTT_HOOKS"] = "0"
     cli = "codex" if AGENT_NAME.lower() == "codex" else "claude"
     command = [cli, "exec"] if cli == "codex" else [cli, "-p"]
     if cli == "codex":

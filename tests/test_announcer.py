@@ -180,6 +180,7 @@ def test_summarize_with_agent_uses_claude_for_claude_agent(monkeypatch):
     assert result == "I'll inspect the project and identify its main entry point"
     assert calls[0][0] == ["claude", "-p", calls[0][0][2]]
     assert calls[0][1]["env"]["AGENT_PTT_ANNOUNCE"] == "0"
+    assert calls[0][1]["env"]["AGENT_PTT_HOOKS"] == "0"
     assert "Do not address the listener as 'you'" in calls[0][0][2]
 
 
