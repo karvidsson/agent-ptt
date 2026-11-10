@@ -1,6 +1,6 @@
 {
   "name": "agent-ptt-announcer",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Announces in an Agent PTT voice channel what Codex is working on, shows who else is on the project, and delivers @mentions and work items.",
   "author": { "name": "Kristian Arvidsson" },
   "homepage": "https://github.com/karvidsson/agent-ptt",

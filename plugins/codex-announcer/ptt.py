@@ -629,6 +629,7 @@ POKE = (
 REPOKE_SECONDS = 90.0
 MAX_POKES = 2
 WATCH_LIFETIME = 24 * 3600.0
+GIVE_UP_SECONDS = MAX_POKES * REPOKE_SECONDS + 30.0
 
 
 class CodexWatch:
@@ -651,6 +652,7 @@ class CodexWatch:
         self.poked: dict[str, tuple[float, int]] = {}
         self.batch = link.wake_batch_seconds()
         self.heartbeat = None
+        self.unanswered_since: float | None = None  # first poke no hook has reacted to
 
     def _codex_queue(self, message: str) -> bool:
         binary = link.codex_binary()
@@ -674,7 +676,17 @@ class CodexWatch:
         if self.clock() - self.started > WATCH_LIFETIME or not link.alive(self.pid):
             return False
         pointer = link.load_session(self.session.base, self.session.session_id)
-        return bool(pointer) and not pointer.get("ended")
+        if not pointer or pointer.get("ended"):
+            return False
+        if self.unanswered_since is not None:
+            if float(pointer.get("turn_at") or 0) > self.unanswered_since:
+                self.unanswered_since = None  # a hook ran after our poke: the TUI is there
+            elif self.clock() - self.unanswered_since > GIVE_UP_SECONDS:
+                # In daemon mode we follow Codex's shared app-server, not the TUI: pokes
+                # nobody picks up mean the window was closed. The next session restarts us.
+                print("[ptt] codex-watch: pokes unanswered, the TUI is gone", file=sys.stderr)
+                return False
+        return True
 
     def waking(self, wait: int) -> list[str]:
         """Ids of pending mentions and work items that should wake this session."""
@@ -720,6 +732,8 @@ class CodexWatch:
         if not self.run_queue(POKE):
             return False
         link.save_session(base, sid, wakes=[*wakes, now])
+        if self.unanswered_since is None:
+            self.unanswered_since = now
         for entry_id in ids:
             self.poked[entry_id] = (now, self.poked.get(entry_id, (0.0, 0))[1] + 1)
         print(f"[ptt] poked Codex for {len(ids)} pending", file=sys.stderr, flush=True)

@@ -1214,3 +1214,19 @@ def test_monitor_wait_honours_the_wake_cap(env, capsys, monkeypatch):
     assert [m["text"].split()[-1] for m in pending] == ["second"]  # the next hook delivers it
     history = env["client"].get(f"/channels/{session.channel()['channel_id']}/history").json()
     assert sum("wake cap" in m["text"] for m in history) == 1
+
+
+def test_codex_watch_gives_up_when_pokes_go_unanswered(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    now = [ptt.time.time()]
+    watch, queued = _watch(env, session, now)
+    ptt.link.save_session(session.base, "s1", turn="idle", turn_at=now[0] - 100)
+    _mention_me(env, session)
+    watch.step(0, lambda s: None)
+    assert queued and watch.alive()
+    now[0] += ptt.GIVE_UP_SECONDS + 1
+    assert not watch.alive()  # nobody picked the pokes up: the TUI is gone
+    watch.unanswered_since = now[0] - 10
+    ptt.link.save_session(session.base, "s1", turn="busy", turn_at=now[0])  # a hook ran
+    assert watch.alive() and watch.unanswered_since is None

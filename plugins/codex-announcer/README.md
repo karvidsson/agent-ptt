@@ -317,7 +317,8 @@ text only.
   close mentions into one prompt, retries once after 90 s if nothing picked it
   up, and counts every prompt against `AGENT_PTT_WAKE_MAX_PER_HOUR` (default
   30). When the cap is reached it posts one text-only FYI saying until when. It
-  exits with the Codex process or after 24 h; the next prompt
+  exits with the Codex process, when its prompts go unanswered for about 3.5
+  minutes (the window was closed), or after 24 h; the next prompt
   or Stop restarts it if it died. Log: `~/.agent-ptt/logs/codex-watch-*.log`.
   `AGENT_PTT_CODEX_QUEUE=0` turns it off. In daemon mode (plain `codex`) the
   hooks run under Codex's shared app-server, so the watcher follows that and
