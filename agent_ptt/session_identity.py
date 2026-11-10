@@ -122,14 +122,45 @@ def _allocate_handle(existing: list[SessionIdentityDB], db: Session) -> str:
     return dormant.handle
 
 
-def get_session_identity(session_id: str, agent: str, db: Session) -> SessionIdentityDB:
+def _pin(session_id: str, agent: str, handle: str, db: Session) -> SessionIdentityDB:
+    """Give this session the chosen ``handle``, taking it from whoever held it.
+
+    A pinned handle (``AGENT_PTT_HANDLE`` in the plugins) is how a named agent
+    stays addressable across sessions and machines: the new session inherits
+    the old session's name and voice, so it reuses the old channel participant.
+    """
+    identity = db.get(SessionIdentityDB, (session_id, agent))
+    if identity is not None and identity.handle == handle:
+        return identity
+    holder = db.scalars(select(SessionIdentityDB).filter_by(handle=handle)).first()
+    voice_id = holder.voice_id if holder is not None else None
+    if voice_id is None and identity is not None:
+        voice_id = identity.voice_id
+    for row in (holder, identity):
+        if row is not None:
+            db.delete(row)
+    db.flush()  # Free the UNIQUE handle and the primary key before re-inserting.
+    if voice_id is None or not get_voice_profile(voice_id, db):
+        voice_id = get_or_create_pinned_voice(handle, db).voice_id
+    pinned = SessionIdentityDB(session_id=session_id, agent=agent, handle=handle, voice_id=voice_id)
+    db.add(pinned)
+    db.commit()
+    return pinned
+
+
+def get_session_identity(
+    session_id: str, agent: str, db: Session, pinned_handle: str | None = None
+) -> SessionIdentityDB:
     """Allocate once; reuse the pair on every join, including after a restart.
 
     A session keeps its name while its identity row exists. Names of
     sessions that are in no channel may be reclaimed by new sessions, so
-    the pool of plain names doesn't run out over time.
+    the pool of plain names doesn't run out over time. ``pinned_handle``
+    makes the session take that name instead (see ``_pin``).
     """
     with _identity_lock:
+        if pinned_handle:
+            return _pin(session_id, agent, pinned_handle, db)
         identity = db.get(SessionIdentityDB, (session_id, agent))
         if identity and get_voice_profile(identity.voice_id, db):
             return identity

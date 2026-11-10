@@ -453,3 +453,30 @@ def test_quickstart_covers_roster_addressing_and_waking(client):
     ):
         assert needle in text, needle
     assert "~/" not in text and "/home/" not in text
+
+
+def test_pinned_handle_survives_a_new_session(client):
+    cid = client.post("/channels", json={"name": "pin-room"}).json()["channel_id"]
+    first = cjoin(client, cid, "Ember", session_id="s-old", agent="Claude", pin_handle=True)
+    assert first["handle"] == "Ember"
+    # Without pinning, a session gets an assigned name.
+    other = hooked(client, cid, "s-other")
+    assert other["handle"] != "Ember"
+    # A later session (another machine, after a restart) takes the name over.
+    later = cjoin(client, cid, "Ember", session_id="s-new", agent="Claude", pin_handle=True)
+    assert later["handle"] == "Ember"
+    assert later["voice_id"] == first["voice_id"]
+    again = cjoin(client, cid, "Ember", session_id="s-new", agent="Claude", pin_handle=True)
+    assert again["key_id"] == later["key_id"]
+
+
+def test_say_speak_false_posts_a_text_only_notice(client):
+    cid = client.post("/channels", json={"name": "quiet-room"}).json()["channel_id"]
+    me = cjoin(client, cid, "Poppy")
+    response = client.post(
+        f"/channels/{cid}/say", json={"key_id": me["key_id"], "text": "just text", "speak": False}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["kind"] == "notice"
+    spoken = client.post(f"/channels/{cid}/say", json={"key_id": me["key_id"], "text": "hi"})
+    assert spoken.json()["kind"] == "message"

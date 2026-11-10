@@ -1,4 +1,4 @@
-"""Project membership shared by session_start.py, tell.py, wait_inbox.py and receive.py.
+"""Project membership shared by session_start.py, ptt.py, doing.py and receive.py.
 
 Stdlib only and portable (no fcntl): these scripts also run on macOS and Windows.
 Everything lives under ``~/.agent-ptt`` resolved on the machine that runs them.

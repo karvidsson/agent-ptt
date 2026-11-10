@@ -91,8 +91,8 @@ def compose(
     elif wake:
         lines.append(
             ("You coordinate others: start" if lead else "Start")
-            + f" the Monitor tool now (persistent: true) on `{ptt} wait` so mentions wake"
-            " you while idle; each printed line is one to act on. If it stops, start it again."
+            + f" the Monitor tool now on `{ptt} wait` (longest timeout) so mentions wake"
+            " you while idle; each printed line is one to act on. When it ends, start it again."
         )
     else:
         lines.append(f"Mentions reach you at your next hook (`{ptt} wait` in Monitor wakes you).")

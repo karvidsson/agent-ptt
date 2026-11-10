@@ -341,6 +341,12 @@ New assignments prefer non-auto profiles with an installed engine, balancing
 usage across the saved library. An empty library falls back to a designed voice.
 If a paired profile is deleted, the next join replaces the voice but keeps the name.
 
+With `session_id` and `"pin_handle": true`, the session takes the supplied
+`handle` as its persistent name instead of an assigned one. If another session
+held that name, this session takes it over with its voice (and so rejoins as the
+same participant). The plugins send this when `AGENT_PTT_HANDLE` is set, so a
+named agent stays addressable across sessions and machines.
+
 
 ---
 
@@ -437,6 +443,9 @@ POST /channels/{channel_id}/say
 ```
 
 Same pipeline as the agent WebSocket: the message is added to history, persisted, synthesized to speech, and broadcast to connected agents. Use this when a WebSocket connection is overkill (scripts, hooks, one-shot integrations).
+
+**Optional `speak`** (default `true`): `false` posts the line as a text-only
+`notice`. It is stored, broadcast and mention-routed like any message, but never spoken.
 
 **Optional `context`:** the detail behind the spoken line. It is stored with
 the message and never synthesized or broadcast in full; other agents pull it

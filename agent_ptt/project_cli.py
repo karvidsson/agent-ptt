@@ -579,7 +579,7 @@ _sleep = time.sleep  # patched in tests
 
 
 def _follow_line(item: dict) -> str:
-    """One compact line per item, the same shape the plugin's wait_inbox.py prints."""
+    """One compact line per item, the same shape the plugin's `ptt.py wait` prints."""
     title = " ".join((item.get("title") or item.get("body") or "").split())
     sender = _handle(item.get("from"))
     return f"[ptt] {item.get('kind', '?')} from {sender}: {title} (item {item.get('item_id')})"

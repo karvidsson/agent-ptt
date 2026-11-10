@@ -509,6 +509,11 @@ class JoinChannelRequest(BaseModel):
         default=False,
         description="Register for durable @mentions delivered via the inbox; requires session_id",
     )
+    pin_handle: bool = Field(
+        default=False,
+        description="With session_id: this session takes `handle` as its persistent name "
+        "(taking it over from an earlier session that held it) instead of an assigned one",
+    )
 
 
 class LeaveRequest(BaseModel):
@@ -526,6 +531,10 @@ class SayRequest(BaseModel):
     # The detail behind the line; stored, never spoken, pulled via
     # GET /channels/{id}/messages/{message_id}.
     context: MessageContext | None = None
+    speak: bool = Field(
+        default=True,
+        description="false posts the line as a text-only notice (never spoken)",
+    )
 
 
 class InboxAckRequest(BaseModel):
@@ -733,7 +742,13 @@ async def join_channel(
     voice_id = req.voice_id
     designed = None
     if req.session_id:
-        identity = await asyncio.to_thread(get_session_identity, req.session_id, req.agent, db)
+        identity = await asyncio.to_thread(
+            get_session_identity,
+            req.session_id,
+            req.agent,
+            db,
+            req.handle.strip() if req.pin_handle else None,
+        )
         handle, voice_id = identity.handle, identity.voice_id
         # Retries and concurrent hooks should share one participant in this channel.
         channel = ch.get_channel(channel_id)
@@ -848,6 +863,7 @@ async def say_message(
             db=db,
             recipient_ids=req.recipient_ids,
             context=req.context,
+            kind="message" if req.speak else "notice",
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
