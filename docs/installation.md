@@ -88,10 +88,15 @@ announcer plugin.
 
 2. Install the plugin. Claude Code: `/plugin marketplace add
    arvidsson-geins/agent-ptt`, then `/plugin install agent-ptt-announcer@agent-ptt`
-   (and `agent-ptt-voice@agent-ptt` for the voice skills). Codex: take
-   `plugins/codex-announcer/` from a release zip and run its `install.sh`.
-3. Restart the agent sessions. Updates: `/plugin update` (Claude Code), or
-   re-run `install.sh` (Codex), then restart.
+   (and `agent-ptt-voice@agent-ptt` for the voice skills). Codex
+   (0.166+): `codex plugin marketplace add karvidsson/agent-ptt`, then
+   `codex plugin add agent-ptt-announcer@agent-ptt`.
+3. Restart the agent sessions; Codex asks you to trust the plugin's hooks
+   ("Hooks need review → Trust all"). Updates: `/plugin update` (Claude Code)
+   or `codex plugin marketplace upgrade` (Codex), then restart and re-trust.
+   Machines that used the old `install.sh` should delete the announcer entries
+   (commands containing `codex-announcer/`) from `~/.codex/hooks.json`, or run
+   `python3 scripts/install_plugins.py` from a checkout, so hooks don't fire twice.
 
 The plugin then joins each session to its channel and project and gives the
 agent its `ptt` command; see

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Install the Agent PTT plugins for Claude Code and Codex from the main checkout.
 
+Claude Code gets the `.claude-plugin` marketplace; Codex gets the
+`.agents/plugins` marketplace and the agent-ptt-announcer plugin, and any loose
+announcer entries left in ~/.codex/hooks.json by the old install.sh are removed
+so hooks never fire twice.
+
 Always resolves the repository's *main* worktree, even when run from a linked
 worktree (e.g. one created by the Copilot app), so neither CLI ends up pointed
 at a throwaway checkout that later disappears. Safe to re-run: that is also how
-you refresh Claude Code's cached plugin copy after changing a plugin.
+you refresh Claude Code's and Codex's cached plugin copies after changing a plugin.
 
     python3 scripts/install_plugins.py              # Claude Code + Codex
     python3 scripts/install_plugins.py --skip-codex
@@ -23,7 +28,10 @@ import sys
 from pathlib import Path
 
 MARKETPLACE = "agent-ptt"
-CODEX_SCRIPT_MARKER = "codex-announcer/"  # any script from the plugin dir
+CODEX_PLUGIN = "agent-ptt-announcer"
+# Loose ~/.codex/hooks.json entries from the pre-plugin install.sh all name a
+# script under plugins/codex-announcer/.
+CODEX_SCRIPT_MARKER = "codex-announcer/"
 HERE = Path(__file__).resolve().parent
 
 
@@ -62,35 +70,54 @@ def install_claude(root: Path, run=subprocess.run) -> None:
         run(["claude", "plugin", "install", f"{name}@{MARKETPLACE}"], check=True)
 
 
-def render_codex_hooks(root: Path) -> dict:
-    plugin_dir = root / "plugins" / "codex-announcer"
-    template = (plugin_dir / "hooks.json.template").read_text()
-    return json.loads(template.replace("__AGENT_PTT_PLUGIN_DIR__", str(plugin_dir)))
-
-
 def _is_announcer_entry(entry: dict) -> bool:
     return any(CODEX_SCRIPT_MARKER in hook.get("command", "") for hook in entry.get("hooks", []))
 
 
-def merge_codex_hooks(existing: dict, rendered: dict) -> dict:
-    """Replace any announcer hook entries (wherever they pointed) and keep all others."""
-    merged = json.loads(json.dumps(existing))  # deep copy
-    hooks = merged.setdefault("hooks", {})
-    for event, entries in hooks.items():
-        hooks[event] = [entry for entry in entries if not _is_announcer_entry(entry)]
-    for event, entries in rendered["hooks"].items():
-        hooks.setdefault(event, []).extend(entries)
-    merged["hooks"] = {event: entries for event, entries in hooks.items() if entries}
-    return merged
+def strip_loose_codex_hooks(existing: dict) -> tuple[dict, int]:
+    """Drop the announcer entries the old install.sh/template put in hooks.json.
+
+    The plugin now ships those hooks; leaving the loose copies would make every
+    hook fire twice. All other entries (herdr's, the user's own) are kept.
+    Returns the cleaned config and how many entries were removed.
+    """
+    cleaned = json.loads(json.dumps(existing))  # deep copy
+    hooks = cleaned.get("hooks", {})
+    removed = 0
+    for event, entries in list(hooks.items()):
+        kept = [entry for entry in entries if not _is_announcer_entry(entry)]
+        removed += len(entries) - len(kept)
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    return cleaned, removed
 
 
-def install_codex(root: Path, codex_home: Path) -> Path:
+def migrate_codex_hooks(codex_home: Path) -> int:
+    """Remove loose announcer entries from CODEX_HOME/hooks.json; returns the count."""
     target = codex_home / "hooks.json"
-    existing = json.loads(target.read_text()) if target.exists() else {"hooks": {}}
-    merged = merge_codex_hooks(existing, render_codex_hooks(root))
-    codex_home.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(merged, indent=2) + "\n")
-    return target
+    if not target.exists():
+        return 0
+    cleaned, removed = strip_loose_codex_hooks(json.loads(target.read_text()))
+    if removed:
+        target.write_text(json.dumps(cleaned, indent=2) + "\n")
+    return removed
+
+
+def install_codex(root: Path, codex_home: Path, run=subprocess.run) -> int:
+    """Register the repo's Codex marketplace at `root` and (re)install the announcer.
+
+    Removing and re-adding the plugin refreshes Codex's cached copy, the same
+    way install_claude does for Claude Code. Returns how many loose announcer
+    entries were stripped from hooks.json.
+    """
+    quiet = {"capture_output": True, "text": True, "check": False}
+    run(["codex", "plugin", "remove", f"{CODEX_PLUGIN}@{MARKETPLACE}"], **quiet)
+    run(["codex", "plugin", "marketplace", "remove", MARKETPLACE], **quiet)
+    run(["codex", "plugin", "marketplace", "add", str(root)], check=True)
+    run(["codex", "plugin", "add", f"{CODEX_PLUGIN}@{MARKETPLACE}"], check=True)
+    return migrate_codex_hooks(codex_home)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,10 +139,21 @@ def main(argv: list[str] | None = None) -> int:
             print("⏭️  Claude Code: `claude` not on PATH, skipped")
 
     if not args.skip_codex:
-        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-        target = install_codex(root, codex_home)
-        print(f"✅ Codex: announcer hooks in {target} now run from {root}")
-        print("   Codex asks you to re-trust changed hooks the next time it starts.")
+        if shutil.which("codex"):
+            codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+            removed = install_codex(root, codex_home)
+            print(f"✅ Codex: {CODEX_PLUGIN}@{MARKETPLACE} installed from {root}")
+            if removed:
+                print(
+                    f"   Removed {removed} loose announcer entries from "
+                    f"{codex_home / 'hooks.json'} (the plugin replaces them)"
+                )
+            print(
+                "   Codex asks you to trust the plugin's hooks the next time it starts "
+                "(Hooks need review → Trust all), and again after each upgrade."
+            )
+        else:
+            print("⏭️  Codex: `codex` not on PATH, skipped")
 
     print("Restart any running Claude Code / Codex sessions to pick up the plugins.")
     return 0

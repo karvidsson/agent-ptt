@@ -126,6 +126,7 @@ def test_root_and_llms_txt_give_agents_a_quickstart(client):
         assert "reuse_existing" in resp.text
         assert "ws://testserver/channels/<channel_id>/ws?key=<key_id>" in resp.text
         assert "no shared API key" in resp.text
+        assert "codex plugin add agent-ptt-announcer@agent-ptt" in resp.text
 
 
 def test_participation_keys_never_appear_in_public_output(client):

@@ -96,7 +96,7 @@ def test_dispatch_copies_and_configs():
     )
     for name in (
         "plugins/announcer/hooks/hooks.json",
-        "plugins/codex-announcer/hooks.json.template",
+        "plugins/codex-announcer/hooks/hooks.json",
     ):
         config = json.loads((ROOT / name).read_text())
         for groups in config["hooks"].values():

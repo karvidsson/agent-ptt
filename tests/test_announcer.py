@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -366,7 +367,7 @@ def test_exits_zero_and_silent_when_server_down():
 # ---------------------------------------------------------------------------
 
 CODEX_ANNOUNCE = REPO_ROOT / "plugins" / "codex-announcer" / "announce.py"
-CODEX_INSTALL = REPO_ROOT / "plugins" / "codex-announcer" / "install.sh"
+CODEX_PLUGIN_HOOKS = REPO_ROOT / "plugins" / "codex-announcer" / "hooks" / "hooks.json"
 
 
 def test_codex_script_is_identical_to_claude_script():
@@ -657,37 +658,29 @@ def test_progress_ignores_low_information_tools(monkeypatch, tmp_path):
     assert announce._collect_progress(event) == ""
 
 
-def test_install_sh_writes_hooks_json(tmp_path):
-    proc = subprocess.run(
-        ["bash", str(CODEX_INSTALL)],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
-    )
-    assert proc.returncode == 0, proc.stderr
-    hooks_file = tmp_path / ".codex" / "hooks.json"
-    config = json.loads(hooks_file.read_text())
-    command = config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-    assert "AGENT_PTT_AGENT=Codex" in command
-    assert str(CODEX_ANNOUNCE) in command
-    assert "__AGENT_PTT_PLUGIN_DIR__" not in command
-    assert "Stop" in config["hooks"]
-
-
-def test_install_sh_refuses_to_overwrite(tmp_path):
-    (tmp_path / ".codex").mkdir()
-    (tmp_path / ".codex" / "hooks.json").write_text('{"hooks": {}}')
-    proc = subprocess.run(
-        ["bash", str(CODEX_INSTALL)],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
-    )
-    assert proc.returncode == 1
-    assert json.loads((tmp_path / ".codex" / "hooks.json").read_text()) == {"hooks": {}}
-    assert "AGENT_PTT_AGENT=Codex" in proc.stdout  # snippet printed for manual merge
+def test_codex_plugin_hooks_run_bundled_scripts_from_plugin_root():
+    """Codex installs the plugin into its cache, so commands may only use ${PLUGIN_ROOT}."""
+    config = json.loads(CODEX_PLUGIN_HOOKS.read_text())
+    assert set(config["hooks"]) == {
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "SessionEnd",
+    }
+    plugin_dir = CODEX_ANNOUNCE.parent
+    for groups in config["hooks"].values():
+        for group in groups:
+            for hook in group["hooks"]:
+                command = hook["command"]
+                assert command.startswith("AGENT_PTT_AGENT=Codex python3 "), command
+                assert "async" not in hook  # Codex runs hooks synchronously anyway
+                scripts = re.findall(r'"\$\{PLUGIN_ROOT\}/([^"]+)"', command)
+                assert scripts, command
+                for script in scripts:
+                    assert (plugin_dir / script).is_file(), script
+                assert ".." not in command and "/home/" not in command
 
 
 def test_exits_zero_on_garbage_stdin():
@@ -1343,7 +1336,7 @@ def test_message_context_has_host_and_collapsed_paths(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 ANNOUNCER_HOOKS = REPO_ROOT / "plugins" / "announcer" / "hooks" / "hooks.json"
-CODEX_TEMPLATE = REPO_ROOT / "plugins" / "codex-announcer" / "hooks.json.template"
+CODEX_HOOKS = REPO_ROOT / "plugins" / "codex-announcer" / "hooks" / "hooks.json"
 
 
 @pytest.fixture
@@ -1523,7 +1516,7 @@ def test_session_end_hook_exits_zero_when_server_down(tmp_path):
     assert "identity-v2" not in state.read_text()
 
 
-@pytest.mark.parametrize("path", [ANNOUNCER_HOOKS, CODEX_TEMPLATE])
+@pytest.mark.parametrize("path", [ANNOUNCER_HOOKS, CODEX_HOOKS])
 def test_hooks_register_a_synchronous_session_end(path):
     entries = json.loads(path.read_text())["hooks"]["SessionEnd"]
     hooks = [hook for entry in entries for hook in entry["hooks"]]

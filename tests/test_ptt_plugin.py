@@ -506,7 +506,7 @@ def test_codex_copies_are_identical_and_hooks_registered():
     for path in HOOKS.glob("*.py"):
         assert path.read_bytes() == (CODEX / path.name).read_bytes(), path.name
     claude = json.loads((HOOKS / "hooks.json").read_text())["hooks"]
-    codex = json.loads((CODEX / "hooks.json.template").read_text())["hooks"]
+    codex = json.loads((CODEX / "hooks" / "hooks.json").read_text())["hooks"]
     for hooks in (claude, codex):
         assert "session_start.py" in json.dumps(hooks["SessionStart"])
         assert "doing.py" in json.dumps(hooks["UserPromptSubmit"])

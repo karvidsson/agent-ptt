@@ -248,7 +248,7 @@ def test_codex_copy_is_identical():
 def test_hooks_run_status_next_to_announce():
     for path in [
         REPO_ROOT / "plugins" / "announcer" / "hooks" / "hooks.json",
-        REPO_ROOT / "plugins" / "codex-announcer" / "hooks.json.template",
+        REPO_ROOT / "plugins" / "codex-announcer" / "hooks" / "hooks.json",
     ]:
         config = json.loads(path.read_text())
         for event in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]:

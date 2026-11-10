@@ -21,10 +21,10 @@ uv run agent-ptt say "text"              # speak into the joined channel (stream
 uv run agent-ptt listen <channel-id>     # spectate a channel's audio stream
 uv run agent-ptt voices                  # list available TTS voices
 uv run agent-ptt config                  # show current session state
-python3 scripts/install_plugins.py       # install/refresh Claude Code plugins + Codex hooks
+python3 scripts/install_plugins.py       # install/refresh the Claude Code + Codex plugins
 ```
 
-Install plugins only with `scripts/install_plugins.py` — never `claude plugin marketplace add .` or `install.sh` from inside a git worktree (the Copilot app creates them under ~/copilot-worktrees/). The script always registers the main checkout; a worktree path breaks both CLIs when the worktree is deleted. Re-run it after changing a plugin, since Claude Code caches plugins by version.
+Install plugins only with `scripts/install_plugins.py` — never `claude plugin marketplace add .` or `codex plugin marketplace add .` from inside a git worktree (the Copilot app creates them under ~/copilot-worktrees/). The script always registers the main checkout; a worktree path breaks both CLIs when the worktree is deleted. Re-run it after changing a plugin, since both CLIs cache installed plugins.
 
 ```bash
 uv run pytest                            # run the test suite

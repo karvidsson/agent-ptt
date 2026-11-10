@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate plugin manifests and the marketplace registry.
+"""Validate plugin manifests and the Claude Code and Codex marketplace registries.
 
 Run locally or in CI: python3 scripts/validate_plugins.py
 Exits 1 with a list of problems, 0 with a summary when everything checks out.
@@ -8,12 +8,16 @@ Exits 1 with a list of problems, 0 with a summary when everything checks out.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 PLUGINS_DIR = REPO_ROOT / "plugins"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
+CODEX_MARKETPLACE = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
+# A script a hook command runs: "${PLUGIN_ROOT}/x.py" (Codex) or "${CLAUDE_PLUGIN_ROOT}"/hooks/x.py
+HOOK_SCRIPT = re.compile(r'\$\{(?:CLAUDE_)?PLUGIN_ROOT\}"?/([^"\s]+)')
 
 
 def _load_json(path: Path, problems: list[str]) -> dict | None:
@@ -67,13 +71,65 @@ def validate() -> list[str]:
             if name not in registered:
                 problems.append(f"plugin '{name}' is not registered in marketplace.json")
 
-    # All hooks.json files (and templates) parse
-    for hooks_path in sorted(PLUGINS_DIR.glob("*/hooks/hooks.json")) + sorted(
-        PLUGINS_DIR.glob("*/hooks.json.template")
-    ):
+    # Codex marketplace: entries point at plugin dirs with a matching .codex-plugin manifest,
+    # versioned in lockstep with the Claude plugins
+    claude_versions = {m.get("version") for m in manifests.values() if m.get("version")}
+    codex_marketplace = _load_json(CODEX_MARKETPLACE, problems)
+    if codex_marketplace is not None:
+        if not codex_marketplace.get("plugins"):
+            problems.append("codex marketplace.json: no plugins listed")
+        for entry in codex_marketplace.get("plugins", []):
+            name = entry.get("name", "<unnamed>")
+            source = entry.get("source", {})
+            path = source.get("path") if isinstance(source, dict) else source
+            if not path:
+                problems.append(f"codex marketplace entry '{name}': missing source path")
+                continue
+            plugin_dir = REPO_ROOT / path
+            if not plugin_dir.is_dir():
+                problems.append(f"codex marketplace entry '{name}': {path} does not exist")
+                continue
+            manifest_path = plugin_dir / ".codex-plugin" / "plugin.json"
+            manifest = _load_json(manifest_path, problems)
+            if manifest is None:
+                continue
+            rel = manifest_path.relative_to(REPO_ROOT)
+            if manifest.get("name") != name:
+                problems.append(
+                    f"{rel}: name {manifest.get('name')!r} != marketplace entry {name!r}"
+                )
+            version = manifest.get("version")
+            if not version:
+                problems.append(f"{rel}: missing 'version'")
+            elif claude_versions and claude_versions != {version}:
+                problems.append(
+                    f"{rel}: version {version!r} must match every .claude-plugin version "
+                    f"({', '.join(sorted(claude_versions))})"
+                )
+    if len(claude_versions) > 1:
+        problems.append(
+            f"plugin versions differ ({', '.join(sorted(claude_versions))}); bump them together"
+        )
+
+    # All hooks.json files parse, and every script a hook runs ships in the plugin dir
+    for hooks_path in sorted(PLUGINS_DIR.glob("*/hooks/hooks.json")):
+        rel = hooks_path.relative_to(REPO_ROOT)
         config = _load_json(hooks_path, problems)
-        if config is not None and "hooks" not in config:
-            problems.append(f"{hooks_path.relative_to(REPO_ROOT)}: missing top-level 'hooks' key")
+        if config is None:
+            continue
+        if "hooks" not in config:
+            problems.append(f"{rel}: missing top-level 'hooks' key")
+            continue
+        plugin_dir = hooks_path.parent.parent
+        for groups in config["hooks"].values():
+            for group in groups:
+                for hook in group.get("hooks", []):
+                    for script in HOOK_SCRIPT.findall(hook.get("command", "")):
+                        target = (plugin_dir / script).resolve()
+                        if not target.is_relative_to(plugin_dir.resolve()):
+                            problems.append(f"{rel}: {script} points outside the plugin dir")
+                        elif not target.is_file():
+                            problems.append(f"{rel}: hook script {script} does not exist")
 
     client = REPO_ROOT / "agent_ptt/skills/agent-ptt-organization/scripts/client.py"
     bundled = PLUGINS_DIR / "voice/scripts/organization_client.py"
@@ -101,8 +157,12 @@ def main() -> int:
         return 1
 
     plugin_count = len(list(PLUGINS_DIR.glob("*/.claude-plugin/plugin.json")))
+    codex_count = len(list(PLUGINS_DIR.glob("*/.codex-plugin/plugin.json")))
     skill_count = len(list(PLUGINS_DIR.glob("*/skills/*/SKILL.md")))
-    print(f"✅ plugins OK: {plugin_count} manifests, {skill_count} skills, marketplace consistent")
+    print(
+        f"✅ plugins OK: {plugin_count} Claude + {codex_count} Codex manifests, "
+        f"{skill_count} skills, marketplaces consistent"
+    )
     return 0
 
 

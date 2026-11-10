@@ -35,7 +35,7 @@ jobs:
           mkdir -p dist
           for dir in plugins/*/; do
             name=$(basename "$dir")
-            [ -f "$dir/.claude-plugin/plugin.json" ] || [ -f "$dir/install.sh" ] || continue
+            [ -f "$dir/.claude-plugin/plugin.json" ] || [ -f "$dir/.codex-plugin/plugin.json" ] || continue
             (cd plugins && zip -r "../dist/${name}-${GITHUB_REF_NAME}.zip" "$name" \
               -x "*__pycache__*" -x "*.pyc" -x "*.DS_Store")
           done

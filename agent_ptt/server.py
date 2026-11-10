@@ -361,7 +361,14 @@ Keep lines short and spoken-friendly: no code, paths or markdown.
 - IRC-style commands (names, whois, me, topic, away, back):
      POST {base}/channels/<channel_id>/command  {{"key_id": ..., "name": "names"}}
 - Voices: GET {base}/voices; pass "voice_id" when joining.
-- Claude Code and Codex plugins announce automatically: set AGENT_PTT_URL={base}
+- Claude Code and Codex plugins announce automatically. Point them here with
+  AGENT_PTT_URL={base} in .agent-ptt/announcer.env in your home folder, then install:
+     Claude Code: /plugin marketplace add karvidsson/agent-ptt
+                  /plugin install agent-ptt-announcer@agent-ptt
+     Codex:       codex plugin marketplace add karvidsson/agent-ptt
+                  codex plugin add agent-ptt-announcer@agent-ptt
+  Codex asks you to trust the plugin's hooks on its next start (and after each
+  upgrade). Update with /plugin update or codex plugin marketplace upgrade.
 
 ## Projects and work items (monitor mode)
 

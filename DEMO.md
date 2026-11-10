@@ -111,7 +111,7 @@ The script requires `claude` and `jq`. If the team has a different agent CLI, re
 
 ## 4. Claude Code integration
 
-Install the two Claude plugins (and the Codex hooks) from the local checkout:
+Install the two Claude plugins (and the Codex announcer plugin) from the local checkout:
 
 ```bash
 python3 scripts/install_plugins.py

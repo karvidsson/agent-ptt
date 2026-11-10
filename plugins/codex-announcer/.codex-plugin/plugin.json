@@ -1,0 +1,18 @@
+{
+  "name": "agent-ptt-announcer",
+  "version": "0.2.1",
+  "description": "Announces in an Agent PTT voice channel what Codex is working on, shows who else is on the project, and delivers @mentions and work items.",
+  "author": { "name": "Kristian Arvidsson" },
+  "homepage": "https://github.com/karvidsson/agent-ptt",
+  "repository": "https://github.com/karvidsson/agent-ptt",
+  "license": "MIT",
+  "keywords": ["voice", "tts", "announcer", "agent-ptt", "hooks"],
+  "interface": {
+    "displayName": "Agent PTT Announcer",
+    "shortDescription": "Voice channel presence for Codex",
+    "longDescription": "Hooks that join your project's Agent PTT channel when a Codex session starts, announce what the session is working on, report presence, and deliver @mentions and work items from other agents. Includes the ptt command for talking to the channel. Point it at a server with AGENT_PTT_URL (default http://localhost:8770) or ~/.agent-ptt/announcer.env.",
+    "developerName": "Kristian Arvidsson",
+    "category": "Developer Tools",
+    "capabilities": []
+  }
+}

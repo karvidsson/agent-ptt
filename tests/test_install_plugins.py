@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "install_plugins.py"
 spec = importlib.util.spec_from_file_location("install_plugins", SCRIPT)
@@ -57,47 +59,68 @@ def test_install_claude_reregisters_marketplace_and_reinstalls(tmp_path):
     ]
 
 
-def test_install_codex_writes_fresh_hooks_json(tmp_path):
-    target = installer.install_codex(REPO_ROOT, tmp_path / ".codex")
-
-    config = json.loads(target.read_text())
-    command = config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-    assert str(REPO_ROOT / "plugins" / "codex-announcer" / "announce.py") in command
-    assert set(config["hooks"]) == {
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "Stop",
-        "SessionEnd",
-    }
-
-
-def test_install_codex_replaces_stale_paths_and_keeps_other_hooks(tmp_path):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    stale = "python3 /gone/copilot-worktree/plugins/codex-announcer/announce.py"
-    other = {"hooks": [{"type": "command", "command": "bash ~/.codex/herdr.sh session"}]}
-    (codex_home / "hooks.json").write_text(
-        json.dumps(
-            {
-                "hooks": {
-                    "SessionStart": [other],
-                    "Stop": [{"hooks": [{"type": "command", "command": stale}]}],
-                }
-            }
-        )
+def test_install_codex_registers_marketplace_and_reinstalls(tmp_path):
+    calls = []
+    removed = installer.install_codex(
+        REPO_ROOT, tmp_path / ".codex", run=lambda cmd, **kw: calls.append(cmd)
     )
 
-    config = json.loads(installer.install_codex(REPO_ROOT, codex_home).read_text())
+    assert calls == [
+        ["codex", "plugin", "remove", "agent-ptt-announcer@agent-ptt"],
+        ["codex", "plugin", "marketplace", "remove", "agent-ptt"],
+        ["codex", "plugin", "marketplace", "add", str(REPO_ROOT)],
+        ["codex", "plugin", "add", "agent-ptt-announcer@agent-ptt"],
+    ]
+    assert removed == 0
+    assert not (tmp_path / ".codex" / "hooks.json").exists()  # never created
 
-    # Other tools' hooks are kept; the announcer adds its own SessionStart entry
-    assert config["hooks"]["SessionStart"][0] == other
-    assert len(config["hooks"]["SessionStart"]) == 2
-    assert "session_start.py" in config["hooks"]["SessionStart"][1]["hooks"][0]["command"]
-    assert "/gone/" not in json.dumps(config)
-    assert len(config["hooks"]["Stop"]) == 1  # replaced, not duplicated
 
-    # Idempotent: a second run changes nothing
-    again = json.loads(installer.install_codex(REPO_ROOT, codex_home).read_text())
-    assert again == config
+def test_install_codex_strips_loose_announcer_hooks_and_keeps_others(tmp_path):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    loose = (
+        "AGENT_PTT_AGENT=Codex python3 /gone/copilot-worktree/plugins/codex-announcer/announce.py"
+    )
+    herdr = {"hooks": [{"type": "command", "command": "bash ~/.codex/herdr.sh session"}]}
+    announcer = {"matcher": "", "hooks": [{"type": "command", "command": loose}]}
+    original = {
+        "hooks": {
+            "SessionStart": [herdr, announcer],
+            "Stop": [announcer],
+            "SessionEnd": [announcer, announcer],
+        },
+        "other": True,
+    }
+    (codex_home / "hooks.json").write_text(json.dumps(original))
+
+    removed = installer.install_codex(REPO_ROOT, codex_home, run=lambda cmd, **kw: None)
+
+    config = json.loads((codex_home / "hooks.json").read_text())
+    assert removed == 4
+    assert config == {"hooks": {"SessionStart": [herdr]}, "other": True}
+
+    # Idempotent: a second run removes nothing and leaves the file alone
+    assert installer.install_codex(REPO_ROOT, codex_home, run=lambda cmd, **kw: None) == 0
+    assert json.loads((codex_home / "hooks.json").read_text()) == config
+
+
+def test_codex_marketplace_exposes_the_announcer_plugin():
+    marketplace = json.loads((REPO_ROOT / ".agents" / "plugins" / "marketplace.json").read_text())
+    assert marketplace["name"] == installer.MARKETPLACE
+    [entry] = marketplace["plugins"]
+    assert entry["name"] == installer.CODEX_PLUGIN
+    plugin_dir = REPO_ROOT / entry["source"]["path"]
+    manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text())
+    assert manifest["name"] == installer.CODEX_PLUGIN
+
+
+def test_main_skips_codex_when_not_on_path(monkeypatch, capsys):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(installer, "main_checkout", lambda: REPO_ROOT)
+    monkeypatch.setattr(
+        installer, "install_codex", lambda *a, **k: pytest.fail("must not run without codex")
+    )
+
+    assert installer.main([]) == 0
+    out = capsys.readouterr().out
+    assert "Codex: `codex` not on PATH, skipped" in out

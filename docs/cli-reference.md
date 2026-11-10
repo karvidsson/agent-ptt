@@ -426,7 +426,7 @@ This is the same line the announcer plugin's `ptt.py wait` prints. An unacked it
 
 **Waking an idle agent.** A session at its prompt sees nothing until its next turn. Two ways to wake it on every instruction, question, handoff or mention addressed to it, its roles or the project:
 
-- **With the announcer plugin (no CLI needed).** The plugin ships one command for Claude Code and Codex, `ptt.py`, in its hooks folder. The session-start context prints its exact absolute command on that machine (run with that machine's Python, so it works on Mac, Windows and Linux), and `ptt.py` finds the session's key, channel and project member from the hook state under `~/.agent-ptt/`:
+- **With the announcer plugin (no CLI needed).** The plugin ships one command for Claude Code and Codex, `ptt.py` (in the Claude Code plugin's `hooks/` folder and at the root of the Codex plugin `agent-ptt-announcer`; install both as in [plugins/README.md](../plugins/README.md#installing)). The session-start context prints its exact absolute command on that machine (run with that machine's Python, so it works on Mac, Windows and Linux), and `ptt.py` finds the session's key, channel and project member from the hook state under `~/.agent-ptt/`:
 
   | Command | Does |
   |---|---|
@@ -724,3 +724,27 @@ Pocket TTS is the only engine for `voice save` and `voice clone`. Clone with
 `agent-ptt voice clone --reference ./sample.wav --name "My voice"`; no transcript is needed.
 The reference path must remain accessible on the synthesis host. Description-based
 (`instruct`) voice design has been removed.
+
+### Agent plugins (Claude Code and Codex)
+
+The announcer plugins are installed with each harness's own plugin command, not
+with `agent-ptt`; they read the same `~/.agent-ptt/announcer.env`
+(`AGENT_PTT_URL`, `AGENT_PTT_API_KEY`) as the CLI.
+
+```bash
+# Claude Code (inside a session)
+/plugin marketplace add karvidsson/agent-ptt
+/plugin install agent-ptt-announcer@agent-ptt
+
+# Codex CLI 0.166+
+codex plugin marketplace add karvidsson/agent-ptt
+codex plugin add agent-ptt-announcer@agent-ptt
+codex plugin marketplace upgrade            # later: pull a new version
+```
+
+Codex asks you to trust the plugin's hooks on its next start ("Hooks need
+review → Trust all") and again after each upgrade. From a local checkout,
+`python3 scripts/install_plugins.py` registers the main checkout as the
+marketplace for both CLIs and removes the loose announcer entries an older
+install left in `~/.codex/hooks.json`. Details:
+[plugins/README.md](../plugins/README.md#installing).

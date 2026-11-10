@@ -1,6 +1,7 @@
-# Agent PTT Announcer — Codex CLI hooks
+# Agent PTT Announcer — Codex plugin
 
-The same Agent PTT integration for OpenAI's Codex CLI: Codex announces
+The same Agent PTT integration for OpenAI's Codex CLI, shipped as the Codex
+plugin `agent-ptt-announcer` in this repo's `agent-ptt` marketplace: Codex announces
 **"I'll inspect the project and identify the entry point."** when you submit
 a prompt and **"I fixed the login redirect. The tests pass."** when it finishes, in an
 [Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel. Lines
@@ -24,41 +25,57 @@ keeping the name. Existing transcript entries retain their original names.
 
 - A reachable Agent PTT server, on this machine or another: set `AGENT_PTT_URL`
   (and `AGENT_PTT_API_KEY` if the server has one) in `~/.agent-ptt/announcer.env`
-- Codex CLI with hooks support
-- `python3` on PATH (the hook script is stdlib-only)
+- Codex CLI 0.166 or newer (plugins and plugin hooks are on by default; no
+  feature flag needed)
+- `python3` on PATH (the hook scripts are stdlib-only)
 - Optional: [Ollama](https://ollama.com) with `gemma2` for local spoken summaries
   (otherwise Codex authentication, so the short summarization call can run)
 
 ## Install
 
+On any machine, no checkout needed:
+
 ```bash
-python3 scripts/install_plugins.py --skip-claude
+codex plugin marketplace add karvidsson/agent-ptt
+codex plugin add agent-ptt-announcer@agent-ptt
 ```
 
-This merges the announcer hooks into `~/.codex/hooks.json`, pointing at the
-repo's main checkout even if you run it from a git worktree. Other hooks in
-the file are kept, and re-running it replaces stale announcer entries
-instead of duplicating them.
+Codex copies the plugin into its cache (`~/.codex/plugins/cache/agent-ptt/…`)
+and runs the hooks from there. The next time Codex starts it shows **Hooks need
+review**: choose **Trust all**. Trust is tied to each hook's content, so Codex
+asks again after every plugin upgrade.
 
-`./plugins/codex-announcer/install.sh` still works for a first install, but
-it uses the checkout it lives in and refuses to touch an existing
-`hooks.json`.
+To talk to a server on another machine, put its address in
+`~/.agent-ptt/announcer.env` (shared with the Claude Code announcer):
 
-### Alternative: inline in `~/.codex/config.toml`
-
-```toml
-[[hooks.UserPromptSubmit]]
-[[hooks.UserPromptSubmit.hooks]]
-type = "command"
-command = 'AGENT_PTT_AGENT=Codex python3 "/absolute/path/to/agent-ptt/plugins/codex-announcer/announce.py"'
-timeout = 60
-
-[[hooks.Stop]]
-[[hooks.Stop.hooks]]
-type = "command"
-command = 'AGENT_PTT_AGENT=Codex python3 "/absolute/path/to/agent-ptt/plugins/codex-announcer/announce.py"'
-timeout = 60
+```text
+AGENT_PTT_URL=http://<server-host>:8770
+AGENT_PTT_API_KEY=...        # only if the server has one
 ```
+
+**Updating.** `codex plugin marketplace upgrade` pulls the latest marketplace
+from GitHub; restart Codex and trust the changed hooks. From a local checkout
+of this repo, run `python3 scripts/install_plugins.py --skip-claude` instead:
+it registers the main checkout as the `agent-ptt` marketplace and reinstalls
+the plugin, which refreshes the cached copy.
+
+**Removing.** `codex plugin remove agent-ptt-announcer@agent-ptt`, and
+`codex plugin marketplace remove agent-ptt` to drop the marketplace.
+
+### Migrating from the old `~/.codex/hooks.json` install
+
+Before 0.2.1 the announcer was installed as loose entries in
+`~/.codex/hooks.json` (by `install.sh` or an older `install_plugins.py`), all
+running scripts under `…/plugins/codex-announcer/`. With the plugin installed
+too, every hook would fire twice, so remove them:
+
+- With a checkout: `python3 scripts/install_plugins.py --skip-claude` installs
+  the plugin and deletes those entries, keeping every other hook in the file.
+- Installing from GitHub: open `~/.codex/hooks.json` and delete each entry whose
+  command contains `codex-announcer/` (delete the file if nothing else is left).
+
+Hook entries for the announcer in `~/.codex/config.toml` (`[[hooks.…]]` tables)
+should be deleted the same way.
 
 ## Working with other agents
 
@@ -188,7 +205,7 @@ text only.
   with it — capped at `AGENT_PTT_WAKE_MAX_PER_HOUR` (6) wakes. Never on
   narration, notices or your own messages. Interrupting Codex ends the wait.
 - **Sessions leave when they end.** Codex CLI (0.166+) has a `SessionEnd`
-  hook, which the template registers: it leaves the channel with the session's
+  hook, which the plugin registers: it leaves the channel with the session's
   cached key (`POST /channels/{id}/leave` with `{"key_id": …}`, falling back to
   `?key_id=` on older servers), also leaves the mention-inbox participant if it
   differs, and drops the session's cached key, inbox state and status file.
@@ -208,8 +225,9 @@ filenames; detailed paths remain in the original agent report.
 
 The synchronous `receive.py` hook registers this session as a mention receiver
 and delivers explicit `@name` requests on `UserPromptSubmit`, `PostToolUse`,
-and `Stop`. Refresh installed plugins with `python3 scripts/install_plugins.py`,
-restart Codex, and trust the changed hooks. In the channel UI, type `@` and
+and `Stop`. After upgrading the plugin (`codex plugin marketplace upgrade`, or
+`python3 scripts/install_plugins.py` from a checkout), restart Codex and trust
+the changed hooks. In the channel UI, type `@` and
 select the agent. Idle sessions keep messages pending until their next hook
 event. Set `AGENT_PTT_RECEIVE=0` to disable this independently of announcements.
 [Delivery semantics and API](../../docs/mentions.md).
