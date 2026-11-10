@@ -92,7 +92,7 @@ def test_pending_mentions_survive_restart_and_rejoin(client):
 def test_inbox_requires_channel_participant_and_server_auth(client, monkeypatch):
     cid, other = room(client), room(client)
     human, a = join(client, cid), join(client, cid, "a")
-    assert inbox(client, cid, human).status_code == 403
+    assert inbox(client, cid, human).status_code == 200  # channel-only: still addressable
     assert inbox(client, other, a).status_code == 403
     assert client.get(f"/channels/{cid}/inbox").status_code == 422
     monkeypatch.setenv("AGENT_PTT_API_KEY", "secret")
@@ -185,3 +185,17 @@ def test_join_advertises_policy_to_receivers_including_reconnect(client):
     first = join(client, cid, "policy-agent")
     second = join(client, cid, "policy-agent")
     assert first["mention_policy"] == second["mention_policy"] == mention_policy()
+
+
+def test_channel_only_participant_can_be_mentioned(client):
+    """A plain CLI/REST join (no receiver) is addressable by @Handle and keeps it in its inbox."""
+    cid = room(client)
+    human = join(client, cid)
+    tester = client.post(
+        f"/channels/{cid}/join", json={"handle": "Tester", "voice_id": "fake"}
+    ).json()
+    msg = say(client, cid, human, "@Tester ping")
+    assert msg.status_code == 200
+    assert [d["handle"] for d in msg.json()["deliveries"]] == ["Tester"]
+    pending = inbox(client, cid, tester).json()
+    assert [m["text"] for m in pending] == ["@Tester ping"]

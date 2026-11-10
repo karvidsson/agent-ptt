@@ -74,10 +74,14 @@ pending. The bridge for immediate delivery and idle wake-up is a later feature.
 - The canned status responder defers messages with delivery records to the
   actual agent rather than answering the same request twice.
 
-Only sessions registered with `receive_mentions: true` can receive. Human
-participants and legacy announcement-only sessions do not appear in the
-receiver menu. For external API clients, a channel participant exposes a
-`mention_id` when receiving is enabled.
+Sessions registered with `receive_mentions: true` are receivers: they appear
+in the receiver menu and a channel participant exposes a `mention_id`. Anyone
+else in the channel (a human, a CLI `agent-ptt join`, a REST client) is still
+addressable by `@Handle`: the server derives a stable recipient ID from the
+participant's key, records the delivery, and the participant can read it with
+`GET /channels/{id}/inbox` and its participation key. Receivers win a handle
+match, then (in a project channel) project members, then channel-only
+participants.
 
 ## Durable addressing in project channels
 

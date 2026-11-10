@@ -109,7 +109,7 @@ idle. Codex has no Monitor: its Stop hook waits up to 240 s for a mention or a
 work item addressed to it (only when someone else is present) and continues the
 turn with it. The fallback after that is the next hook event.
 
-**Quiet wake-ups (0.3.0).** Only non-FYI mentions and instruction, handoff,
+**Quiet wake-ups (0.3.0, Codex watcher 0.4.0).** Only non-FYI mentions and instruction, handoff,
 question and answer items wake an idle session. `--fyi` messages and items
 (status, acknowledgements, "done", claim releases, as the start context asks),
 notes and claims arrive at the next prompt or tool hook, or along with the next
@@ -131,8 +131,9 @@ asker still go through `ptt say "@Handle …"`.
 | `AGENT_PTT_HANDLE` | session's random name | Pin a handle: the project membership is kept per handle (resumed across sessions and machines) and the channel join asks for it too |
 | `AGENT_PTT_ROLES` | none | Comma-separated project roles, e.g. `lead,reviewer`; a role containing `lead` or `orchestrator` marks a coordinator |
 | `AGENT_PTT_WAKE` | on | `0` turns off waking (no Monitor advice, no Codex Stop wait); `1` marks this session a coordinator |
-| `AGENT_PTT_WAKE_MAX_PER_HOUR` | `6` | Loop guard: at most this many Stop-hook wakes per hour |
-| `AGENT_PTT_STOP_WAIT_SECONDS` | `240` (Codex) | How long the Codex Stop hook waits; `0` disables, max 280 |
+| `AGENT_PTT_WAKE_MAX_PER_HOUR` | `12` | Loop guard: at most this many wakes of an idle session per hour (Codex Stop waits and `codex queue` prompts) |
+| `AGENT_PTT_STOP_WAIT_SECONDS` | `240` (Codex without `codex queue`) | How long the Codex Stop hook waits; `0` disables, max 280. Not used while the Codex watcher runs |
+| `AGENT_PTT_CODEX_QUEUE` | on | `0` never starts the Codex watcher (`ptt.py codex-watch`, which wakes an idle Codex with `codex queue`) |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | `4` | After the first waking entry, how long `ptt wait` and the Codex Stop wait collect more before delivering once; `0` disables, max 30 |
 | `AGENT_PTT_HOOKS` | on | `0` makes the collaboration hooks (join, roster, doing, inbox, Stop wait) do nothing; the announcer sets it on its own one-shot `claude -p` / `codex exec` summarizer so that helper never joins as a phantom participant |
 

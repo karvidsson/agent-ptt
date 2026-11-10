@@ -6,6 +6,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -265,7 +267,7 @@ def test_ptt_tell_who_inbox_and_done(env, capsys):
         .json()
     )
     assert ptt.main(["--session", "s1", "inbox"]) == 0
-    assert f"[ptt] instruction from Rex: run tests (item {sent['item_id']})" in (
+    assert f"[ptt] item {sent['item_id']} instruction from Rex: run tests" in (
         capsys.readouterr().out
     )
     assert ptt.main(["--session", "s1", "done", sent["item_id"], "--note", "green"]) == 0
@@ -349,9 +351,9 @@ def test_waiter_prints_one_line_per_item_and_acks(env, capsys):
     assert waiter.due() and waiter.flush() == 2  # one burst, one wake
     lines = out.getvalue().splitlines()
     handle = session.member["handle"]
-    expected = f'[ptt] mention from User: @"{handle}" ping (message {message["message_id"]})'
+    expected = f'[ptt] message {message["message_id"]} mention from User: @"{handle}" ping'
     assert lines[0] == expected
-    assert lines[1] == f"[ptt] question from Rex: why? (item {item['item_id']})"
+    assert lines[1] == f"[ptt] item {item['item_id']} question from Rex: why?"
     # acked: neither the waiter nor receive.py hands them out again
     assert waiter.channel_once(0) == 0 and waiter.project_once(0) == 0
     pending = env["client"].get(
@@ -525,7 +527,7 @@ def test_wake_cap_and_nobody_present_block_the_stop_wait(env, capsys, monkeypatc
     project = receive.Project(receive.link.base_url(), "s1", {})
     project.pointer["roster"] = {"x": True}
     assert project.may_wake()
-    project.pointer["wakes"] = [receive.time.time()] * 6
+    project.pointer["wakes"] = [receive.time.time()] * receive.link.wake_cap()
     assert not project.may_wake()
 
 
@@ -616,7 +618,7 @@ def test_ptt_say_prints_queued_items(env, capsys, monkeypatch):
 
 def test_item_line_matches_the_cli_follow_line():
     item = {"kind": "instruction", "from": {"handle": "Rex"}, "title": "a  b", "item_id": "u"}
-    assert ptt.link.item_line(item) == "[ptt] instruction from Rex: a b (item u)"
+    assert ptt.link.item_line(item) == "[ptt] item u instruction from Rex: a b"
 
 
 # --- task 4: FYIs, batching, the short preamble ----------------------------------
@@ -714,7 +716,7 @@ def test_wait_once_prints_everything_pending(env, capsys):
     session = ptt.Session("s1")
     _item(env, pid, rex_key, session.member["member_id"], "just so you know", kind="note")
     assert ptt.main(["--session", "s1", "wait", "--once"]) == 0
-    assert "[ptt] note from Rex: just so you know" in capsys.readouterr().out
+    assert " note from Rex: just so you know" in capsys.readouterr().out
     assert ptt.main(["--session", "s1", "wait", "--once"]) == 0
     assert "[ptt] nothing new" in capsys.readouterr().out
 
@@ -737,9 +739,9 @@ def test_waiter_batches_a_wake_with_pending_fyis(env, capsys):
     now[0] = 4
     assert waiter.due() and waiter.flush() == 3
     lines = out.getvalue().splitlines()
-    assert lines[0].startswith("[ptt] mention from User") and question["message_id"] in lines[0]
-    assert lines[1].startswith("[ptt] handoff from Rex") and item["item_id"] in lines[1]
-    assert lines[2].startswith("[ptt] FYI from User") and fyi["message_id"] in lines[2]
+    assert " mention from User" in lines[0] and question["message_id"] in lines[0]
+    assert " handoff from Rex" in lines[1] and item["item_id"] in lines[1]
+    assert " FYI from User" in lines[2] and fyi["message_id"] in lines[2]
     state = session.channel()
     pending = env["client"].get(
         f"/channels/{state['channel_id']}/inbox", headers={"X-Participant-Key": state["key_id"]}
@@ -939,3 +941,217 @@ def test_codex_rules_names_this_python_and_ptt(capsys):
     assert "prefix_rule(" in rules and 'decision = "allow"' in rules
     assert json.dumps(str(HOOKS / "ptt.py")) in rules
     assert json.dumps(sys.executable) in rules and "~/.codex/rules/agent-ptt.rules" in rules
+
+
+# --- task 5: Codex watcher, turn state, ack prefixes, mention lines ---------------
+
+
+def _mention_me(env, session, text_fmt="@{me} {n}", fyi=False, n=1):
+    """A human in the channel @mentions this session n times; returns the human."""
+    state = session.channel()
+    human = (
+        env["client"]
+        .post(f"/channels/{state['channel_id']}/join", json={"handle": "User", "voice_id": "fake"})
+        .json()
+    )
+    me = ptt.link.mention_text(session.member.get("handle") or "x").lstrip("@")
+    for i in range(n):
+        env["client"].post(
+            f"/channels/{state['channel_id']}/say",
+            json={"key_id": human["key_id"], "text": text_fmt.format(me=me, n=i), "fyi": fyi},
+        )
+    return human
+
+
+def _watch(env, session, now):
+    queued = []
+    watch = ptt.CodexWatch(
+        session, pid=0, clock=lambda: now[0], runner=lambda m: queued.append(m) or True
+    )
+    watch.batch = 0
+    return watch, queued
+
+
+def test_codex_watch_pokes_an_idle_session_once_and_never_acks(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    now = [1000.0]
+    watch, queued = _watch(env, session, now)
+    _mention_me(env, session)
+    ptt.link.mark_turn(session.base, "s1", False)
+    watch.step(0, lambda s: None)
+    assert queued == [ptt.POKE]
+    watch.step(0, lambda s: None)
+    assert len(queued) == 1  # same mention: no second poke right away
+    now[0] += ptt.REPOKE_SECONDS + 1
+    watch.step(0, lambda s: None)
+    assert len(queued) == 2  # nobody picked it up: one retry
+    now[0] += ptt.REPOKE_SECONDS + 1
+    watch.step(0, lambda s: None)
+    assert len(queued) == 2  # at most MAX_POKES
+    _, pending = session.channel_call("GET", "/channels/{cid}/inbox")
+    assert len(pending) == 1  # still pending: the UserPromptSubmit hook delivers and acks
+    assert len(ptt.link.load_session(session.base, "s1")["wakes"]) == 2
+
+
+def test_codex_watch_skips_busy_turns_and_fyis(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    now = [ptt.time.time()]
+    watch, queued = _watch(env, session, now)
+    _mention_me(env, session, fyi=True)
+    ptt.link.mark_turn(session.base, "s1", False)
+    watch.step(0, lambda s: None)
+    assert queued == []  # an FYI never wakes
+    _mention_me(env, session, text_fmt="@{me} real")
+    ptt.link.mark_turn(session.base, "s1", True)
+    watch.step(0, lambda s: None)
+    assert queued == []  # busy: the hooks deliver during the turn
+    ptt.link.mark_turn(session.base, "s1", False)
+    watch.step(0, lambda s: None)
+    assert queued == [ptt.POKE]
+
+
+def test_codex_watch_honours_the_wake_cap_and_says_so_once(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_WAKE_MAX_PER_HOUR", "1")
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    now = [ptt.time.time()]
+    watch, queued = _watch(env, session, now)
+    ptt.link.mark_turn(session.base, "s1", False)
+    _mention_me(env, session, text_fmt="@{me} first")
+    watch.step(0, lambda s: None)
+    _mention_me(env, session, text_fmt="@{me} second")
+    watch.step(0, lambda s: None)
+    _mention_me(env, session, text_fmt="@{me} third")
+    watch.step(0, lambda s: None)
+    assert len(queued) == 1
+    history = env["client"].get(f"/channels/{session.channel()['channel_id']}/history").json()
+    notices = [m for m in history if "wake cap" in m["text"]]
+    assert len(notices) == 1 and notices[0]["fyi"] and notices[0]["deliveries"] == []
+
+
+def test_codex_watch_batches_close_mentions_into_one_poke(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    now = [ptt.time.time()]
+    watch, queued = _watch(env, session, now)
+    watch.batch = 4
+    ptt.link.mark_turn(session.base, "s1", False)
+    _mention_me(env, session, text_fmt="@{me} one")
+    watch.step(0, lambda s: _mention_me(env, session, text_fmt="@{me} two"))
+    assert len(queued) == 1
+    assert len(watch.poked) == 2
+
+
+def test_codex_watch_exits_with_its_codex_process(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    assert not ptt.CodexWatch(session, pid=gone.pid).alive()
+    assert ptt.CodexWatch(session, pid=os.getpid()).alive()
+    ptt.link.save_session(session.base, "s1", ended=True)
+    assert not ptt.CodexWatch(session, pid=os.getpid()).alive()
+
+
+def test_turn_marks_never_create_a_session(env):
+    ptt.link.mark_turn("http://x", "nobody", True)
+    assert ptt.link.load_session("http://x", "nobody") == {}
+
+
+def test_receive_marks_turns_and_skips_the_stop_wait_with_a_watcher(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_AGENT", "Codex")
+    start(capsys=capsys)
+    base = receive.link.base_url()
+    receive.link.save_session(base, "s1", wake_route="queue")
+    monkeypatch.setattr(receive.link, "watcher_running", lambda b, s: True)
+    monkeypatch.setattr(receive, "wait_for_wake", lambda *a, **k: pytest.fail("waited"))
+    _deliver("UserPromptSubmit")
+    assert receive.link.load_session(base, "s1")["turn"] == "busy"
+    _deliver("Stop")
+    assert receive.link.load_session(base, "s1")["turn"] == "idle"
+
+
+def test_receive_restarts_a_dead_watcher(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_AGENT", "Codex")
+    start(capsys=capsys)
+    base = receive.link.base_url()
+    receive.link.save_session(base, "s1", wake_route="queue", codex_pid=4242)
+    started = []
+    monkeypatch.setattr(receive.link, "watcher_running", lambda b, s: False)
+    monkeypatch.setattr(
+        receive.link, "start_codex_watch", lambda b, s, pid: started.append(pid) or True
+    )
+    _deliver("Stop")
+    assert started == [4242]
+
+
+def test_session_start_tells_codex_how_it_is_woken(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_AGENT", "Codex")
+    assert "only reach you for 4 min" in start(capsys=capsys)
+    assert "codex queue" in session_start.codex_wake_text("queue")
+    monkeypatch.setenv("AGENT_PTT_STOP_WAIT_SECONDS", "0")
+    assert "can't wake you" in session_start.codex_wake_text("stop")
+
+
+def test_session_start_starts_the_codex_watcher(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_AGENT", "Codex")
+    started = []
+    monkeypatch.setattr(session_start.link, "codex_queue_supported", lambda: True)
+    monkeypatch.setattr(session_start.link, "codex_pid", lambda: 777)
+    monkeypatch.setattr(
+        session_start.link, "start_codex_watch", lambda b, s, pid: started.append(pid) or True
+    )
+    context = start(capsys=capsys)
+    assert started == [777] and "codex queue" in context
+    pointer = session_start.link.load_session(session_start.link.base_url(), "s1")
+    assert pointer["wake_route"] == "queue" and pointer["codex_pid"] == 777
+
+
+def test_wait_lines_put_the_full_id_first():
+    message = {"message_id": "2e58d8e0-0d22-4948-8aaa-0123456789ab", "handle": "Poppy"}
+    message["text"] = "@Willow " + "thanks " * 100
+    line = ptt.link.mention_line(message)
+    assert line.startswith("[ptt] message 2e58d8e0-0d22-4948-8aaa-0123456789ab mention from Poppy:")
+    assert len(line) < 240
+
+
+def test_ack_and_done_take_prefixes_and_name_the_kind(env, capsys):
+    pid, _, rex_key = other_member(env["client"], "Rex")
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    _mention_me(env, session)
+    _, pending = session.channel_call("GET", "/channels/{cid}/inbox")
+    mid = pending[0]["message_id"]
+    me = session.member["member_id"]
+    item = (
+        env["client"]
+        .post(
+            f"/projects/{pid}/items",
+            json={"kind": "instruction", "to": f"agent:{me}", "body": "do it"},
+            headers={"X-Member-Key": rex_key},
+        )
+        .json()
+    )
+    item_id = item.get("item_id") or item["item"]["item_id"]
+    capsys.readouterr()
+    assert ptt.main(["--session", "s1", "ack", mid[:8]]) == 0
+    assert f"acked mention {mid}" in capsys.readouterr().out
+    ptt.link.remember_delivered(session.base, "s1", [("message", mid)])
+    assert ptt.main(["--session", "s1", "ack", mid[:8]]) == 0
+    assert "already delivered; mentions need no ack" in capsys.readouterr().out
+    assert ptt.main(["--session", "s1", "done", item_id[:8]]) == 0
+    assert f"work item {item_id}" in capsys.readouterr().out
+    assert ptt.main(["--session", "s1", "ack", "zzzz"]) == 1
+    assert "no pending or delivered" in capsys.readouterr().err
+
+
+def test_waiter_remembers_what_it_printed(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    _mention_me(env, session)
+    waiter = ptt.Waiter(session, out=io.StringIO(), batch=0)
+    waiter.channel_once(0)
+    delivered = ptt.link.load_session(session.base, "s1")["delivered"]
+    assert delivered and delivered[0][0] == "message"

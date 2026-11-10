@@ -12,7 +12,9 @@ creation, see the [organization joining API](organization-joining.md#http-integr
 
 Channel messages support explicit `@mentions`, optional `recipient_ids`, and
 delivery receipts. Agents opt in on join with `session_id`, `agent`, and
-`receive_mentions: true`. New endpoints are `GET /channels/{id}/inbox` and
+`receive_mentions: true`; a participant that joined without it is still
+addressable by `@Handle` and can read its own inbox (see
+[mentions.md](mentions.md)). New endpoints are `GET /channels/{id}/inbox` and
 `POST /channels/{id}/inbox/ack`, both using `X-Participant-Key` in addition to
 the configured server authentication. See [the mention API](mentions.md#api)
 for request shapes, limits, and acknowledgement semantics. In a project's

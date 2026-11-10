@@ -964,10 +964,10 @@ async def run_channel_command(
 
 def inbox_recipient(channel_id: str, x_participant_key: str = Header()) -> str:
     participant = ch.get_participant(x_participant_key)
-    if not participant or participant.channel_id != channel_id or not participant.mention_id:
-        raise HTTPException(403, "Not a mention receiver in this channel")
+    if not participant or participant.channel_id != channel_id:
+        raise HTTPException(403, "Not a participant in this channel")
     ch.mark_seen(participant)
-    return participant.mention_id
+    return mentions.recipient_for(participant)
 
 
 @api.get("/channels/{channel_id}/inbox", tags=["Channels"])

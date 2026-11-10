@@ -28,6 +28,7 @@ import importlib.util
 import json
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -219,39 +220,72 @@ def cmd_tell(session: Session, args) -> None:
     print(f"[ptt] sent{note} {item.get('kind')} to {to} (item {item.get('item_id')})")
 
 
-def _ack_mention(session: Session, message_id: str) -> bool:
-    try:
-        _, pending = session.channel_call("GET", "/channels/{cid}/inbox?limit=20")
-    except (urllib.error.HTTPError, Failure):
-        return False
-    if not any(m.get("message_id") == message_id for m in pending or []):
-        return False
+def _resolve(session: Session, prefix: str) -> tuple[str, str, bool]:
+    """(kind, full id, still pending) for a message or work-item id or unique prefix.
+
+    Looks at what is pending, then at what the hooks and `ptt wait` already
+    delivered to this session. Raises Failure when nothing or several match.
+    """
+    prefix = prefix.strip()
+    if not prefix:
+        raise Failure("give a message or work-item id (a unique prefix is enough)")
+    mentions, items = _pending(session)
+    found: dict[str, tuple[str, str, bool]] = {}
+    for message in mentions:
+        if message["message_id"].startswith(prefix):
+            found[message["message_id"]] = ("message", message["message_id"], True)
+    for item in items:
+        if item["item_id"].startswith(prefix):
+            found[item["item_id"]] = ("item", item["item_id"], True)
+    if not found:
+        pointer = link.load_session(session.base, session.session_id)
+        for kind, entry_id in pointer.get("delivered") or []:
+            if str(entry_id).startswith(prefix):
+                found[entry_id] = (kind, entry_id, False)
+    if len(found) == 1:
+        return next(iter(found.values()))
+    if found:
+        listed = ", ".join(f"{kind} {entry_id}" for kind, entry_id, _ in found.values())
+        raise Failure(f"{prefix} matches several: {listed}; give more of the id")
+    if len(prefix) >= 32:
+        return "item", prefix, False  # a full id we never saw: try it as a work item
+    raise Failure(f"no pending or delivered mention or work item starts with {prefix}")
+
+
+def _ack_message(session: Session, message_id: str) -> None:
     session.channel_call("POST", "/channels/{cid}/inbox/ack", {"message_ids": [message_id]})
-    return True
 
 
 def cmd_ack(session: Session, args) -> None:
-    if _ack_mention(session, args.id):
-        print(f"[ptt] acked message {args.id}")
+    kind, entry_id, pending = _resolve(session, args.id)
+    if kind == "message":
+        if pending:
+            _ack_message(session, entry_id)
+            print(f"[ptt] acked mention {entry_id}")
+        else:
+            print(f"[ptt] mention {entry_id} was already delivered; mentions need no ack")
         return
     try:
-        session.project_call("POST", f"/projects/{{pid}}/items/{args.id}/ack")
+        session.project_call("POST", f"/projects/{{pid}}/items/{entry_id}/ack")
     except urllib.error.HTTPError as exc:
-        raise Failure(f"ack failed: {_detail(exc)}") from None
-    print(f"[ptt] acked item {args.id}")
+        raise Failure(f"ack of work item {entry_id} failed: {_detail(exc)}") from None
+    print(f"[ptt] acked work item {entry_id}")
 
 
 def cmd_done(session: Session, args) -> None:
-    if _ack_mention(session, args.id):
-        print(f"[ptt] acked message {args.id} (mentions have no done state)")
+    kind, entry_id, pending = _resolve(session, args.id)
+    if kind == "message":
+        if pending:
+            _ack_message(session, entry_id)
+        print(f"[ptt] {entry_id} is a mention, not a work item: nothing to finish")
         return
     try:
         item = session.project_call(
-            "POST", f"/projects/{{pid}}/items/{args.id}/done", {"note": args.note}
+            "POST", f"/projects/{{pid}}/items/{entry_id}/done", {"note": args.note}
         )
     except urllib.error.HTTPError as exc:
-        raise Failure(f"done failed: {_detail(exc)}") from None
-    print(f"[ptt] {item.get('state', 'done')}: {item.get('title', args.id)}")
+        raise Failure(f"done for work item {entry_id} failed: {_detail(exc)}") from None
+    print(f"[ptt] work item {entry_id} {item.get('state', 'done')}: {item.get('title', '')}")
 
 
 # --- wait -------------------------------------------------------------------
@@ -326,6 +360,11 @@ class Waiter:
                 self.out.flush()
             self.printed |= {entry_id for _, _, entry_id in entries}
             self.held, self.flush_at = [], None
+        if entries:
+            with contextlib.suppress(Exception):
+                link.remember_delivered(
+                    self.session.base, self.session.session_id, [(k, i) for _, k, i in entries]
+                )
         self._ack(
             [e[2] for e in entries if e[1] == "message"], [e[2] for e in entries if e[1] == "item"]
         )
@@ -459,9 +498,11 @@ def _exit_on_signal(signum, frame) -> None:
     raise SystemExit(128 + signum)
 
 
-def _wait_lock(session: Session) -> Path | None:
+def _wait_lock(session: Session, path: Path | None = None) -> Path | None:
     """A portable single-instance lock: an O_EXCL file kept fresh by a heartbeat."""
-    path = link.PROJECTS_DIR / f"wait-{link._digest(session.base, session.session_id)[:32]}.lock"
+    path = path or (
+        link.PROJECTS_DIR / f"wait-{link._digest(session.base, session.session_id)[:32]}.lock"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     for _ in (0, 1):
         try:
@@ -513,6 +554,189 @@ def cmd_wait(session: Session, args) -> None:
         if session.member_path and session.member:
             session.member["cursor"] = waiter.cursor
             link.save_membership(session.member_path, session.member)
+
+
+# --- codex-watch ----------------------------------------------------------------
+
+POKE = (
+    "Agent PTT: messages for you from other agents arrived while you were idle. The"
+    " Agent PTT hook attaches them to this prompt; handle them as its context says (if"
+    " nothing is attached, they were handled already: just end the turn)."
+)
+REPOKE_SECONDS = 90.0
+MAX_POKES = 2
+WATCH_LIFETIME = 24 * 3600.0
+
+
+class CodexWatch:
+    """Wakes an idle Codex session: on a waking mention or work item, queue a short
+    prompt into its thread with `codex queue` (the TUI starts a turn within ~10 s and
+    the UserPromptSubmit hook delivers the real messages, with the trust rules).
+
+    Never acks anything: delivery stays with the hooks. Skips busy turns (the hooks
+    mark them; PostToolUse and Stop deliver there), batches close mentions into one
+    poke, re-pokes at most once if nothing picked it up, and counts every poke
+    against the wake cap. Exits with the Codex process, the session, or after 24 h.
+    """
+
+    def __init__(self, session: Session, pid: int = 0, clock=time.time, runner=None):
+        self.session = session
+        self.pid = pid
+        self.clock = clock
+        self.started = clock()
+        self.run_queue = runner or self._codex_queue
+        self.poked: dict[str, tuple[float, int]] = {}
+        self.cap_noticed = 0.0
+        self.batch = link.wake_batch_seconds()
+        self.heartbeat = None
+
+    def _codex_queue(self, message: str) -> bool:
+        binary = link.codex_binary()
+        if not binary:
+            return False
+        try:
+            result = subprocess.run(
+                [binary, "queue", "--thread", self.session.session_id, "--message", message],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode:
+            print(f"[ptt] codex queue failed: {result.stderr.strip()[:300]}", file=sys.stderr)
+        return result.returncode == 0
+
+    def alive(self) -> bool:
+        if self.clock() - self.started > WATCH_LIFETIME or not link.alive(self.pid):
+            return False
+        pointer = link.load_session(self.session.base, self.session.session_id)
+        return bool(pointer) and not pointer.get("ended")
+
+    def waking(self, wait: int) -> list[str]:
+        """Ids of pending mentions and work items that should wake this session."""
+        state = self.session.channel()
+        wake_only = "&wake_only=1" if state.get("fyi_supported") else ""
+        wait = (
+            min(wait, int(state.get("wait_max_seconds") or 0)) if state.get("wait_supported") else 0
+        )
+        _, messages = self.session.channel_call(
+            "GET", f"/channels/{{cid}}/inbox?limit=20&wait={wait}{wake_only}", timeout=wait + 15
+        )
+        ids = [m["message_id"] for m in messages or [] if link.wakes(m)]
+        if self.session.has_project():
+            with contextlib.suppress(Exception):
+                data = self.session.project_call(
+                    "GET", f"/projects/{{pid}}/inbox?limit=50{wake_only}"
+                )
+                ids += [i["item_id"] for i in (data or {}).get("items") or [] if link.wakes(i)]
+        return ids
+
+    def due(self, ids: list[str]) -> list[str]:
+        pointer = link.load_session(self.session.base, self.session.session_id)
+        if link.is_busy(pointer, self.clock()):
+            return []  # the hooks deliver during a turn and at its Stop
+        now = self.clock()
+        out = []
+        for entry_id in ids:
+            at, tries = self.poked.get(entry_id, (0.0, 0))
+            if not tries or (now - at > REPOKE_SECONDS and tries < MAX_POKES):
+                out.append(entry_id)
+        return out
+
+    def poke(self, ids: list[str]) -> bool:
+        base, sid = self.session.base, self.session.session_id
+        pointer = link.load_session(base, sid)
+        now = self.clock()
+        wakes = link.recent_wakes(pointer, now)
+        if len(wakes) >= link.wake_cap():
+            for entry_id in ids:
+                self.poked[entry_id] = (now, MAX_POKES)  # wait for the next hook
+            self.notice_cap(min(wakes) + 3600)
+            return False
+        if not self.run_queue(POKE):
+            return False
+        link.save_session(base, sid, wakes=[*wakes, now])
+        for entry_id in ids:
+            self.poked[entry_id] = (now, self.poked.get(entry_id, (0.0, 0))[1] + 1)
+        print(f"[ptt] poked Codex for {len(ids)} pending", file=sys.stderr, flush=True)
+        return True
+
+    def notice_cap(self, until: float) -> None:
+        """One text-only FYI per cap window, so senders know why nothing happens."""
+        if self.cap_noticed > self.clock() - 3600:
+            return
+        self.cap_noticed = self.clock()
+        me = self.session.member.get("handle") or self.session.agent
+        when = time.strftime("%H:%M", time.localtime(until))
+        text = (
+            f"{me} reached its wake cap ({link.wake_cap()} per hour): new mentions wait"
+            f" until {when} or its next prompt."
+        )
+        with contextlib.suppress(Exception):
+            self.session.channel_call(
+                "POST",
+                "/channels/{cid}/say",
+                lambda state: {
+                    "key_id": state["key_id"],
+                    "text": text,
+                    "speak": False,
+                    "fyi": True,
+                },
+            )
+
+    def step(self, wait: int, sleep) -> None:
+        ids = self.waking(wait)
+        if not self.due(ids):
+            return
+        if self.batch > 0:
+            sleep(self.batch)  # let close mentions arrive: one poke for the burst
+            ids = self.waking(0)
+        due = self.due(ids)
+        if due:
+            self.poke(due)
+
+    def run(self, stop: threading.Event | None = None, sleep=None) -> None:
+        stop = stop or threading.Event()
+        sleep = sleep or stop.wait
+        failures = 0
+        while not stop.is_set() and self.alive():
+            started = time.monotonic()
+            try:
+                self.step(WAIT_SECONDS, sleep)
+                failures = 0
+            except Exception as exc:
+                failures += 1
+                print(f"[ptt] codex-watch: {exc}", file=sys.stderr, flush=True)
+                sleep(min(MAX_BACKOFF, 2.0 ** min(failures, 6)))
+            if self.heartbeat:
+                self.heartbeat()
+            elapsed = time.monotonic() - started
+            if elapsed < MIN_CYCLE:
+                sleep(MIN_CYCLE - elapsed)  # pending-but-not-due returns at once: don't spin
+
+
+def cmd_codex_watch(session: Session, args) -> None:
+    lock = _wait_lock(session, link.watch_lock_path(session.base, session.session_id))
+    if lock is None:
+        print("[ptt] a codex-watch already runs for this session", file=sys.stderr)
+        return
+    with contextlib.suppress(OSError):
+        lock.write_text(str(os.getpid()))
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(getattr(signal, name), _exit_on_signal)
+    watch = CodexWatch(session, pid=args.pid)
+    watch.heartbeat = lambda: os.utime(lock)
+    print(f"[ptt] codex-watch for {session.session_id} (pid {args.pid})", file=sys.stderr)
+    try:
+        watch.run()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 # --- Codex sandbox rule ----------------------------------------------------------
@@ -574,8 +798,10 @@ def parser() -> argparse.ArgumentParser:
     tell.add_argument("--reply-to", dest="reply_to")
     tell.add_argument("--fyi", action="store_true", help="informational: never wakes them")
     sub.add_parser("codex-rules", help="print a Codex rules file that lets ptt skip the sandbox")
+    watch = sub.add_parser("codex-watch", help="(started by the hooks) wake idle Codex")
+    watch.add_argument("--pid", type=int, default=0, help="the Codex process to follow")
     for name in ("ack", "done"):
-        cmd = sub.add_parser(name, help=f"{name} a mention (message ID) or work item")
+        cmd = sub.add_parser(name, help=f"{name} a work item (or mention); an id prefix works")
         cmd.add_argument("id")
         if name == "done":
             cmd.add_argument("--note")
@@ -590,6 +816,7 @@ COMMANDS = {
     "tell": cmd_tell,
     "ack": cmd_ack,
     "done": cmd_done,
+    "codex-watch": cmd_codex_watch,
 }
 
 

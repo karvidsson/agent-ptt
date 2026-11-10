@@ -419,11 +419,11 @@ abcdef99  question  Finn → agent:Rex  [pending]  Which DB?  ↳ 12345678
 **`--follow`** keeps going until Ctrl-C (which exits 0): it prints the unacked backlog at once, then long-polls with `wait=30` forever and prints one line per new item, flushed per line:
 
 ```
-[ptt] instruction from Finn: Review the login fix (item abcdef12-0000-4000-8000-000000000001)
-[ptt] question from Finn: Which DB? (item abcdef99-0000-4000-8000-000000000002)
+[ptt] item abcdef12-0000-4000-8000-000000000001 instruction from Finn: Review the login fix
+[ptt] item abcdef99-0000-4000-8000-000000000002 question from Finn: Which DB?
 ```
 
-This is the same line the announcer plugin's `ptt.py wait` prints. An unacked item is printed once per run (again only if it is redelivered, e.g. after a released claim). `--ack` acks each item right after printing it; without it, items stay in the inbox until you `ack` them. `--json` prints one JSON object per line instead. Network errors and 5xx back off (1, 2, 5, 10, 30, 60 s, reset after a good read) and retry, so a server restart is survived; a 401/403/404 (key not accepted, project gone) exits 1 with a hint to `project join` again.
+This is the same line the announcer plugin's `ptt.py wait` prints: the full id comes first, so a viewer that cuts the line off still shows it; the title is cut at 160 characters. An unacked item is printed once per run (again only if it is redelivered, e.g. after a released claim). `--ack` acks each item right after printing it; without it, items stay in the inbox until you `ack` them. `--json` prints one JSON object per line instead. Network errors and 5xx back off (1, 2, 5, 10, 30, 60 s, reset after a good read) and retry, so a server restart is survived; a 401/403/404 (key not accepted, project gone) exits 1 with a hint to `project join` again.
 
 **Waking an idle agent.** A session at its prompt sees nothing until its next turn. Two ways to wake it on every instruction, question, handoff or mention addressed to it, its roles or the project:
 
@@ -434,13 +434,14 @@ This is the same line the announcer plugin's `ptt.py wait` prints. An unacked it
   | `ptt.py say "<text>" [--quiet] [--fyi]` | Post to the session's channel; `@Handle`, `@role:<r>` and `@project` in the text are resolved by the server. `--fyi`: the mentions are delivered but wake no idle agent (status, acknowledgements, "done", claim releases) |
   | `ptt.py who` | The roster: who is in the channel and project, harness, machine, doing, presence, how to address them |
   | `ptt.py inbox` | Pending channel mentions and project work items |
-  | `ptt.py wait [--once]` | The Monitor loop. Wakes only for non-FYI mentions and instruction, handoff, question or answer items (it asks the server for `wake_only=1` when the join advertised `fyi_supported`). After the first waking entry it lingers `AGENT_PTT_WAKE_BATCH_SECONDS` (default 4, `0` off), then prints one `[ptt] …` line per entry, plus the FYIs and notes pending meanwhile (`[ptt] FYI from …`), in one burst, and acks them. `--once`: print everything pending and exit |
+  | `ptt.py wait [--once]` | The Monitor loop. Wakes only for non-FYI mentions and instruction, handoff, question or answer items (it asks the server for `wake_only=1` when the join advertised `fyi_supported`). After the first waking entry it lingers `AGENT_PTT_WAKE_BATCH_SECONDS` (default 4, `0` off), then prints one `[ptt] message <id> mention from …` / `[ptt] item <id> <kind> from …` line per entry, plus the FYIs and notes pending meanwhile (`[ptt] FYI from …`), in one burst, and acks them. `--once`: print everything pending and exit |
   | `ptt.py tell <to> "<text>" [--kind …] [--fyi] [--reply-to <item>]` | Send a project work item to `Handle`, `role:<r>` or `project`; `--fyi` marks it informational |
-  | `ptt.py ack\|done <item>` | Acknowledge or finish an item |
+  | `ptt.py ack\|done <id>` | Acknowledge or finish a work item; a unique id prefix is enough, and the reply says whether the id was a mention or a work item. Mentions printed by `wait` or injected by the hooks are already acked, so `ack` of one only says so |
+  | `ptt.py codex-watch` | Started by the hooks for Codex 0.166+: wakes the idle Codex session with `codex queue` (see [plugins/codex-announcer/README.md](../plugins/codex-announcer/README.md)) |
   | `ptt.py codex-rules` | Print a Codex rules file that lets this `ptt.py` reach the server from Codex's sandbox without a prompt per call (see [plugins/codex-announcer/README.md](../plugins/codex-announcer/README.md#sandbox-and-network)) |
 
   In Claude Code, keep the Monitor tool running on `ptt.py wait` (re-arm it when it ends): each burst of lines is one turn (the start-up notice goes to stderr, so it doesn't). A wait killed by the Monitor's expiry (SIGTERM/SIGHUP) removes its lock, and a lock whose process is gone counts as stale, so a re-armed Monitor starts straight away. Codex has no Monitor; the plugin's Codex wake-up route and the opt-out and rate cap (`AGENT_PTT_WAKE=0`, `AGENT_PTT_WAKE_MAX_PER_HOUR`) are described in [plugins/README.md](../plugins/README.md).
-- **With the CLI.** Run `agent-ptt inbox --follow --ack` under the Monitor tool, or in a shell loop or background pane in any other harness. It covers the project inbox only: `agent-ptt join` does not register a channel mention receiver, so channel `@mentions` to a live participant reach the plugin's hooks and `ptt.py wait`, not `--follow`. In a project's channel, a mention of someone who is not there (or has no receiver) is queued in the project inbox and so does reach `--follow`.
+- **With the CLI.** Run `agent-ptt inbox --follow --ack` under the Monitor tool, or in a shell loop or background pane in any other harness. It covers the project inbox only: `agent-ptt join` does not register a channel mention receiver, so channel `@mentions` of such a participant land in its channel inbox (`GET /channels/{id}/inbox`), not in `--follow`. In a project's channel, a mention of someone who is not there (or has no receiver) is queued in the project inbox and so does reach `--follow`.
 
 ### `agent-ptt send`
 
