@@ -66,7 +66,7 @@ def test_hook_hands_off_targeted_content_then_acknowledges(hook, monkeypatch, ca
         if path.endswith("/ack"):
             # The acknowledgement must happen only after model-visible stdout.
             output = capsys.readouterr().out
-            assert message["message_id"] in output
+            assert message["message_id"][:8] in output
             handoffs.append(json.loads(output))
         return original(base, method, path, payload, key)
 
@@ -99,7 +99,7 @@ def test_failed_ack_retries_without_reinjecting(hook, monkeypatch, capsys):
     monkeypatch.setattr(receive, "request", request)
     with pytest.raises(OSError):
         receive.deliver(event)
-    assert message["message_id"] in capsys.readouterr().out
+    assert message["message_id"][:8] in capsys.readouterr().out
     receive.deliver(event)
     assert capsys.readouterr().out == ""
     monkeypatch.setattr(receive, "request", original)
@@ -119,7 +119,7 @@ def test_stdout_failure_keeps_message_pending(hook, monkeypatch, capsys):
         with pytest.raises(BrokenPipeError):
             receive.deliver(event)
     receive.deliver(event)
-    assert message["message_id"] in capsys.readouterr().out
+    assert message["message_id"][:8] in capsys.readouterr().out
 
 
 def test_throttle_loop_guard_and_concurrent_hook_leave_pending(hook, monkeypatch, capsys):
@@ -135,7 +135,7 @@ def test_throttle_loop_guard_and_concurrent_hook_leave_pending(hook, monkeypatch
     assert len(calls) == count
     assert capsys.readouterr().out == ""
     receive.deliver(event)
-    assert message["message_id"] in capsys.readouterr().out
+    assert message["message_id"][:8] in capsys.readouterr().out
 
 
 def test_channel_switch_does_not_consume_old_channel(hook, capsys):
@@ -145,10 +145,10 @@ def test_channel_switch_does_not_consume_old_channel(hook, capsys):
     receive.deliver(event)
     notice = json.loads(capsys.readouterr().out)
     assert "mention checks are enabled" in notice["hookSpecificOutput"]["additionalContext"]
-    assert message["message_id"] not in str(notice)
+    assert message["message_id"][:8] not in str(notice)
     receive.routing.save_channel("session", "Claude", "http://localhost:8770", None)
     receive.deliver(event)
-    assert message["message_id"] in capsys.readouterr().out
+    assert message["message_id"][:8] in capsys.readouterr().out
 
 
 def test_disabled_receiver_is_noop(hook, monkeypatch, capsys):

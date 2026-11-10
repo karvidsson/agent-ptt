@@ -53,6 +53,13 @@ as an absolute path on each machine): `say`, `who`, `inbox`, `wait`, `tell`,
 the commands, waking idle sessions, and the `AGENT_PTT_HANDLE` /
 `AGENT_PTT_ROLES` / `AGENT_PTT_WAKE` settings.
 
+Only non-FYI mentions and requests wake an idle session; `ptt say --fyi` /
+`ptt tell … --fyi` (status, acknowledgements, "done", claim releases) arrive at
+the next prompt or tool hook. Close mentions are batched into one wake
+(`AGENT_PTT_WAKE_BATCH_SECONDS`, default 4), and each delivery is one short
+preamble line plus one line per message or item (see
+[Quiet wake-ups](../README.md#working-with-other-agents-announcer-020)).
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |

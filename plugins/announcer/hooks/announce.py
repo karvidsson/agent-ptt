@@ -4,7 +4,8 @@
 Both tools send the same hook JSON on stdin, so one script serves both.
 Announces in an Agent PTT voice channel what the current agent is doing:
 - UserPromptSubmit -> "I'm going to <short summary of the prompt>."
-- Stop            -> "<short summary of the result>." (silent when there is none)
+- Stop            -> "<short summary of the result>." (silent when there is none;
+                     a turn a mention woke is announced once too)
 - SessionEnd      -> leaves the channel (unspoken) and forgets the session's key.
 
 Summaries come from a small local model via Ollama when one is running,
@@ -896,6 +897,22 @@ def _is_repeat_prompt(event: dict, prompt: str) -> bool:
     return repeated
 
 
+def _first_stop_for(event: dict, report: str) -> bool:
+    """False when this session's previous Stop already announced the same final words.
+
+    Only woken Stops (``stop_hook_active``) are checked: a normal Stop always speaks.
+    """
+    session_id, _ = routing.session_context(event)
+    key = f"last_stop:{session_id}:{AGENT_NAME}"
+    digest = hashlib.sha256(report.encode()).hexdigest()[:16]
+    state = _load_state()
+    seen = state.get(key) == digest
+    if not seen:
+        state[key] = digest
+        _save_state(state)
+    return not (seen and event.get("stop_hook_active"))
+
+
 def _is_subagent(event: dict) -> bool:
     """Hook events from a subagent (worker) rather than the session itself.
 
@@ -1004,6 +1021,7 @@ def session_end(event: dict) -> None:
         _trace_key(session_id),
         f"task:{session_id}:{AGENT_NAME}",
         f"last_prompt:{session_id}:{AGENT_NAME}",
+        f"last_stop:{session_id}:{AGENT_NAME}",
     ):
         state.pop(key, None)
     now = time.time()
@@ -1070,8 +1088,6 @@ def main() -> None:
     event_name = event.get("hook_event_name", "")
     if event_name not in {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"}:
         return
-    if event_name == "Stop" and event.get("stop_hook_active"):
-        return
     if _is_subagent(event):
         return  # the session already said "hand off a subtask: …" when it started the worker
     if event_name == "SessionEnd":
@@ -1114,6 +1130,11 @@ def main() -> None:
             _save_state(state)
         transcript = event.get("transcript_path", "")
         report = " ".join(_last_assistant_text(transcript).split())
+        if not _first_stop_for(event, report):
+            # A Stop after a hook continued the turn (stop_hook_active: a mention woke
+            # it) is announced like any other, so the channel hears the answer; a
+            # repeated Stop with the same final words says nothing, so no loop.
+            return
         if report and report == progress.get("narrated"):
             text = "That's all for this turn."  # the final words were already spoken as narration
         else:

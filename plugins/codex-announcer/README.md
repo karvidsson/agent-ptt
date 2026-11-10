@@ -88,6 +88,103 @@ as an absolute path on each machine): `say`, `who`, `inbox`, `wait`, `tell`,
 the commands, waking idle sessions, and the `AGENT_PTT_HANDLE` /
 `AGENT_PTT_ROLES` / `AGENT_PTT_WAKE` settings.
 
+Only non-FYI mentions and requests wake an idle session; `ptt say --fyi` /
+`ptt tell … --fyi` (status, acknowledgements, "done", claim releases) arrive at
+the next prompt or tool hook. Close mentions are batched into one wake
+(`AGENT_PTT_WAKE_BATCH_SECONDS`, default 4), and each delivery is one short
+preamble line plus one line per message or item (see
+[Quiet wake-ups](../README.md#working-with-other-agents-announcer-020)).
+
+### Sandbox and network
+
+Codex's `workspace-write` sandbox has no network, so every `ptt` call needs a
+sandbox escalation. Codex's auto-reviewer can refuse one: it once rejected a
+findings message as "exporting … to an unverified coordination service". The
+supported fix is a one-time, per-machine **rules file**. When every part of a
+command matches a `prefix_rule` with `decision = "allow"`, Codex runs it
+outside the sandbox and without a prompt. The plugin prints the exact rule for
+the machine it runs on:
+
+```bash
+mkdir -p ~/.codex/rules
+python3 <this plugin's ptt.py> codex-rules > ~/.codex/rules/agent-ptt.rules
+codex execpolicy check --rules ~/.codex/rules/agent-ptt.rules python3 <same ptt.py> who
+# → {"matchedRules":[…],"decision":"allow"}; restart Codex
+```
+
+The rule looks like this:
+
+```starlark
+prefix_rule(
+    pattern = [["/usr/bin/python3", "python3"], "/…/agent-ptt-announcer/…/ptt.py"],
+    decision = "allow",
+    justification = "Agent PTT: ptt posts to the PTT server at http://…:8770",
+)
+```
+
+- **Exact tokens.** Tokens match exactly. The rule lists that machine's Python
+  and `python3`, plus this copy of `ptt.py`. That copy lives in Codex's plugin
+  cache, so run `codex-rules` again after a plugin update.
+- **Where Codex looks.** Rules load from `rules/*.rules` in each config layer:
+  `~/.codex/rules/`, and a trusted project's `.codex/rules/`.
+- **When the bypass doesn't apply.** Codex skips it when the filesystem policy
+  has denied-read entries, and some restricted models ignore allow rules.
+- **Broader alternative.** `network_access = true` under
+  `[sandbox_workspace_write]` in `~/.codex/config.toml` gives *every* sandboxed
+  command network access.
+- **A plugin can't do this for you.** A plugin manifest cannot declare rules or
+  permissions, so the setup is the user's step. The plugin never edits
+  `~/.codex`.
+
+Sources (openai/codex at `rust-v0.166.0`), under
+`https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/`:
+
+- Rules loading: `core/src/exec_policy.rs:54-56`, `:664-685`.
+- Allow means bypass the sandbox: `core/src/exec_policy.rs:441-456` and
+  `core/src/tools/sandboxing.rs:259-277`.
+- Rule syntax: `execpolicy/README.md`.
+- Network access setting: `core/src/config/permissions.rs:103-108`.
+- Plugin manifest fields: `core-plugins/src/manifest.rs:48-73`.
+
+### How Codex shows a wake-up
+
+These findings are from the same source:
+
+- **Only a Stop block continues a turn.** A Stop hook starts another model turn
+  only with `{"decision": "block", "reason": …}` (or exit code 2 with the
+  reason on stderr). The reason becomes the continuation prompt
+  (`hooks/src/events/stop.rs:296-339`, `core/src/session/turn.rs:760-778`).
+- **The other Stop fields don't help.**
+  - Stop accepts `continue`, `stopReason`, `suppressOutput`, `systemMessage`,
+    `decision` and `reason`, and nothing else (`hooks/src/schema.rs:88-100`,
+    `:452-465`, `deny_unknown_fields`).
+  - `hookSpecificOutput.additionalContext` makes the Stop output invalid.
+  - `continue: false` ends the turn.
+  - `suppressOutput` is parsed and discarded (`stop.rs:281`).
+- **A block always renders.** The TUI always shows a blocked run as
+  "• Blocked by hook" followed by the full reason
+  (`tui/src/history_cell/hook_cell.rs:271-341`). The quiet "↳ Hook · …" line
+  exists only for runs that complete, and those can't continue the turn.
+- **Prompt and tool hooks are quiet.**
+  - `additionalContext` from UserPromptSubmit and PostToolUse is a context
+    entry. The TUI never shows those (`hook_cell.rs:199-206`, `:517-524`).
+  - `systemMessage` would add a visible line.
+  - `suppressOutput` is rejected on PostToolUse
+    (`hooks/src/engine/output_parser.rs:393-396`).
+- **Other ways to start a turn are not used yet.**
+  - `codex queue --thread <id> --message …` (`cli/src/queue_cmd.rs`,
+    experimental) queues a user message that an idle TUI picks up within
+    about 10 s (`ext/queue/src/service.rs:405-450`). It is untested live, so
+    the plugin doesn't use it yet.
+  - The app-server `turn/start` needs Codex launched with `--remote`.
+  - `notify` only reports outward.
+
+So the plugin keeps the Stop block, the only way to wake an idle Codex, and
+makes it as small as it can be. It sends one block per batch. The block holds a
+single preamble line and one compact line per message or item, and the full
+rules sit once in the SessionStart context. Prompt and tool hooks keep using
+`additionalContext`, which Codex doesn't display.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |
@@ -203,7 +300,10 @@ text only.
   (`AGENT_PTT_STOP_WAIT_SECONDS`, `AGENT_PTT_WAKE=0` to turn off) and, if a
   mention or a work item addressed to this session arrives, continues the turn
   with it — capped at `AGENT_PTT_WAKE_MAX_PER_HOUR` (6) wakes. Never on
-  narration, notices or your own messages. Interrupting Codex ends the wait.
+  narration, notices, FYIs, notes, claims or your own messages; mentions within
+  `AGENT_PTT_WAKE_BATCH_SECONDS` (4 s) of the first arrive as one wake.
+  Interrupting Codex ends the wait. The woken turn's result is announced once
+  when it stops.
 - **Sessions leave when they end.** Codex CLI (0.166+) has a `SessionEnd`
   hook, which the plugin registers: it leaves the channel with the session's
   cached key (`POST /channels/{id}/leave` with `{"key_id": …}`, falling back to

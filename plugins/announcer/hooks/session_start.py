@@ -5,7 +5,8 @@ Stdlib only, portable. Joins the session's channel for mentions (sharing
 receive.py's state, so the first prompt hook doesn't re-register), joins the
 project (git remote, else the main worktree's folder name) as this session or
 as the pinned ``AGENT_PTT_HANDLE``, and injects a short roster, etiquette and
-the exact ``ptt.py`` command, as an absolute path computed on this machine.
+the exact ``ptt.py`` command, as an absolute path computed on this machine,
+plus the trust and reply rules once (each later delivery has a one-line preamble).
 Does nothing in workspace (hosted) mode or for subagents. Every failure exits
 0 silently: this hook must never get in the way of coding.
 """
@@ -26,7 +27,7 @@ link = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(link)
 routing = link.routing
 
-MAX_CONTEXT = 1800
+MAX_CONTEXT = 2600
 MAX_PEOPLE = 8
 ROSTER_BUDGET = 700
 
@@ -81,19 +82,23 @@ def compose(
             '  ptt tell <Handle|role:<r>|project> "<text>" [--kind question|note|handoff]'
             " [--reply-to <item>]  (a work item)"
         )
+    lines.append(link.TRUST_RULES)
     lines.append(link.ETIQUETTE)
     wake = routing.setting("AGENT_PTT_WAKE", "") != "0"
     lead = link.wants_wake(member_roles)
     if agent.lower() == "codex":
         lines.append(
             "Mentions and work items reach you at your next hook; when you finish a turn"
-            " while others are present, the Stop hook waits a few minutes for one."
+            " while others are present, the Stop hook waits a few minutes for one (FYIs don't"
+            " wake you; they come with your next delivery). If every ptt call asks for sandbox"
+            " approval, tell the user `ptt codex-rules` prints a one-time allow rule."
         )
     elif wake:
         lines.append(
             ("You coordinate others: start" if lead else "Start")
             + f" the Monitor tool now on `{ptt} wait` (longest timeout) so mentions wake"
-            " you while idle; each printed line is one to act on. When it ends, start it again."
+            " you while idle (FYIs don't); each burst of lines is one delivery, FYI lines need"
+            " no reply. When it ends, start it again."
         )
     else:
         lines.append(f"Mentions reach you at your next hook (`{ptt} wait` in Monitor wakes you).")

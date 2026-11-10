@@ -431,14 +431,15 @@ This is the same line the announcer plugin's `ptt.py wait` prints. An unacked it
 
   | Command | Does |
   |---|---|
-  | `ptt.py say "<text>"` | Post to the session's channel; `@Handle`, `@role:<r>` and `@project` in the text are resolved by the server |
+  | `ptt.py say "<text>" [--quiet] [--fyi]` | Post to the session's channel; `@Handle`, `@role:<r>` and `@project` in the text are resolved by the server. `--fyi`: the mentions are delivered but wake no idle agent (status, acknowledgements, "done", claim releases) |
   | `ptt.py who` | The roster: who is in the channel and project, harness, machine, doing, presence, how to address them |
   | `ptt.py inbox` | Pending channel mentions and project work items |
-  | `ptt.py wait` | Loops forever and prints one `[ptt] …` line per new mention or item, acking what it printed; the Monitor loop |
-  | `ptt.py tell <to> "<text>" [--kind …]` | Send a project work item to `Handle`, `role:<r>` or `project` |
+  | `ptt.py wait [--once]` | The Monitor loop. Wakes only for non-FYI mentions and instruction, handoff, question or answer items (it asks the server for `wake_only=1` when the join advertised `fyi_supported`). After the first waking entry it lingers `AGENT_PTT_WAKE_BATCH_SECONDS` (default 4, `0` off), then prints one `[ptt] …` line per entry, plus the FYIs and notes pending meanwhile (`[ptt] FYI from …`), in one burst, and acks them. `--once`: print everything pending and exit |
+  | `ptt.py tell <to> "<text>" [--kind …] [--fyi] [--reply-to <item>]` | Send a project work item to `Handle`, `role:<r>` or `project`; `--fyi` marks it informational |
   | `ptt.py ack\|done <item>` | Acknowledge or finish an item |
+  | `ptt.py codex-rules` | Print a Codex rules file that lets this `ptt.py` reach the server from Codex's sandbox without a prompt per call (see [plugins/codex-announcer/README.md](../plugins/codex-announcer/README.md#sandbox-and-network)) |
 
-  In Claude Code, keep the Monitor tool running on `ptt.py wait` (re-arm it when it ends): each printed line starts a turn (the start-up notice goes to stderr, so it doesn't). Codex has no Monitor; the plugin's Codex wake-up route and the opt-out and rate cap (`AGENT_PTT_WAKE=0`, `AGENT_PTT_WAKE_MAX_PER_HOUR`) are described in [plugins/README.md](../plugins/README.md).
+  In Claude Code, keep the Monitor tool running on `ptt.py wait` (re-arm it when it ends): each burst of lines is one turn (the start-up notice goes to stderr, so it doesn't). A wait killed by the Monitor's expiry (SIGTERM/SIGHUP) removes its lock, and a lock whose process is gone counts as stale, so a re-armed Monitor starts straight away. Codex has no Monitor; the plugin's Codex wake-up route and the opt-out and rate cap (`AGENT_PTT_WAKE=0`, `AGENT_PTT_WAKE_MAX_PER_HOUR`) are described in [plugins/README.md](../plugins/README.md).
 - **With the CLI.** Run `agent-ptt inbox --follow --ack` under the Monitor tool, or in a shell loop or background pane in any other harness. It covers the project inbox only: `agent-ptt join` does not register a channel mention receiver, so channel `@mentions` to a live participant reach the plugin's hooks and `ptt.py wait`, not `--follow`. In a project's channel, a mention of someone who is not there (or has no receiver) is queued in the project inbox and so does reach `--follow`.
 
 ### `agent-ptt send`

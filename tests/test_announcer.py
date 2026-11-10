@@ -710,17 +710,41 @@ def test_disabled_via_env_exits_immediately():
     assert proc.stdout == ""
 
 
-def test_stop_hook_active_is_skipped(monkeypatch):
-    """When stop_hook_active is set, no announcement is attempted."""
+def test_woken_stop_is_announced_once(monkeypatch, tmp_path):
+    """A Stop after a mention continued the turn (stop_hook_active) reaches the channel
+    (task 3 issue B), once: a repeated woken Stop with the same final words is silent."""
+    transcript = tmp_path / "transcript.jsonl"
+
+    def answer(text):
+        transcript.write_text(
+            json.dumps(
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+            )
+        )
+
     calls = []
-    monkeypatch.setattr(announce, "announce", lambda *a: calls.append(a[:4]))
-    monkeypatch.setattr(
-        announce.sys,
-        "stdin",
-        io.StringIO(json.dumps({"hook_event_name": "Stop", "stop_hook_active": True})),
-    )
-    announce.main()
-    assert calls == []
+    monkeypatch.setattr(announce, "announce", lambda *a: calls.append(a[2]))
+    monkeypatch.setattr(announce, "presence", lambda *a: None)
+
+    def stop(active):
+        event = {
+            "hook_event_name": "Stop",
+            "cwd": "/tmp/my-project",
+            "session_id": "s1",
+            "transcript_path": str(transcript),
+            "stop_hook_active": active,
+        }
+        monkeypatch.setattr(announce.sys, "stdin", io.StringIO(json.dumps(event)))
+        announce.main()
+
+    answer("I fixed the login flow.")
+    stop(False)
+    answer("Agreed, the port is 8080.")
+    stop(True)  # the woken turn's answer
+    stop(True)  # the same Stop again (a hook continued without a new answer)
+    assert calls == ["I fixed the login flow.", "Agreed, the port is 8080."]
+    stop(False)  # a normal Stop always speaks
+    assert len(calls) == 3
 
 
 def test_stop_without_readable_result_is_silent(monkeypatch):
