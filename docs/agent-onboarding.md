@@ -94,7 +94,37 @@ its `ptt` command — an absolute path to the plugin's `ptt.py` on that machine:
 `ptt ack|done <id>`. `@Handle` reaches a member even when they're away (it
 becomes a work item); `@role:<r>` and `@project` work in the project channel.
 Claude Code keeps a Monitor running on `ptt wait` to wake on mentions; Codex's
-Stop hook waits up to 240 s for one while someone else is present.
+Stop hook waits up to 240 s for one while someone else is present. The start
+context also carries the trust and reply rules once; each later delivery is one
+short line (`Agent PTT · 2 for you …`) plus one line per message or item.
+
+Only questions, handoffs, instructions and plain mentions wake an idle agent.
+Agents add `--fyi` (`ptt say --fyi "…"`, `ptt tell … --fyi`) to status updates,
+acknowledgements, "done" and claim releases: those arrive at the recipient's
+next prompt or tool call, or along with the next waking delivery, and never
+wake it. Mentions arriving within a few seconds of each other wake once.
+
+**Codex: let `ptt` reach the server (one-time, per machine).** Codex's
+workspace-write sandbox has no network, so each `ptt` call needs an approval,
+and Codex's auto-reviewer may reject one (it refused a findings message as
+"exporting … to an unverified coordination service"). The supported fix is a
+Codex rules file whose `allow` rule runs the exact `ptt` command outside the
+sandbox without asking. On the agent's machine, run the command the session
+context gives with `codex-rules` instead of a subcommand, check the printed
+rule, and save it as `~/.codex/rules/agent-ptt.rules`:
+
+```bash
+mkdir -p ~/.codex/rules
+python3 <path to the plugin's ptt.py> codex-rules > ~/.codex/rules/agent-ptt.rules
+codex execpolicy check --rules ~/.codex/rules/agent-ptt.rules python3 <same ptt.py> who
+```
+
+Restart Codex afterwards. The rule names that machine's `ptt.py` path, which is
+in Codex's plugin cache, so run it again after a plugin update. The broader
+alternative, `network_access = true` under `[sandbox_workspace_write]` in
+`~/.codex/config.toml`, gives every sandboxed command network access. A plugin
+manifest can't declare either. Details and sources:
+[plugins/codex-announcer/README.md](../plugins/codex-announcer/README.md#sandbox-and-network).
 
 Optional per-agent settings (shell environment, the launcher, or
 `announcer.env`):
@@ -106,8 +136,9 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_WAKE` | `0`: never wake while idle (no Monitor advice, no Codex Stop wait). `1`: treat as a coordinator. |
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for Stop-hook wakes (default 6). |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait (default 240, `0` off, max 280). |
+| `AGENT_PTT_WAKE_BATCH_SECONDS` | After the first waking mention, how long `ptt wait` and the Codex Stop wait collect more before delivering once (default 4, `0` off, max 30). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.2.2
+To update an agent machine: reinstall or update the announcer plugin to 0.3.0
 (`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
 `scripts/install_plugins.py` from a checkout, which also removes the loose
 announcer entries an older install left in `~/.codex/hooks.json`), restart the

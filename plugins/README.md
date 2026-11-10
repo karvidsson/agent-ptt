@@ -94,12 +94,13 @@ command — `python3 <plugin dir>/hooks/ptt.py --session <id>` (Codex:
 
 | Command | Does |
 |---|---|
-| `ptt say "@Theo found X in a.py" [--quiet]` | speak in the channel (`--quiet`: text only); `@Handle` reaches them even when they're away, `@role:<r>` / `@project` become work items |
+| `ptt say "@Theo found X in a.py" [--quiet] [--fyi]` | speak in the channel (`--quiet`: text only; `--fyi`: informational, wakes no one); `@Handle` reaches them even when they're away, `@role:<r>` / `@project` become work items |
 | `ptt who` | roster: handle, roles, harness, machine, presence, doing |
 | `ptt inbox` | pending mentions and work items, with bodies |
-| `ptt wait [--once]` | one line per new mention/work item, forever — run it in Claude Code's Monitor tool |
-| `ptt tell <Handle\|role:<r>\|project> "<text>" [--kind …] [--reply-to <item>]` | send a work item |
+| `ptt wait [--once]` | wakes on waking mentions/work items and prints them, batched, forever — run it in Claude Code's Monitor tool |
+| `ptt tell <Handle\|role:<r>\|project> "<text>" [--kind …] [--reply-to <item>] [--fyi]` | send a work item |
 | `ptt ack <id>` / `ptt done <id> [--note …]` | acknowledge / finish a mention or work item |
+| `ptt codex-rules` | print a Codex rules file so `ptt` reaches the server from Codex's sandbox ([setup](codex-announcer/README.md#sandbox-and-network)) |
 
 Mentions and work items also arrive at hook boundaries (prompt, tool call,
 stop), and when someone joins or leaves the project the next hook says so once.
@@ -108,6 +109,23 @@ idle. Codex has no Monitor: its Stop hook waits up to 240 s for a mention or a
 work item addressed to it (only when someone else is present) and continues the
 turn with it. The fallback after that is the next hook event.
 
+**Quiet wake-ups (0.3.0).** Only non-FYI mentions and instruction, handoff,
+question and answer items wake an idle session. `--fyi` messages and items
+(status, acknowledgements, "done", claim releases, as the start context asks),
+notes and claims arrive at the next prompt or tool hook, or along with the next
+waking delivery; a Stop never blocks for them alone. Against a server that
+advertises `fyi_supported` in its join `mention_policy`, `ptt wait` and the
+Codex Stop wait ask for `wake_only=1`. After the first waking entry they linger
+`AGENT_PTT_WAKE_BATCH_SECONDS` (4 s) and deliver everything at once: one Monitor
+burst or one Stop block, which counts as one wake. The trust and reply rules are
+in the start context once. Each delivery is one preamble line,
+`Agent PTT · 2 for you from participants (… reply: ptt say "@Handle …"; FYIs need no reply):`,
+followed by one line per entry, such as `@Otto: which port?  [id 7fdc1a2b]`,
+`FYI @Otto: done, claim released  [id 8aa0…]` or
+`@Rex handoff: review a.py  [item <id>]`. A turn that a mention woke is
+announced once when it stops, so the channel hears the answer. Replies to the
+asker still go through `ptt say "@Handle …"`.
+
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_PTT_HANDLE` | session's random name | Pin a handle: the project membership is kept per handle (resumed across sessions and machines) and the channel join asks for it too |
@@ -115,6 +133,7 @@ turn with it. The fallback after that is the next hook event.
 | `AGENT_PTT_WAKE` | on | `0` turns off waking (no Monitor advice, no Codex Stop wait); `1` marks this session a coordinator |
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | `6` | Loop guard: at most this many Stop-hook wakes per hour |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | `240` (Codex) | How long the Codex Stop hook waits; `0` disables, max 280 |
+| `AGENT_PTT_WAKE_BATCH_SECONDS` | `4` | After the first waking entry, how long `ptt wait` and the Codex Stop wait collect more before delivering once; `0` disables, max 30 |
 | `AGENT_PTT_HOOKS` | on | `0` makes the collaboration hooks (join, roster, doing, inbox, Stop wait) do nothing; the announcer sets it on its own one-shot `claude -p` / `codex exec` summarizer so that helper never joins as a phantom participant |
 
 All of these can go in the shell environment or `~/.agent-ptt/announcer.env`.

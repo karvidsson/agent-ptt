@@ -8,12 +8,16 @@ need to be pasted. The session is ``--session``, else ``AGENT_PTT_SESSION_ID`` /
 ``CODEX_THREAD_ID`` / ``CLAUDE_SESSION_ID``, else the most recently active
 hooked session whose folder contains (or is inside) the current directory.
 
-  ptt.py say "<text with @Theo>" [--quiet]   speak (or with --quiet, post text) in the channel
+  ptt.py say "<text with @Theo>" [--quiet] [--fyi]   speak (--quiet: text only) in the channel
   ptt.py who                                 who is here: harness, machine, doing, presence
   ptt.py inbox                               pending mentions and work items (not acked)
-  ptt.py wait [--once]                       print one line per new mention/work item, forever
-  ptt.py tell <to> "<text>" [--kind K]       send a work item: Handle, role:<r> or project
+  ptt.py wait [--once]                       print one line per waking mention/work item
+  ptt.py tell <to> "<text>" [--kind K] [--fyi]   send a work item: Handle, role:<r> or project
+
+--fyi marks status, acknowledgements and "done": delivered at the recipient's next
+hook, never waking an idle agent.
   ptt.py ack <id> | done <id> [--note N]     acknowledge / finish a mention or work item
+  ptt.py codex-rules                         print a Codex rule so ptt can reach the server
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -143,6 +148,8 @@ def cmd_say(session: Session, args) -> None:
         body = {"key_id": state["key_id"], "text": args.text}
         if args.quiet:
             body["speak"] = False  # text only; servers without the flag speak it
+        if args.fyi:
+            body["fyi"] = True  # mentions are delivered but wake no one
         return body
 
     try:
@@ -150,7 +157,10 @@ def cmd_say(session: Session, args) -> None:
     except urllib.error.HTTPError as exc:
         raise Failure(f"say failed: {_detail(exc)}") from None
     message = message or {}
-    print(f"[ptt] said (message {message.get('message_id', '?')})")
+    note = " as FYI" if args.fyi else ""
+    print(f"[ptt] said{note} (message {message.get('message_id', '?')})")
+    if args.fyi and not session.channel().get("fyi_supported"):
+        print("[ptt] note: this server has no FYI support; mentions in it may wake people")
     for queued in message.get("queued_items") or []:
         to = queued.get("to_label") or queued.get("to")
         print(f"[ptt] queued for {to} (item {queued.get('item_id')})")
@@ -198,12 +208,15 @@ def cmd_tell(session: Session, args) -> None:
     payload = {"kind": args.kind, "to": link.address(args.to), "body": args.text}
     if args.reply_to:
         payload["reply_to"] = args.reply_to
+    if args.fyi:
+        payload["fyi"] = True  # delivered at their next hook, never wakes them
     try:
         item = session.project_call("POST", "/projects/{pid}/items", payload)
     except urllib.error.HTTPError as exc:
         raise Failure(f"tell failed: {_detail(exc)}") from None
     to = item.get("to_label") or item.get("to")
-    print(f"[ptt] sent {item.get('kind')} to {to} (item {item.get('item_id')})")
+    note = " FYI" if args.fyi else ""
+    print(f"[ptt] sent{note} {item.get('kind')} to {to} (item {item.get('item_id')})")
 
 
 def _ack_mention(session: Session, message_id: str) -> bool:
@@ -245,21 +258,105 @@ def cmd_done(session: Session, args) -> None:
 
 
 class Waiter:
-    """Two long-poll loops (channel mentions, project inbox) printing one line per item."""
+    """Two long-poll loops (channel mentions, project inbox) that print one line per item.
 
-    def __init__(self, session: Session, out=None, wait: int = WAIT_SECONDS):
+    Only waking entries end a wait: with a server that advertises ``fyi_supported``
+    both polls send ``wake_only=1``, and notes, claims and FYIs never start a wake.
+    The first waking entry opens a batch window (``AGENT_PTT_WAKE_BATCH_SECONDS``,
+    default 4): whatever else arrives meanwhile, plus pending FYIs, is printed in
+    one burst at its end (a Monitor turns lines within 200 ms into one turn) and
+    only then acknowledged.
+    """
+
+    def __init__(
+        self,
+        session: Session,
+        out=None,
+        wait: int = WAIT_SECONDS,
+        batch: float | None = None,
+        clock=time.monotonic,
+    ):
         self.session = session
         self.out = out or sys.stdout
         self.wait = wait
-        self.print_lock = threading.Lock()
+        self.batch = link.wake_batch_seconds() if batch is None else max(0.0, batch)
+        self.clock = clock
+        self.lock = threading.RLock()
         self.printed: set[str] = set()
+        self.held: list[tuple[str, str, str]] = []  # (line, "message"|"item", id)
+        self.flush_at: float | None = None
         self.cursor = int(session.member.get("cursor") or 0)
         self.heartbeat = None  # called every 15 s while running (keeps the lock fresh)
 
-    def emit(self, line: str) -> None:
-        with self.print_lock:
-            self.out.write(line + "\n")
-            self.out.flush()
+    def wake_only(self) -> str:
+        return "&wake_only=1" if self.session.channel().get("fyi_supported") else ""
+
+    def _known(self, entry_id: str) -> bool:
+        return entry_id in self.printed or any(held[2] == entry_id for held in self.held)
+
+    def hold(self, entries: list[tuple[str, str, str]]) -> None:
+        """Queue waking lines; the first opens the batch window."""
+        if not entries:
+            return
+        with self.lock:
+            self.held += [e for e in entries if not self._known(e[2])]
+            if self.flush_at is None:
+                self.flush_at = self.clock() + self.batch
+        if self.batch <= 0:
+            self.flush()
+
+    def due(self) -> bool:
+        with self.lock:
+            return self.flush_at is not None and self.clock() >= self.flush_at
+
+    def flush(self) -> int:
+        """Print the held lines plus anything else pending (FYIs, notes) at once, then ack."""
+        with self.lock:
+            if self.flush_at is None:
+                return 0
+            entries = list(self.held)
+            for message in self._read_channel():
+                if not self._known(message["message_id"]):
+                    entries.append((link.mention_line(message), "message", message["message_id"]))
+            for item in self._read_project():
+                if not self._known(item["item_id"]):
+                    entries.append((link.item_line(item), "item", item["item_id"]))
+            if entries:
+                self.out.write("".join(line + "\n" for line, _, _ in entries))
+                self.out.flush()
+            self.printed |= {entry_id for _, _, entry_id in entries}
+            self.held, self.flush_at = [], None
+        self._ack(
+            [e[2] for e in entries if e[1] == "message"], [e[2] for e in entries if e[1] == "item"]
+        )
+        return len(entries)
+
+    def _read_channel(self) -> list[dict]:
+        try:
+            _, messages = self.session.channel_call("GET", "/channels/{cid}/inbox?limit=20")
+        except Exception:
+            return []
+        return messages or []
+
+    def _read_project(self) -> list[dict]:
+        if not self.session.has_project():
+            return []
+        try:
+            data = self.session.project_call("GET", "/projects/{pid}/inbox?limit=50")
+        except Exception:
+            return []
+        return (data or {}).get("items") or []
+
+    def _ack(self, message_ids: list[str], item_ids: list[str]) -> None:
+        if message_ids:  # printed: acked so receive.py doesn't inject them again
+            with contextlib.suppress(Exception):
+                self.session.channel_call(
+                    "POST", "/channels/{cid}/inbox/ack", {"message_ids": message_ids}
+                )
+        for item_id in item_ids:
+            # An item finished meanwhile can't be acked; it was printed, not repeated.
+            with contextlib.suppress(Exception):
+                self.session.project_call("POST", f"/projects/{{pid}}/items/{item_id}/ack")
 
     def channel_once(self, wait: int) -> int:
         state = self.session.channel()
@@ -268,33 +365,31 @@ class Waiter:
             min(wait, int(state.get("wait_max_seconds") or 0)) if state.get("wait_supported") else 0
         )
         _, messages = self.session.channel_call(
-            "GET", f"/channels/{{cid}}/inbox?limit=20&wait={wait}", timeout=wait + 15
+            "GET",
+            f"/channels/{{cid}}/inbox?limit=20&wait={wait}{self.wake_only()}",
+            timeout=wait + 15,
         )
-        fresh = [m for m in messages or [] if m.get("message_id") not in self.printed]
-        for message in fresh:
-            self.emit(link.mention_line(message))
-            self.printed.add(message["message_id"])
-        ids = [m["message_id"] for m in messages or []]
-        if ids:  # printed (now or earlier): acked so receive.py doesn't inject them again
-            self.session.channel_call("POST", "/channels/{cid}/inbox/ack", {"message_ids": ids})
+        messages = [m for m in messages or [] if link.wakes(m)]
+        stale = [m["message_id"] for m in messages if m["message_id"] in self.printed]
+        if stale:  # printed earlier but the ack failed: ack again, don't repeat
+            self._ack(stale, [])
+        fresh = [m for m in messages if not self._known(m["message_id"])]
+        self.hold([(link.mention_line(m), "message", m["message_id"]) for m in fresh])
         return len(fresh)
 
     def project_once(self, wait: int) -> int:
         data = self.session.project_call(
             "GET",
-            f"/projects/{{pid}}/inbox?limit=50&wait={wait}&after={self.cursor}",
+            f"/projects/{{pid}}/inbox?limit=50&wait={wait}&after={self.cursor}{self.wake_only()}",
             timeout=wait + 15,
         )
-        items = data.get("items") or []
-        fresh = [i for i in items if i.get("item_id") not in self.printed]
-        for item in fresh:
-            self.emit(link.item_line(item))
-            self.printed.add(item["item_id"])
-        for item in items:
-            # An item finished meanwhile can't be acked; it was printed, not repeated.
-            with contextlib.suppress(urllib.error.HTTPError):
-                self.session.project_call("POST", f"/projects/{{pid}}/items/{item['item_id']}/ack")
         self.cursor = max(self.cursor, int(data.get("cursor") or 0))
+        items = [i for i in data.get("items") or [] if link.wakes(i)]
+        stale = [i["item_id"] for i in items if i["item_id"] in self.printed]
+        if stale:
+            self._ack([], stale)
+        fresh = [i for i in items if not self._known(i["item_id"])]
+        self.hold([(link.item_line(i), "item", i["item_id"]) for i in fresh])
         return len(fresh)
 
     def loop(self, poll, stop: threading.Event, sleep=time.sleep) -> None:
@@ -323,10 +418,45 @@ class Waiter:
             )
         for thread in threads:
             thread.start()
+        beat = self.clock()
         while not stop.is_set() and any(t.is_alive() for t in threads):
-            stop.wait(15)
-            if self.heartbeat:
+            with self.lock:
+                flush_at = self.flush_at
+            timeout = 15.0 if flush_at is None else max(0.0, min(15.0, flush_at - self.clock()))
+            stop.wait(timeout)
+            if self.due():
+                self.flush()
+            if self.heartbeat and self.clock() - beat >= 15:
                 self.heartbeat()
+                beat = self.clock()
+        if self.flush_at is not None:
+            self.flush()  # never drop a held batch
+
+
+def _holder_alive(path: Path) -> bool:
+    """False when the pid in a wait lock is gone (a waiter killed before its cleanup).
+
+    Windows has no ``kill(pid, 0)`` probe, so there only the heartbeat age counts.
+    """
+    if os.name == "nt":
+        return True
+    try:
+        pid = int(path.read_text().strip() or 0)
+    except (OSError, ValueError):
+        return True  # being written right now: trust the heartbeat
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # alive, owned by someone else
+    return True
+
+
+def _exit_on_signal(signum, frame) -> None:
+    raise SystemExit(128 + signum)
 
 
 def _wait_lock(session: Session) -> Path | None:
@@ -341,7 +471,7 @@ def _wait_lock(session: Session) -> Path | None:
                 age = time.time() - path.stat().st_mtime
             except OSError:
                 continue
-            if age < LOCK_STALE:
+            if age < LOCK_STALE and _holder_alive(path):
                 return None
             path.unlink(missing_ok=True)
             continue
@@ -352,32 +482,66 @@ def _wait_lock(session: Session) -> Path | None:
 
 
 def cmd_wait(session: Session, args) -> None:
-    waiter = Waiter(session)
     if args.once:
-        count = 0
-        for poll in (waiter.channel_once, waiter.project_once):
-            with contextlib.suppress(Failure):
-                count += poll(0)
+        waiter = Waiter(session, batch=0)
+        waiter.flush_at = waiter.clock()  # one read of everything pending, FYIs included
+        count = waiter.flush()
         if not count:
             print("[ptt] nothing new")
         return
+    waiter = Waiter(session)
     lock = _wait_lock(session)
     if lock is None:
         print("[ptt] already waiting for this session in another process", flush=True)
         return
     waiter.heartbeat = lambda: os.utime(lock)
+    # A Monitor that expires ends us with SIGTERM: exit through the finally below,
+    # so the lock is gone and a re-armed Monitor can wait straight away.
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(getattr(signal, name), _exit_on_signal)
     me = session.member.get("handle") or session.agent
     # stderr: a Monitor turns each stdout line into a turn; this one carries nothing to act on.
     print(f"[ptt] waiting for mentions and work items as {me}", file=sys.stderr, flush=True)
     try:
         waiter.run()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         lock.unlink(missing_ok=True)
         if session.member_path and session.member:
             session.member["cursor"] = waiter.cursor
             link.save_membership(session.member_path, session.member)
+
+
+# --- Codex sandbox rule ----------------------------------------------------------
+
+
+def codex_rules() -> str:
+    """An execpolicy rule letting Codex run this ptt.py outside its sandbox.
+
+    Codex's workspace-write sandbox has no network, so every ``ptt`` call
+    otherwise needs an escalation. A ``prefix_rule`` with ``decision = "allow"``
+    makes Codex run matching commands without the sandbox and without a prompt.
+    Tokens match exactly, so the rule names this machine's python and this
+    copy of ptt.py (re-run after a plugin update moves the cache folder).
+    """
+    here = str(Path(__file__).resolve())
+    pythons = list(dict.fromkeys([sys.executable or "python3", "python3"]))
+    return (
+        "# Agent PTT: let the ptt command reach the server without a sandbox prompt.\n"
+        "# Save as ~/.codex/rules/agent-ptt.rules, then restart Codex.\n"
+        "prefix_rule(\n"
+        f"    pattern = [{json.dumps(pythons)}, {json.dumps(here)}],\n"
+        '    decision = "allow",\n'
+        f'    justification = "Agent PTT: ptt posts to the PTT server at {link.base_url()}",\n'
+        ")\n"
+    )
+
+
+def cmd_codex_rules(args) -> None:
+    sys.stdout.write(codex_rules())
 
 
 # --- entry point --------------------------------------------------------------
@@ -398,6 +562,7 @@ def parser() -> argparse.ArgumentParser:
     say = sub.add_parser("say", help="speak in the channel; @Handle mentions resolve server-side")
     say.add_argument("text")
     say.add_argument("--quiet", action="store_true", help="post as text only, not spoken")
+    say.add_argument("--fyi", action="store_true", help="informational: mentions wake no one")
     sub.add_parser("who", help="who is in the project and channel")
     sub.add_parser("inbox", help="pending mentions and work items")
     wait = sub.add_parser("wait", help="print one line per new mention/work item (Monitor)")
@@ -407,6 +572,8 @@ def parser() -> argparse.ArgumentParser:
     tell.add_argument("text")
     tell.add_argument("--kind", default="instruction", choices=KINDS)
     tell.add_argument("--reply-to", dest="reply_to")
+    tell.add_argument("--fyi", action="store_true", help="informational: never wakes them")
+    sub.add_parser("codex-rules", help="print a Codex rules file that lets ptt skip the sandbox")
     for name in ("ack", "done"):
         cmd = sub.add_parser(name, help=f"{name} a mention (message ID) or work item")
         cmd.add_argument("id")
@@ -428,6 +595,9 @@ COMMANDS = {
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if args.command == "codex-rules":
+        cmd_codex_rules(args)  # needs no session
+        return 0
     try:
         session = Session(args.session)
         COMMANDS[args.command](session, args)
