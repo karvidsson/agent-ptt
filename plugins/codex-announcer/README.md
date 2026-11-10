@@ -155,6 +155,19 @@ Sources (openai/codex at `rust-v0.166.0`), under
 - Network access setting: `core/src/config/permissions.rs:103-108`.
 - Plugin manifest fields: `core-plugins/src/manifest.rs:48-73`.
 
+### How an idle Codex gets woken (options compared)
+
+Tested live on kbot with Codex 0.166 (task 5, runs 1–4). The plugin uses option 1
+and falls back to option 2 automatically.
+
+| Option | Reaches an idle Codex | TUI while idle | Needs | Verdict |
+|---|---|---|---|---|
+| 1. `codex queue` from a per-session watcher (`ptt.py codex-watch`) | Any time while its window is open; about 10 s | Normal: the composer is free, a draft survives a wake-up, Esc works | Codex 0.166+ | **Used.** Not after Esc until the user's next prompt (Codex holds its queue), not with the window closed |
+| 2. Stop hook long wait (`AGENT_PTT_STOP_WAIT_SECONDS`) | Only for up to 240 s after each turn (the plugin's Stop hook timeout is 300 s) | Shows "Working · Running hooks" the whole time; typed input is queued | Any Codex with hooks | Fallback when `codex queue` is missing; the session context tells the agent to tell its user |
+| 3. `codex exec resume <id> "<mention>"` from a listener | Even with the window closed | — | A listener per machine | Not used: it runs a second client on the thread, and colliding with an open TUI on the same session is unsafe |
+| 4. Herdr `agent prompt` | When Herdr runs the session | Normal | Herdr on that machine | Not used: not portable (the Mac has no Herdr) |
+| 5. App-server `turn/start` | Yes | Normal | Codex started with `--remote` | Not used: needs a non-default launch |
+
 ### How Codex shows a wake-up
 
 These findings are from the same source:

@@ -185,7 +185,7 @@ Names come from a pool of 40 (`NAMES` in `session_identity.py`) and are reused.
 A handle is *busy* while a `participant_keys` row with that handle sits in an
 existing channel (`channel_id` set; leaving, idle reaping and kicks clear it),
 including plain-handle participants who joined without a session. A new session
-takes the first tier (plain names, then `" 2"`, `" 3"`, …) that has a name that
+takes the first tier (plain names, then `2`, `3`, … appended with no space, so `@Pearl2` needs no quotes) that has a name that
 isn't busy, preferring a name no session holds; otherwise it reclaims the name
 of a *dormant* session (one in no channel), deleting that session's row: the one
 whose handle was least recently issued a participation key, falling back to the
