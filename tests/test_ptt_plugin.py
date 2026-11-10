@@ -1195,3 +1195,22 @@ def test_ptt_say_and_tell_read_text_from_a_file(env, capsys, tmp_path):
 
 def test_watcher_poke_is_not_announced_or_set_as_doing():
     assert doing.doing_text(ptt.POKE) == ""
+
+
+def test_monitor_wait_honours_the_wake_cap(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_WAKE_MAX_PER_HOUR", "1")
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    out = io.StringIO()
+    waiter = ptt.Waiter(session, out=out, batch=0)
+    _mention_me(env, session, text_fmt="@{me} first")
+    waiter.channel_once(0)
+    _mention_me(env, session, text_fmt="@{me} second")
+    waiter.channel_once(0)
+    waiter.channel_once(0)
+    printed = out.getvalue().splitlines()
+    assert len(printed) == 1 and "first" in printed[0]
+    _, pending = session.channel_call("GET", "/channels/{cid}/inbox")
+    assert [m["text"].split()[-1] for m in pending] == ["second"]  # the next hook delivers it
+    history = env["client"].get(f"/channels/{session.channel()['channel_id']}/history").json()
+    assert sum("wake cap" in m["text"] for m in history) == 1

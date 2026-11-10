@@ -540,7 +540,10 @@ def remember_delivered(base: str, session_id: str, entries: list[tuple[str, str]
 
 # --- turn state (written by the hooks, read by the Codex watcher) ------------
 
-BUSY_STALE = 900.0  # a "busy" mark older than this is a turn that died
+# A "busy" mark not refreshed by a hook for this long is a turn that ended without
+# a Stop (Esc in Codex fires none). Poking a turn that is still running is harmless:
+# the TUI holds the queued prompt until the turn ends.
+BUSY_STALE = 120.0
 
 
 def mark_turn(base: str, session_id: str, busy: bool) -> None:
@@ -684,11 +687,11 @@ def start_codex_watch(base: str, session_id: str, pid: int) -> bool:
 
 # --- wake cap ------------------------------------------------------------------
 
-WAKE_CAP_DEFAULT = 12
+WAKE_CAP_DEFAULT = 30
 
 
 def wake_cap() -> int:
-    """AGENT_PTT_WAKE_MAX_PER_HOUR: loop guard on wakes of an idle session (default 12)."""
+    """AGENT_PTT_WAKE_MAX_PER_HOUR: loop guard on wakes of an idle session (default 30)."""
     try:
         return max(0, int(routing.setting("AGENT_PTT_WAKE_MAX_PER_HOUR", str(WAKE_CAP_DEFAULT))))
     except ValueError:
