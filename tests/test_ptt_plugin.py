@@ -1120,7 +1120,7 @@ def test_wait_lines_put_the_full_id_first():
     message["text"] = "@Willow " + "thanks " * 100
     line = ptt.link.mention_line(message)
     assert line.startswith("[ptt] message 2e58d8e0-0d22-4948-8aaa-0123456789ab mention from Poppy:")
-    assert len(line) < 240
+    assert line.endswith("thanks")  # the whole message: a printed mention is acked
 
 
 def test_ack_and_done_take_prefixes_and_name_the_kind(env, capsys):
@@ -1238,3 +1238,12 @@ def test_codex_watch_gives_up_when_pokes_go_unanswered(env, capsys):
     watch.unanswered_since = now[0] - 10
     ptt.link.save_session(session.base, "s1", turn="busy", turn_at=now[0])  # a hook ran
     assert watch.alive() and watch.unanswered_since is None
+
+
+def test_wait_lines_carry_the_whole_message():
+    message = {"message_id": "m-1", "handle": "Arlo", "text": "@Atlas " + "finding " * 60}
+    line = ptt.link.mention_line(message)
+    assert line.endswith("finding") and "…" not in line
+    item = {"item_id": "i-1", "kind": "handoff", "from": {"handle": "Arlo"}, "title": "short"}
+    item["body"] = "short\n" + "details " * 50
+    assert ptt.link.item_line(item).rstrip().endswith("details")
