@@ -121,8 +121,8 @@ def test_all_plain_names_busy_gives_a_numbered_name(db_session):
     seed(db_session)
     occupy(db_session, NAMES)
     fresh = get_session_identity("new", "Codex", db_session)
-    assert fresh.handle.endswith(" 2")
-    assert fresh.handle.removesuffix(" 2") in NAMES
+    assert fresh.handle.endswith("2")
+    assert fresh.handle.removesuffix("2") in NAMES
 
 
 def test_plain_handle_participant_blocks_its_name(db_session):
@@ -133,7 +133,7 @@ def test_plain_handle_participant_blocks_its_name(db_session):
         # Only Milo is free of participants, but a plain "Milo" now joins.
         occupy(db, ["Milo"])
     fresh = get_session_identity("new", "Codex", db_session)
-    assert fresh.handle.endswith(" 2")
+    assert fresh.handle.endswith("2")
 
 
 def test_deleted_channel_does_not_keep_names_busy(db_session):
@@ -160,7 +160,7 @@ def test_session_keeps_its_name_unless_reclaimed(db_session):
     # The reclaimed session simply gets a fresh identity (the thief is talking now).
     occupy(db_session, [thief.handle])
     back = get_session_identity("mine", "Codex", db_session)
-    assert back.handle.endswith(" 2")
+    assert back.handle.endswith("2")
     assert back.voice_id in {"builder", "ruler"}
 
 
@@ -188,7 +188,7 @@ def test_join_leave_frees_the_name_for_a_new_session(client, db_session):
     assert first["handle"] == NAMES[-1]
     # While "a" is in the channel, a new session gets a numbered name.
     busy = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "b"}).json()
-    assert busy["handle"].endswith(" 2")
+    assert busy["handle"].endswith("2")
 
     left = client.post(f"/channels/{cid}/leave", json={"key_id": first["key_id"]})
     assert left.status_code == 200

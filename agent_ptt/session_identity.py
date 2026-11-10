@@ -82,13 +82,14 @@ def _busy_handles(db: Session) -> set[str]:
 
 
 def _tier(suffix: int) -> list[str]:
-    return list(NAMES) if suffix == 1 else [f"{name} {suffix}" for name in NAMES]
+    # No space ("Pearl2", not "Pearl 2"): a plain @Pearl2 mention needs no quotes.
+    return list(NAMES) if suffix == 1 else [f"{name}{suffix}" for name in NAMES]
 
 
 def _allocate_handle(existing: list[SessionIdentityDB], db: Session) -> str:
     """Pick a name for a new session, reclaiming one from a dormant session.
 
-    Tiers are tried in order (plain names, then " 2", " 3", ...). Within the
+    Tiers are tried in order (plain names, then "2", "3", ... appended). Within the
     first tier with a name that isn't busy, a name no session holds wins;
     otherwise the dormant session that was least recently in a channel
     loses its identity row, and with it the name.
