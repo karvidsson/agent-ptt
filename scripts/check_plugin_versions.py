@@ -4,8 +4,8 @@
 Usage: python3 scripts/check_plugin_versions.py v0.2.0
 
 Plugins are version-locked to the repo tag (see plugins/README.md):
-tagging vX.Y.Z requires every plugins/*/.claude-plugin/plugin.json to
-declare "version": "X.Y.Z".
+tagging vX.Y.Z requires every plugins/*/.claude-plugin/plugin.json and
+plugins/*/.codex-plugin/plugin.json to declare "version": "X.Y.Z".
 """
 
 from __future__ import annotations
@@ -26,7 +26,9 @@ def check(tag: str) -> list[str]:
     expected = match.group(1)
 
     problems = []
-    manifest_paths = sorted(PLUGINS_DIR.glob("*/.claude-plugin/plugin.json"))
+    manifest_paths = sorted(PLUGINS_DIR.glob("*/.claude-plugin/plugin.json")) + sorted(
+        PLUGINS_DIR.glob("*/.codex-plugin/plugin.json")
+    )
     if not manifest_paths:
         problems.append("no plugin manifests found under plugins/")
     for manifest_path in manifest_paths:

@@ -6,7 +6,7 @@ Integrations that let coding agents speak through Agent PTT voice channels.
 |--------|-----|--------------|
 | [announcer/](announcer/) | Claude Code | Announces "I'm currently looking into …" / "I've finished working on it." on every task via hooks |
 | [voice/](voice/) | Claude Code | `/agent-ptt-voice:join` — join/resume an organization; `/agent-ptt-voice:say` — legacy voice messages |
-| [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as Codex hooks |
+| [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as the Codex plugin `agent-ptt-announcer` |
 
 All of them talk to an Agent PTT server over plain REST — on this machine or
 another one (set `AGENT_PTT_URL`, and `AGENT_PTT_API_KEY` when the server has
@@ -25,10 +25,12 @@ It always installs from the repo's **main checkout**, even when run inside a
 linked git worktree — so a throwaway worktree (e.g. one the Copilot app
 creates) never ends up registered and later vanishes from under your CLIs.
 For Claude Code it re-registers the `agent-ptt` marketplace and reinstalls
-both plugins; for Codex it points the announcer entries in
-`~/.codex/hooks.json` at the main checkout and leaves your other hooks
-alone. Re-run it after changing a plugin: Claude Code caches plugins by
-version, so a reinstall is what picks up the change.
+both plugins; for Codex it does the same with the repo's Codex marketplace
+(`.agents/plugins/marketplace.json`) and the `agent-ptt-announcer` plugin,
+and removes any loose announcer entries an older install left in
+`~/.codex/hooks.json` (your other hooks stay), so hooks never fire twice. It
+skips a CLI that isn't on PATH. Re-run it after changing a plugin: both CLIs
+cache installed plugins, so a reinstall is what picks up the change.
 
 Without a checkout, install the Claude Code plugins straight from GitHub:
 
@@ -37,6 +39,20 @@ Without a checkout, install the Claude Code plugins straight from GitHub:
 /plugin install agent-ptt-announcer@agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
 ```
+
+and the Codex announcer (codex-cli 0.166+):
+
+```bash
+codex plugin marketplace add karvidsson/agent-ptt
+codex plugin add agent-ptt-announcer@agent-ptt
+```
+
+On its next start Codex asks you to review the plugin's hooks ("Hooks need
+review → Trust all"); it asks again after every plugin upgrade, because trust
+is keyed to the hook's content. Update with `codex plugin marketplace upgrade`
+(then restart Codex and re-trust). See
+[codex-announcer/README.md](codex-announcer/README.md#install) for moving off
+the old `~/.codex/hooks.json` entries.
 
 ## Adding a new plugin
 
@@ -47,7 +63,11 @@ Without a checkout, install the Claude Code plugins straight from GitHub:
    `hooks/hooks.json` (+ scripts), `skills/<skill>/SKILL.md`, `agents/`,
    `commands/`. Skills are preferred over commands for new work.
 3. Register it in `.claude-plugin/marketplace.json` at the repo root with
-   `"source": {"type": "path", "path": "./plugins/<name>"}`.
+   `"source": {"type": "path", "path": "./plugins/<name>"}`. A Codex plugin
+   instead gets a `.codex-plugin/plugin.json` and an entry in
+   `.agents/plugins/marketplace.json` (`"source": {"source": "local", "path":
+   "./plugins/<name>"}`); its `hooks/hooks.json` is loaded automatically and
+   runs scripts as `"${PLUGIN_ROOT}/<script>.py"`.
 4. Scripts called by hooks/skills must be stdlib-only, resolve their own
    location (plugins are copied on install — never reference files outside
    the plugin directory), and **never break the coding session**: fail fast,
@@ -115,9 +135,12 @@ for f in plugins/announcer/hooks/*.py; do cp "$f" plugins/codex-announcer/; done
 Plugins are released together with one repo tag (see
 `.github/workflows/release.yml`):
 
-1. Bump `version` in every `plugins/*/.claude-plugin/plugin.json` to `X.Y.Z`.
+1. Bump `version` in every `plugins/*/.claude-plugin/plugin.json` and
+   `plugins/*/.codex-plugin/plugin.json` to `X.Y.Z`
+   (`scripts/validate_plugins.py` fails while they differ).
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. CI runs the gates, verifies the versions match the tag, zips each plugin,
    and publishes a GitHub Release with the artifacts.
 
-Marketplace users pick up new versions with `/plugin update`.
+Marketplace users pick up new versions with `/plugin update` (Claude Code)
+or `codex plugin marketplace upgrade` (Codex).

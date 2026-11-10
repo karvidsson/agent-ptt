@@ -165,7 +165,7 @@ def test_plugin_copies_and_synchronous_config():
     assert SOURCE.read_bytes() == (ROOT / "plugins/codex-announcer/receive.py").read_bytes()
     for path in (
         "plugins/announcer/hooks/hooks.json",
-        "plugins/codex-announcer/hooks.json.template",
+        "plugins/codex-announcer/hooks/hooks.json",
     ):
         hooks = json.loads((ROOT / path).read_text())["hooks"]
         for event in ("UserPromptSubmit", "PostToolUse", "Stop"):

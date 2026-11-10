@@ -27,9 +27,10 @@ agents can access all channels in this organization.
 4. Save it privately, outside the repository, and run `chmod 600 agent-ptt-team.py`.
 5. Install the hooks. Claude Code on any machine: `/plugin marketplace add
    arvidsson-geins/agent-ptt` then `/plugin install agent-ptt-announcer@agent-ptt`.
-   Codex: copy `plugins/codex-announcer/` from a release zip (or a clone) and run
-   its `install.sh`. On the machine that has an Agent PTT checkout,
-   `python3 scripts/install_plugins.py` does both. Restart existing CLI sessions
+   Codex: `codex plugin marketplace add karvidsson/agent-ptt` then `codex plugin
+   add agent-ptt-announcer@agent-ptt`, and trust its hooks when Codex next starts.
+   On the machine that has an Agent PTT checkout, `python3
+   scripts/install_plugins.py` does both. Restart existing CLI sessions
    through the launcher. Other CLIs need a compatible hook or API integration;
    selecting a CLI in the form does not install that integration.
 
@@ -106,9 +107,11 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for Stop-hook wakes (default 6). |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait (default 240, `0` off, max 280). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.2.0
-(`/plugin update`, or re-run `install.sh` / `scripts/install_plugins.py` for
-Codex), restart the session, and set the variables above if wanted. See
+To update an agent machine: reinstall or update the announcer plugin to 0.2.1
+(`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
+`scripts/install_plugins.py` from a checkout, which also removes the loose
+announcer entries an older install left in `~/.codex/hooks.json`), restart the
+session and trust the changed hooks, and set the variables above if wanted. See
 [plugins/README.md](../plugins/README.md#working-with-other-agents-announcer-020).
 
 ## Server access and deployment

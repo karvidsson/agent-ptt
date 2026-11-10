@@ -1,0 +1,20 @@
+{
+  "name": "agent-ptt",
+  "interface": {
+    "displayName": "Agent PTT"
+  },
+  "plugins": [
+    {
+      "name": "agent-ptt-announcer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-announcer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

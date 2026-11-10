@@ -1,6 +1,7 @@
 """The plugin/marketplace validator used by CI."""
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -75,3 +76,93 @@ def test_detects_dangling_marketplace_source(tmp_path, monkeypatch):
 
     problems = validate_plugins.validate()
     assert any("does not exist" in p for p in problems)
+
+
+def _codex_tree(tmp_path, monkeypatch, *, codex_name="codex-thing", codex_version="1.0.0"):
+    """A minimal repo: one Claude plugin and one Codex plugin with a hooks.json."""
+    claude = tmp_path / "plugins" / "thing" / ".claude-plugin"
+    claude.mkdir(parents=True)
+    (claude / "plugin.json").write_text('{"name": "thing", "version": "1.0.0"}')
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "marketplace.json").write_text(
+        '{"plugins": [{"name": "thing", "source": "./plugins/thing"}]}'
+    )
+    codex = tmp_path / "plugins" / "codex-thing"
+    (codex / ".codex-plugin").mkdir(parents=True)
+    (codex / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps({"name": codex_name, "version": codex_version})
+    )
+    (codex / "hooks").mkdir()
+    (codex / "run.py").write_text("")
+    (tmp_path / ".agents" / "plugins").mkdir(parents=True)
+    (tmp_path / ".agents" / "plugins" / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "m",
+                "plugins": [
+                    {
+                        "name": "codex-thing",
+                        "source": {"source": "local", "path": "./plugins/codex-thing"},
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(validate_plugins, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(validate_plugins, "PLUGINS_DIR", tmp_path / "plugins")
+    monkeypatch.setattr(
+        validate_plugins, "MARKETPLACE", tmp_path / ".claude-plugin" / "marketplace.json"
+    )
+    monkeypatch.setattr(
+        validate_plugins, "CODEX_MARKETPLACE", tmp_path / ".agents" / "plugins" / "marketplace.json"
+    )
+    return codex
+
+
+def _codex_problems():
+    return [p for p in validate_plugins.validate() if "organization_client" not in p]
+
+
+def _write_hooks(codex, command):
+    hooks = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}
+    (codex / "hooks" / "hooks.json").write_text(json.dumps(hooks))
+
+
+def test_valid_codex_plugin_passes(tmp_path, monkeypatch):
+    codex = _codex_tree(tmp_path, monkeypatch)
+    _write_hooks(codex, 'python3 "${PLUGIN_ROOT}/run.py"')
+    assert _codex_problems() == []
+
+
+def test_detects_codex_manifest_name_mismatch(tmp_path, monkeypatch):
+    _codex_tree(tmp_path, monkeypatch, codex_name="other")
+    assert any("!= marketplace entry 'codex-thing'" in p for p in _codex_problems())
+
+
+def test_detects_codex_version_drift(tmp_path, monkeypatch):
+    _codex_tree(tmp_path, monkeypatch, codex_version="0.9.0")
+    assert any("must match every .claude-plugin version" in p for p in _codex_problems())
+
+
+def test_detects_missing_codex_manifest(tmp_path, monkeypatch):
+    codex = _codex_tree(tmp_path, monkeypatch)
+    (codex / ".codex-plugin" / "plugin.json").unlink()
+    assert any("missing file" in p and ".codex-plugin" in p for p in _codex_problems())
+
+
+def test_detects_missing_and_escaping_hook_scripts(tmp_path, monkeypatch):
+    codex = _codex_tree(tmp_path, monkeypatch)
+    _write_hooks(codex, 'python3 "${PLUGIN_ROOT}/gone.py" "${PLUGIN_ROOT}/../outside.py"')
+    problems = _codex_problems()
+    assert any("hook script gone.py does not exist" in p for p in problems)
+    assert any("../outside.py points outside the plugin dir" in p for p in problems)
+
+
+def test_claude_style_hook_paths_are_checked_too(tmp_path, monkeypatch):
+    _codex_tree(tmp_path, monkeypatch)
+    hooks = tmp_path / "plugins" / "thing" / "hooks"
+    hooks.mkdir()
+    command = 'python3 "${CLAUDE_PLUGIN_ROOT}"/hooks/missing.py'
+    config = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}
+    (hooks / "hooks.json").write_text(json.dumps(config))
+    assert any("hooks/missing.py does not exist" in p for p in _codex_problems())

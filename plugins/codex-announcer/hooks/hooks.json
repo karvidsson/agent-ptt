@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/session_start.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/session_start.py\"",
             "timeout": 15
           }
         ]
@@ -18,23 +18,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/announce.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/announce.py\"",
             "timeout": 60,
             "statusMessage": "Announcing task start"
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/status.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/status.py\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/doing.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/doing.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/receive.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/receive.py\"",
             "timeout": 8
           }
         ]
@@ -46,12 +46,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/announce.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/announce.py\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/status.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/status.py\"",
             "timeout": 30
           }
         ]
@@ -63,17 +63,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/announce.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/announce.py\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/status.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/status.py\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/receive.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/receive.py\"",
             "timeout": 8
           }
         ]
@@ -85,18 +85,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/announce.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/announce.py\"",
             "timeout": 60,
             "statusMessage": "Announcing task done"
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/status.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/status.py\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/receive.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/receive.py\"",
             "timeout": 300
           }
         ]
@@ -108,7 +108,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AGENT_PTT_AGENT=Codex python3 \"__AGENT_PTT_PLUGIN_DIR__/workspace_dispatch.py\" \"__AGENT_PTT_PLUGIN_DIR__/announce.py\"",
+            "command": "AGENT_PTT_AGENT=Codex python3 \"${PLUGIN_ROOT}/workspace_dispatch.py\" \"${PLUGIN_ROOT}/announce.py\"",
             "timeout": 5
           }
         ]
