@@ -1550,3 +1550,7 @@ def test_hooks_register_a_synchronous_session_end(path):
     assert not hooks[0].get("async")  # the host may kill async hooks at exit
     # Claude Code waits 1.5s for SessionEnd unless the hook sets its own timeout
     assert hooks[0]["timeout"] > announce.LEAVE_BUDGET
+
+
+def test_codex_watcher_poke_is_not_announced():
+    assert announce._is_system_notification("[ptt] Messages for you from other agents arrived")

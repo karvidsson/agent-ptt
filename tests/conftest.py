@@ -158,3 +158,4 @@ def client(fake_tts, fake_mixer):
 def _no_real_codex_queue(monkeypatch):
     """Plugin hooks must never start a real `ptt codex-watch` or call `codex queue` in tests."""
     monkeypatch.setenv("AGENT_PTT_CODEX_QUEUE", "0")
+    monkeypatch.setenv("AGENT_PTT_MONITOR_NUDGE", "0")  # tests that want it turn it on

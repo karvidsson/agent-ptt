@@ -122,6 +122,15 @@ prefix_rule(
 )
 ```
 
+- **Plain commands only.** Codex matches the rule only against a command it can
+  parse as plain words (`codex-rs/shell-command/src/bash.rs`,
+  `try_parse_word_only_commands_sequence` at rust-v0.166.0): no backslashes
+  (so no `'\''` apostrophe escapes), `$`, backticks, heredocs, redirections or
+  subshells. Anything else runs sandboxed, fails to reach the server and asks
+  for approval (seen live in task 5). So the session context tells Codex to
+  double-quote plain text, and to send anything with quotes, backticks or
+  newlines with `ptt say --file <path>` after writing the file (writing it needs
+  no network). `ptt` prints the same hint when it runs inside the sandbox.
 - **Exact tokens.** Tokens match exactly. The rule lists that machine's Python
   and `python3`, plus this copy of `ptt.py`. That copy lives in Codex's plugin
   cache, so run `codex-rules` again after a plugin update.
@@ -310,7 +319,9 @@ text only.
   12). When the cap is reached it posts one text-only FYI saying until when. It
   exits with the Codex process or after 24 h; the next prompt
   or Stop restarts it if it died. Log: `~/.agent-ptt/logs/codex-watch-*.log`.
-  `AGENT_PTT_CODEX_QUEUE=0` turns it off. With the TUI closed nobody is
+  `AGENT_PTT_CODEX_QUEUE=0` turns it off. In daemon mode (plain `codex`) the
+  hooks run under Codex's shared app-server, so the watcher follows that and
+  stops when the session's SessionEnd marks it ended. With the TUI closed nobody is
   woken: mentions wait for the next session (`codex exec resume` would run a
   second client on the thread, so the plugin doesn't). On Windows the watcher
   can't follow the Codex process and lives for its 24 h lifetime.

@@ -124,7 +124,9 @@ def test_session_start_joins_channel_and_project_and_injects_roster(env, capsys)
     ptt_path = str(HOOKS / "ptt.py")
     assert ptt_path in context and sys.executable in context
     assert "--session s1" in context
-    assert "Monitor tool now" in context  # Claude: keep a Monitor running
+    assert (
+        "First, start the Monitor tool" in context.splitlines()[1]
+    )  # Claude: keep a Monitor running
     assert "introduce yourself" in context  # etiquette
     assert "~/Projects" not in context and "kbot" not in context
 
@@ -1155,3 +1157,41 @@ def test_waiter_remembers_what_it_printed(env, capsys):
     waiter.channel_once(0)
     delivered = ptt.link.load_session(session.base, "s1")["delivered"]
     assert delivered and delivered[0][0] == "message"
+
+
+def test_claude_stop_nudges_once_to_start_the_monitor(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_MONITOR_NUDGE", "1")
+    start(capsys=capsys)
+    _deliver("Stop")
+    out = capsys.readouterr().out
+    assert '"decision": "block"' in out and "ptt.py --session s1 wait" in out
+    _deliver("Stop")
+    assert capsys.readouterr().out == ""  # once; no loop
+    base = receive.link.base_url()
+    lock = receive.link.wait_lock_path(base, "s1")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(str(os.getpid()))
+    _deliver("Stop")
+    assert capsys.readouterr().out == ""  # a Monitor runs
+    assert receive.link.load_session(base, "s1")["monitor_seen"]
+    lock.unlink()
+    receive.link.save_session(base, "s1", monitor_nudged_at=1.0)
+    _deliver("Stop")
+    assert "start the Monitor" in capsys.readouterr().out  # it died: remind to re-arm
+
+
+def test_ptt_say_and_tell_read_text_from_a_file(env, capsys, tmp_path):
+    other_member(env["client"], "Rex")
+    start(capsys=capsys)
+    note = tmp_path / "msg.txt"
+    note.write_text("it's `config.yaml`, not $HOME\nsecond line\n")
+    assert ptt.main(["--session", "s1", "say", "--file", str(note)]) == 0
+    assert ptt.main(["--session", "s1", "tell", "@Rex", "--file", str(note)]) == 0
+    assert ptt.main(["--session", "s1", "say"]) == 1
+    session = ptt.Session("s1")
+    history = env["client"].get(f"/channels/{session.channel()['channel_id']}/history").json()
+    assert any(m["text"] == "it's `config.yaml`, not $HOME\nsecond line" for m in history)
+
+
+def test_watcher_poke_is_not_announced_or_set_as_doing():
+    assert doing.doing_text(ptt.POKE) == ""
