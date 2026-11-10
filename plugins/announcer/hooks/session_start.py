@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -58,6 +59,39 @@ def roster_lines(people: list[dict], budget: int = ROSTER_BUDGET) -> list[str]:
     return lines
 
 
+def codex_wake_text(route: str) -> str:
+    """How an idle Codex session gets woken, in the words the agent passes on."""
+    if route == "queue":
+        return (
+            "While this Codex window is open, mentions and work items wake you even when"
+            " idle: a background watcher queues a short prompt with `codex queue` (FYIs"
+            " don't wake you; they come with your next delivery)."
+        )
+    minutes = max(1, round(receive_stop_wait() / 60)) if receive_stop_wait() else 0
+    if minutes:
+        return (
+            f"Mentions reach you at your next hook, or within {minutes} min after a turn"
+            " (the Stop hook waits). After that you're unreachable until the user prompts"
+            f" you: tell the user once that other agents can only reach you for {minutes} min"
+            " after each turn (this Codex has no `codex queue`)."
+        )
+    return (
+        "Mentions reach you only at your next hook: tell the user once that other agents"
+        " can't wake you while you're idle."
+    )
+
+
+def receive_stop_wait() -> float:
+    try:
+        raw = routing.setting("AGENT_PTT_STOP_WAIT_SECONDS", "")
+        seconds = float(raw) if raw.strip() else 240.0
+    except ValueError:
+        seconds = 0.0
+    if routing.setting("AGENT_PTT_WAKE", "") == "0":
+        return 0.0
+    return max(0.0, min(280.0, seconds))
+
+
 def compose(
     *,
     agent: str,
@@ -67,6 +101,7 @@ def compose(
     channel_name: str,
     people: list[dict],
     member_roles: list[str],
+    codex_route: str = "",
 ) -> str:
     ptt = link.script_command("ptt.py", "--session", session_id)
     where = f"project {project['project_name']}" if project else f"channel {channel_name}"
@@ -75,7 +110,7 @@ def compose(
     lines.append(f"Your ptt command (run it with Bash; `ptt` below means this): {ptt}")
     lines.append(
         '  ptt say "@Theo found X in a.py" (@Handle reaches them even if away; @role:<r>,'
-        " @project too) · ptt who · ptt inbox · ptt ack|done <id>"
+        " @project too) · ptt who · ptt inbox · ptt done <item>"
     )
     if project:
         lines.append(
@@ -88,9 +123,7 @@ def compose(
     lead = link.wants_wake(member_roles)
     if agent.lower() == "codex":
         lines.append(
-            "Mentions and work items reach you at your next hook; when you finish a turn"
-            " while others are present, the Stop hook waits a few minutes for one (FYIs don't"
-            " wake you; they come with your next delivery). If every ptt call asks for sandbox"
+            codex_wake_text(codex_route) + " If every ptt call asks for sandbox"
             " approval, tell the user `ptt codex-rules` prints a one-time allow rule."
         )
     elif wake:
@@ -104,6 +137,13 @@ def compose(
         lines.append(f"Mentions reach you at your next hook (`{ptt} wait` in Monitor wakes you).")
     text = "\n".join(lines)
     return text if len(text) <= MAX_CONTEXT else text[: MAX_CONTEXT - 1] + "…"
+
+
+def codex_route() -> str:
+    """ "queue" when an idle Codex can be woken with `codex queue`, else "stop"."""
+    if routing.setting("AGENT_PTT_WAKE", "") == "0":
+        return "off"
+    return "queue" if link.codex_queue_supported() else "stop"
 
 
 def start(event: dict) -> str | None:
@@ -153,7 +193,16 @@ def start(event: dict) -> str | None:
         record = {"handle": handle}  # an older server without projects: the channel works
     people = link.fetch_people(base, record, connection["channel_id"])
     pointer["roster"] = link.snapshot(people)
+    route = ""
+    if agent.lower() == "codex":
+        route = codex_route()
+        pointer["wake_route"] = route
+        if route == "queue":
+            pointer["codex_pid"] = link.codex_pid()
+    pointer.update(turn="idle", turn_at=time.time())
     link.save_session(base, session_id, **pointer)
+    if route == "queue":
+        link.start_codex_watch(base, session_id, pointer["codex_pid"])
     return compose(
         agent=agent,
         session_id=session_id,
@@ -162,6 +211,7 @@ def start(event: dict) -> str | None:
         channel_name=channel_name,
         people=people,
         member_roles=record.get("roles") or link.roles(),
+        codex_route=route,
     )
 
 

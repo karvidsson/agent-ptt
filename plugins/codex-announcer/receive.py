@@ -111,9 +111,6 @@ def deliver(event: dict) -> None:
         return
     if routing.setting("AGENT_PTT_RECEIVE", "1") == "0":
         return
-    stop_wait = stop_wait_seconds(routing.session_context(event)[1])
-    if name == "Stop" and event.get("stop_hook_active") and not stop_wait:
-        return  # Don't turn replies into an unbounded continuation loop.
     # Codex subagent hook events use the parent's session_id. Do not steal its inbox.
     if event.get("agent_id"):
         return
@@ -121,6 +118,13 @@ def deliver(event: dict) -> None:
     if not session_id or session_id == "unknown":
         return
     base = routing.setting("AGENT_PTT_URL", "http://localhost:8770").rstrip("/")
+    queue_route = codex_watch(base, session_id, agent, name)
+    stop_wait = 0.0 if queue_route else stop_wait_seconds(agent)
+    if name != "Stop":
+        link.mark_turn(base, session_id, True)  # the Codex watcher doesn't poke a busy turn
+    elif event.get("stop_hook_active") and not stop_wait:
+        link.mark_turn(base, session_id, False)
+        return  # Don't turn replies into an unbounded continuation loop.
     folder = routing.project_name(event.get("cwd"))
     channel_name = routing.channel_name(session_id, agent, base, folder)
     digest = hashlib.sha256(json.dumps([base, agent, session_id]).encode()).hexdigest()
@@ -182,6 +186,7 @@ def deliver(event: dict) -> None:
         woken = name == "Stop" and bool(event.get("stop_hook_active"))
         if woken and not project.may_wake():
             save(path, state)  # loop guard: the rest waits for the next hook
+            link.mark_turn(base, session_id, False)
             return
         picked = pick_messages(messages, outstanding.get(cid, {}).get("ids", []))
         items = project.pending(name)
@@ -209,6 +214,8 @@ def deliver(event: dict) -> None:
             project.ack_outstanding()  # retry acks a crashed hook left behind
             project.save()
             save(path, state)
+            if name == "Stop":
+                link.mark_turn(base, session_id, False)  # idle: the Codex watcher may poke
             return
         if woken:
             project.record_wake()
@@ -225,6 +232,26 @@ def deliver(event: dict) -> None:
             save(path, state)
         project.ack_outstanding()
         project.save()
+        # After project.save(), which writes back its own copy of the session pointer.
+        link.remember_delivered(
+            base,
+            session_id,
+            [("message", mid) for mid, _ in picked] + [("item", i["item_id"]) for i in items],
+        )
+
+
+def codex_watch(base: str, session_id: str, agent: str, name: str) -> bool:
+    """True when a `ptt codex-watch` wakes this idle Codex session (restarted if gone)."""
+    if agent != "Codex":
+        return False
+    pointer = link.load_session(base, session_id)
+    if pointer.get("wake_route") != "queue":
+        return False
+    if link.watcher_running(base, session_id):
+        return True
+    if name in {"UserPromptSubmit", "Stop"}:
+        return link.start_codex_watch(base, session_id, int(pointer.get("codex_pid") or 0))
+    return False
 
 
 def bootstrap(event: dict) -> str:
@@ -460,12 +487,7 @@ class Project:
         """Only with someone else present, and at most AGENT_PTT_WAKE_MAX_PER_HOUR times."""
         if not any((self.pointer.get("roster") or {}).values()):
             return False
-        try:
-            cap = int(routing.setting("AGENT_PTT_WAKE_MAX_PER_HOUR", "6"))
-        except ValueError:
-            cap = 6
-        recent = [t for t in self.pointer.get("wakes", []) if time.time() - t < 3600]
-        return len(recent) < cap
+        return len(link.recent_wakes(self.pointer)) < link.wake_cap()
 
     def record_wake(self) -> None:
         now = time.time()

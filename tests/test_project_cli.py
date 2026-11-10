@@ -921,8 +921,8 @@ def test_inbox_follow_prints_one_line_per_new_item(joined):
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
-        f"[ptt] instruction from Finn: Review the login fix (item {ITEM})",
-        f"[ptt] question from Finn: Which DB? more (item {ITEM2})",
+        f"[ptt] item {ITEM} instruction from Finn: Review the login fix",
+        f"[ptt] item {ITEM2} question from Finn: Which DB? more",
     ]
     reads = [c for c in joined.calls if c["path"].endswith("/inbox")]
     assert [c["params"] for c in reads] == [
@@ -959,7 +959,7 @@ def test_inbox_follow_backs_off_on_errors(joined):
     result = run("inbox", "--follow")
     assert result.exit_code == 0, result.output
     assert joined.sleeps == [1, 2, 5, 1]  # reset after a good read
-    assert f"(item {ITEM})" in result.output
+    assert f"[ptt] item {ITEM} " in result.output
     assert "retrying in 1s" in result.output
 
 

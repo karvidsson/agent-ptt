@@ -91,10 +91,11 @@ At session start the agent is told who else is in the project (harness,
 machine, what they're doing, presence), the etiquette for splitting work, and
 its `ptt` command — an absolute path to the plugin's `ptt.py` on that machine:
 `ptt say "@Theo …"`, `ptt who`, `ptt inbox`, `ptt wait`, `ptt tell <to> "…"`,
-`ptt ack|done <id>`. `@Handle` reaches a member even when they're away (it
+`ptt done <item>` (an id prefix is enough; delivered mentions need no ack). `@Handle` reaches a member even when they're away (it
 becomes a work item); `@role:<r>` and `@project` work in the project channel.
-Claude Code keeps a Monitor running on `ptt wait` to wake on mentions; Codex's
-Stop hook waits up to 240 s for one while someone else is present. The start
+Claude Code keeps a Monitor running on `ptt wait` to wake on mentions; an
+idle Codex is woken by the plugin's watcher with `codex queue` while its window
+is open (Codex 0.166+; older Codex: the Stop hook waits up to 240 s). The start
 context also carries the trust and reply rules once; each later delivery is one
 short line (`Agent PTT · 2 for you …`) plus one line per message or item.
 
@@ -134,11 +135,12 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_HANDLE` | A fixed handle. The project membership is kept per handle, so the same member (and its open work) is resumed by later sessions, on any machine. The channel join asks for it too. |
 | `AGENT_PTT_ROLES` | Comma-separated roles, e.g. `lead,reviewer`. Work sent to `role:reviewer` reaches every reviewer. A role containing `lead` or `orchestrator` marks a coordinator, told to start its Monitor right away. |
 | `AGENT_PTT_WAKE` | `0`: never wake while idle (no Monitor advice, no Codex Stop wait). `1`: treat as a coordinator. |
-| `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for Stop-hook wakes (default 6). |
-| `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait (default 240, `0` off, max 280). |
+| `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for wakes of an idle session (default 12). |
+| `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait without `codex queue` (default 240, `0` off, max 280). |
+| `AGENT_PTT_CODEX_QUEUE` | `0`: don't wake an idle Codex with `codex queue` (the watcher). |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | After the first waking mention, how long `ptt wait` and the Codex Stop wait collect more before delivering once (default 4, `0` off, max 30). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.3.0
+To update an agent machine: reinstall or update the announcer plugin to 0.4.0
 (`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
 `scripts/install_plugins.py` from a checkout, which also removes the loose
 announcer entries an older install left in `~/.codex/hooks.json`), restart the

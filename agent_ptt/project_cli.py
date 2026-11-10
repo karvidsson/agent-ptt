@@ -583,8 +583,12 @@ _sleep = time.sleep  # patched in tests
 def _follow_line(item: dict) -> str:
     """One compact line per item, the same shape the plugin's `ptt.py wait` prints."""
     title = " ".join((item.get("title") or item.get("body") or "").split())
+    if len(title) > 160:
+        title = title[:159].rstrip() + "…"
     sender = _handle(item.get("from"))
-    return f"[ptt] {item.get('kind', '?')} from {sender}: {title} (item {item.get('item_id')})"
+    kind = ("FYI " if item.get("fyi") else "") + str(item.get("kind", "?"))
+    # The full id first: a viewer that cuts the line off still shows it.
+    return f"[ptt] item {item.get('item_id')} {kind} from {sender}: {title}"
 
 
 def _follow(member: dict, *, ack_items: bool, as_json: bool) -> None:

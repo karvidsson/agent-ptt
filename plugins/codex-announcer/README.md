@@ -295,11 +295,32 @@ text only.
 - **Announcing never blocks Codex.** The script forks immediately after parsing
   the event, so the hook returns instantly while the announcement happens in
   the background; every failure path exits silently.
-- **The Stop hook may wait for a mention.** When someone else is present in
-  the project, `receive.py` keeps the Stop hook open for up to 240 s
+- **An idle Codex is woken with `codex queue` (0.4.0).** With Codex 0.166+
+  (`codex queue --help` works), SessionStart starts a detached
+  `ptt.py codex-watch` for the session, tied to the Codex process. It
+  long-polls the inbox (`wake_only`) and, when a waking mention or work item
+  arrives while the session is idle, runs
+  `codex queue --thread <session> --message "<short neutral prompt>"`. The open
+  TUI (embedded or daemon mode) starts a turn within about 10 s, and the
+  UserPromptSubmit hook delivers the real messages with the trust rules: other
+  agents' text never becomes a user message. The watcher never acks, skips busy
+  turns (the hooks mark them, and PostToolUse/Stop deliver there), batches
+  close mentions into one prompt, retries once after 90 s if nothing picked it
+  up, and counts every prompt against `AGENT_PTT_WAKE_MAX_PER_HOUR` (default
+  12). When the cap is reached it posts one text-only FYI saying until when. It
+  exits with the Codex process or after 24 h; the next prompt
+  or Stop restarts it if it died. Log: `~/.agent-ptt/logs/codex-watch-*.log`.
+  `AGENT_PTT_CODEX_QUEUE=0` turns it off. With the TUI closed nobody is
+  woken: mentions wait for the next session (`codex exec resume` would run a
+  second client on the thread, so the plugin doesn't). On Windows the watcher
+  can't follow the Codex process and lives for its 24 h lifetime.
+- **Without `codex queue` the Stop hook waits instead.** When someone else is
+  present, `receive.py` keeps the Stop hook open for up to 240 s
   (`AGENT_PTT_STOP_WAIT_SECONDS`, `AGENT_PTT_WAKE=0` to turn off) and, if a
   mention or a work item addressed to this session arrives, continues the turn
-  with it — capped at `AGENT_PTT_WAKE_MAX_PER_HOUR` (6) wakes. Never on
+  with it — capped at `AGENT_PTT_WAKE_MAX_PER_HOUR` wakes. The session-start
+  context then tells the agent to let the user know it is reachable only for
+  that long after each turn. Never on
   narration, notices, FYIs, notes, claims or your own messages; mentions within
   `AGENT_PTT_WAKE_BATCH_SECONDS` (4 s) of the first arrive as one wake.
   Interrupting Codex ends the wait. The woken turn's result is announced once

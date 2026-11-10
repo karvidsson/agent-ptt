@@ -152,3 +152,9 @@ def client(fake_tts, fake_mixer):
     """TestClient with TTS and audio playback faked out."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def _no_real_codex_queue(monkeypatch):
+    """Plugin hooks must never start a real `ptt codex-watch` or call `codex queue` in tests."""
+    monkeypatch.setenv("AGENT_PTT_CODEX_QUEUE", "0")

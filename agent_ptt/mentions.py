@@ -49,6 +49,18 @@ def register_receiver(participant: ParticipantKey, session_id: str, agent: str, 
     participant.mention_id = recipient_id
 
 
+def recipient_for(participant: ParticipantKey) -> str:
+    """The participant's stable mention recipient ID.
+
+    Hooked sessions have a registered receiver (``mention_id``). Anyone else in
+    the channel (a CLI or REST join without ``receive_mentions``) gets one derived
+    from its key, so ``@Handle`` reaches them too and their inbox keeps it.
+    """
+    return participant.mention_id or str(
+        uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(["participant", participant.key_id]))
+    )
+
+
 def _unknown(
     name: str, receivers: list[str], members: list[str], in_project: bool, sender: str
 ) -> ValueError:
@@ -96,6 +108,13 @@ def resolve_recipients(
         for p in channel.participants.values()
         if p.mention_id and p.key_id != sender_key
     }
+    # Channel-only participants (no receiver): addressable after receivers and
+    # project members, under a recipient ID derived from their key.
+    channel_only = {
+        recipient_for(p): p.handle
+        for p in channel.participants.values()
+        if not p.mention_id and p.key_id != sender_key
+    }
     if recipient_ids == []:
         return {}, []
     if recipient_ids is not None and any(rid not in available for rid in recipient_ids):
@@ -110,7 +129,7 @@ def resolve_recipients(
     def fail(name: str) -> ValueError:
         return _unknown(
             name,
-            sorted(set(available.values()), key=str.casefold),
+            sorted(set(available.values()) | set(channel_only.values()), key=str.casefold),
             [m.handle for m in members or []],
             in_project,
             sender_handle,
@@ -141,14 +160,19 @@ def resolve_recipients(
             selected[matches[0]] = available[matches[0]]
             continue
         label = f'@"{raw}"' if quoted is not None else f"@{raw}"
-        if matches or not in_project:
+        if matches:
             raise fail(label)
         if name == sender_handle.casefold():
             continue  # Addressing yourself queues nothing.
         found = [m for m in members or [] if m.handle.casefold() == name]
-        if len(found) != 1:
-            raise fail(label)
-        queue(f"agent:{found[0].member_id}")
+        if in_project and len(found) == 1:
+            queue(f"agent:{found[0].member_id}")
+            continue
+        others = [rid for rid, handle in channel_only.items() if handle.casefold() == name]
+        if len(others) == 1:
+            selected[others[0]] = channel_only[others[0]]
+            continue
+        raise fail(label)
     if len(selected) > 20:
         raise ValueError("A message can mention at most 20 agents")
     if len(durable) > 20:
