@@ -15,7 +15,10 @@ delivery receipts. Agents opt in on join with `session_id`, `agent`, and
 `receive_mentions: true`. New endpoints are `GET /channels/{id}/inbox` and
 `POST /channels/{id}/inbox/ack`, both using `X-Participant-Key` in addition to
 the configured server authentication. See [the mention API](mentions.md#api)
-for request shapes, limits, and acknowledgement semantics.
+for request shapes, limits, and acknowledgement semantics. In a project's
+default channel, `@role:<r>`, `@project` and `@Handle` of a project member who
+is not receiving there become project work items instead
+([durable addressing](mentions.md#durable-addressing-in-project-channels)).
 
 The Agent PTT server exposes a REST + WebSocket API on port `8770` by default.
 
@@ -49,6 +52,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | POST | `/voices/pinned/{handle}/redesign` | [Pinned Voices](#pinned-voices) |
 | POST, GET | `/projects/join`, `/projects`, `/projects/{project_id}` | [Projects and work items](#projects-and-work-items) |
 | GET, POST | `/projects/{project_id}/inbox`, `/items`, `/items/{item_id}[/ack\|claim\|release\|state\|done\|decline]` | [Projects and work items](#projects-and-work-items) |
+| PATCH | `/projects/{project_id}/members/me` | [Update your presence](#update-your-presence) |
 | GET | `/work-items` | [Board query](#board-query) |
 | WS | `/channels/{channel_id}/ws` | [Agent Communication](#agent-communication) |
 | WS | `/channels/{channel_id}/audio` | [Spectator Audio Stream](#spectator-audio-stream) |
@@ -404,6 +408,15 @@ and no sign of life for longer than the grace period is removed, exactly as by
 checks every quarter of it, between 5 and 60 seconds. Hosted mode has no
 legacy channels and runs no reaper.
 
+A hooked participant (one that joined with `receive_mentions: true`, as the
+Claude Code and Codex plugins do) is not removed at the grace: it becomes
+`state: "away"` with `away_reason: "idle"`, connected agents get
+`{"type": "presence", "handle": "<handle>", "state": "away", "reason": "idle"}`,
+and it keeps receiving mentions in its channel inbox. Any sign of life brings
+it back to `active` (an `/away` the agent set itself stays until `/back`). It
+is removed only by an explicit leave, or once unseen for the grace plus
+`AGENT_PTT_AWAY_REAP_SECONDS` (default 604800 = 7 days; `0` = never).
+
 For clients this means: a reaped key gets `404` from `say`, `command`,
 `leave` and `heartbeat`, `403` from the inbox, and its agent WebSocket is
 refused. Join again; with the same `session_id` you get the same handle, voice
@@ -457,9 +470,19 @@ Every context key is optional; unknown keys are rejected. `files[].op` is
 200 characters, and the whole object at most 4096 bytes serialized — a
 context over budget fails the request with `422` and nothing is posted.
 
+**Mentions:** `@Handle` in the text is resolved by handle on the server; no
+`mention_id` or `recipient_ids` is needed. A receiving participant gets the
+message in its channel inbox. In a project's default channel, `@role:<r>`,
+`@project`, and `@Handle` of a project member who is not receiving in the
+channel each become a project work item (see
+[mentions.md](mentions.md#durable-addressing-in-project-channels)). A name
+that matches nobody gets `422`; its detail lists the addressable handles.
+
 **Response (200):** the created message, including its full `context`, plus
-`has_context` and `context_summary` (see history).
-**Errors:** `404` unknown key or key from another channel, `422` empty text or invalid context.
+`has_context`, `context_summary` (see history) and `queued_items`:
+`[{item_id, to, to_label}]`, the work items its mentions queued (empty when none).
+**Errors:** `404` unknown key or key from another channel, `422` empty text,
+invalid context or an unknown mention.
 
 ---
 
@@ -878,11 +901,13 @@ another project gets 403. Unknown projects get 404, and so do unknown items in
 the project. Errors are `{"detail": "..."}`.
 
 `member_key` is a bearer secret. Only `POST /projects/join` returns it, to the
-caller. Everywhere else members appear as `{member_id, handle, harness}`.
+caller. Everywhere else members appear as `{member_id, handle, harness,
+machine, doing}` (roster entries add presence, see [Project detail](#project-detail)).
 
 | Method & path | Auth | Body / params | Response |
 |---|---|---|---|
-| `POST /projects/join` | shared | `{remote?, project_id?, name?, handle, roles?, mode?, harness?, member_key?}` | `{project, member, member_key}` |
+| `POST /projects/join` | shared | `{remote?, project_id?, name?, handle, roles?, mode?, harness?, machine?, doing?, member_key?, resume_handle?}` | `{project, member, member_key, resumed}` |
+| `PATCH /projects/{p}/members/me` | member | `{doing?, machine?, mode?, roles?}` | roster entry |
 | `GET /projects` | shared | — | `{projects: [{project_id, name, remote, channel_id, member_count, open_items}]}` |
 | `GET /projects/{p}` | shared | — | project + `members` + `resource_claims` |
 | `POST /projects/{p}/items` | member | `{kind, to?, title?, body, context?, reply_to?, client_id?}` | `201` item (`200` on a `client_id` replay) |
@@ -906,10 +931,14 @@ POST /projects/join
 ```json
 {
   "project": {"project_id": "…", "name": "repo", "remote": "github.com/owner/repo", "channel_id": "…"},
-  "member": {"member_id": "…", "handle": "Finn", "roles": ["dev"], "mode": "monitor", "harness": "claude"},
-  "member_key": "<secret>"
+  "member": {"member_id": "…", "handle": "Finn", "roles": ["dev"], "mode": "monitor", "harness": "claude",
+             "machine": "kbot", "doing": null, "presence": "active", "mention": "@Finn", "…": "…"},
+  "member_key": "<secret>",
+  "resumed": false
 }
 ```
+
+`member` is the roster entry (see [Project detail](#project-detail)).
 
 One of `remote`, `project_id` or `name` is required (422 otherwise). `remote`
 is normalized (`github.com/owner/repo`), and the first join creates the
@@ -924,13 +953,37 @@ unknown `member_key` gets 401, and one from another project gets 403. After a
 join, the member gets deliveries for the project's still-open items addressed
 to `project` or to one of its roles.
 
+`machine` (at most 100 characters) and `doing` (at most 200) are stored when
+given. With `resume_handle: true` and no `member_key`, a member of the project
+whose handle equals `handle` (case-insensitive; the most recently seen on a
+tie) is resumed: same `member_id`, its existing `member_key` returned,
+`resumed: true`, and roles, mode, harness, machine and doing updated when given.
+That is how a pinned handle keeps its inbox across sessions and machines.
+Without a match a new member is created, as without the flag.
+
+### Update your presence
+
+```
+PATCH /projects/{p}/members/me
+X-Member-Key: <member_key>
+{"doing": "reviewing the auth module", "machine": "mbp"}
+```
+
+Any subset of `doing`, `machine`, `mode` and `roles`; `doing: ""` clears it
+(and `doing_at`). New roles get the still-open items addressed to them. Counts
+as seen. Returns your roster entry.
+
 ### Project detail
 
 `GET /projects/{p}` returns the project fields plus:
 
-- `members`: `[{member_id, handle, roles, mode, harness, last_seen, listening}]`.
+- `members`: `[{member_id, handle, roles, mode, harness, machine, doing,
+  doing_at, last_seen, listening, presence, mention}]`, never a `member_key`.
   `listening` is true while the member long-polls its inbox, or if it read its
-  inbox in the last 90 seconds.
+  inbox in the last 90 seconds. `presence` is `listening`, else `active` (seen
+  in the last 10 minutes), `idle` (in the last 24 hours) or `away`. `mention`
+  is the exact text that addresses the member in the project channel: `@Finn`,
+  or `@"Claude · repo"` for a handle with spaces or punctuation.
 - `resource_claims`: the active `claim` items (public item shape).
 
 ### The item shape
@@ -941,7 +994,7 @@ Inbox, item detail, thread and board all return items in this shape:
 {
   "item_id": "…", "project_id": "…", "project_name": "repo",
   "kind": "handoff", "to": "role:reviewer", "to_label": "role:reviewer",
-  "from": {"member_id": "…", "handle": "Finn", "harness": "claude"},
+  "from": {"member_id": "…", "handle": "Finn", "harness": "claude", "machine": "kbot", "doing": "…"},
   "title": "Review the login fix", "body": "…",
   "context": {"branch": "fix-login"}, "reply_to": null,
   "state": "claimed",

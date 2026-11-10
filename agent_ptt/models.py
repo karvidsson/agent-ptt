@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     computed_field,
     field_serializer,
     field_validator,
@@ -179,6 +180,10 @@ class ProjectMemberDB(Base):
     roles = Column(JSON, nullable=False, default=list)
     mode = Column(String, nullable=False, default="monitor")
     harness = Column(String, nullable=True)
+    # Presence the member reports about itself (see PATCH members/me).
+    machine = Column(String(100), nullable=True)
+    doing = Column(String(200), nullable=True)
+    doing_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     last_seen = Column(DateTime, default=lambda: datetime.now(UTC))
 
@@ -291,6 +296,9 @@ class ParticipantKey(BaseModel):
     # Last sign of life of any kind (join, say, command, inbox poll,
     # heartbeat, agent WebSocket); the idle reaper reads it. Internal.
     last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), exclude=True)
+    # True while ``away`` was set by the idle reaper (a hooked session that
+    # went quiet) rather than by ``/away``; a sign of life clears it. Internal.
+    idle_away: bool = Field(default=False, exclude=True)
 
     model_config = {"from_attributes": True}
 
@@ -368,6 +376,11 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     deliveries: list[dict[str, Any]] = Field(default_factory=list)
     context: MessageContext | None = None
+    # Durable mentions queued in the project inbox by this message:
+    # [{"item_id", "to", "to_label"}]. Returned by say, not stored on the row.
+    _queued_items: list[dict[str, Any]] = PrivateAttr(default_factory=list)
+    # (project_id, projects.Effects) still to publish after the broadcast.
+    _followups: Any = PrivateAttr(default=None)
 
     model_config = {"from_attributes": True}
 
@@ -415,6 +428,20 @@ WORK_ITEM_BODY_MAX = 8000
 WORK_ITEM_TITLE_MAX = 120
 
 
+def clean_roles(value: list[str] | None) -> list[str] | None:
+    """Strip, dedupe and validate role names (no ``:``, at most 60 chars)."""
+    if value is None:
+        return None
+    roles: list[str] = []
+    for role in value:
+        role = role.strip()
+        if not role or len(role) > 60 or ":" in role:
+            raise ValueError(f"invalid role: {role!r}")
+        if role not in roles:
+            roles.append(role)
+    return roles
+
+
 class ProjectJoinRequest(BaseModel):
     """Join (or rejoin, with ``member_key``) a project."""
 
@@ -426,21 +453,19 @@ class ProjectJoinRequest(BaseModel):
     # None keeps the stored value on a rejoin; a new member defaults to "monitor".
     mode: MemberMode | None = None
     harness: str | None = Field(default=None, max_length=40)
+    machine: str | None = Field(default=None, max_length=100, description="Host the agent runs on")
+    doing: str | None = Field(default=None, max_length=200, description="What it is working on")
     member_key: str | None = Field(default=None, description="Rejoin as this member")
+    resume_handle: bool = Field(
+        default=False,
+        description="Without member_key: resume the existing member with this handle "
+        "(case-insensitive) instead of creating a new one",
+    )
 
     @field_validator("roles")
     @classmethod
     def _clean_roles(cls, value: list[str] | None) -> list[str] | None:
-        if value is None:
-            return None
-        roles: list[str] = []
-        for role in value:
-            role = role.strip()
-            if not role or len(role) > 60 or ":" in role:
-                raise ValueError(f"invalid role: {role!r}")
-            if role not in roles:
-                roles.append(role)
-        return roles
+        return clean_roles(value)
 
     @model_validator(mode="after")
     def _one_locator(self) -> ProjectJoinRequest:
@@ -464,9 +489,33 @@ class MemberOut(BaseModel):
     harness: str | None = None
 
 
+MemberPresence = Literal["listening", "active", "idle", "away"]
+
+
 class ProjectMemberOut(MemberOut):
     last_seen: datetime | None = None
     listening: bool = False
+    machine: str | None = None
+    doing: str | None = None
+    doing_at: datetime | None = None
+    # listening (open inbox wait) > active (seen < 10 min) > idle (< 24 h) > away.
+    presence: MemberPresence = "away"
+    # The exact text that addresses this member in the project channel.
+    mention: str = ""
+
+
+class MemberPatch(BaseModel):
+    """``PATCH /projects/{p}/members/me``: any subset; ``doing: ""`` clears it."""
+
+    doing: str | None = Field(default=None, max_length=200)
+    machine: str | None = Field(default=None, max_length=100)
+    mode: MemberMode | None = None
+    roles: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator("roles")
+    @classmethod
+    def _clean_roles(cls, value: list[str] | None) -> list[str] | None:
+        return clean_roles(value)
 
 
 class ProjectJoinResponse(BaseModel):
@@ -484,6 +533,8 @@ class MemberRef(BaseModel):
     member_id: str
     handle: str
     harness: str | None = None
+    machine: str | None = None
+    doing: str | None = None
 
 
 class EventRef(BaseModel):

@@ -44,6 +44,18 @@ handle. It replaces `roles`, `mode` and `harness` only when the request
 gives them. Two agents in different worktrees of the same repo are two
 members.
 
+A **pinned handle** survives sessions and machines without a stored key: join
+with `resume_handle: true` and the server resumes the member with that handle
+(case-insensitive), returning its `member_key`, and its open items come back.
+
+**Presence.** Members report `machine` and `doing` at join or with
+`PATCH /projects/{p}/members/me` (`doing: ""` clears it). The roster in
+`GET /projects/{p}` shows them with `presence` (`listening` while the member
+long-polls its inbox, `active` if seen in the last 10 minutes, `idle` within
+24 hours, else `away`) and `mention`, the exact text that addresses the member
+in the project channel (`@Finn`, `@"Claude · repo"`). The Board's member refs
+carry `machine` and `doing` too.
+
 **Roles** are free-form tags such as `reviewer`, `windows-tester` or
 `lead-planning`. Items can be addressed to a role.
 
@@ -153,3 +165,11 @@ Rex finished "Review the login fix"
 
 A notice carries at most the title, never a body or a key. The item stores
 the `notice_message_id` of its creation notice.
+
+## Mentions in the project channel
+
+Writing `@role:reviewer`, `@project`, or `@Handle` of a member who is not a
+live mention receiver in the project's channel creates an `instruction` work
+item, so the mention waits in the inbox instead of failing. A live receiver
+still gets it in its channel inbox. The sender becomes a member if it is not
+one. Details in [mentions.md](mentions.md#durable-addressing-in-project-channels).

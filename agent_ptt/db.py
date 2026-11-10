@@ -50,6 +50,18 @@ def init_db() -> None:
             )
         if "context" not in columns:
             connection.execute(text("ALTER TABLE messages ADD COLUMN context JSON"))
+        # Project member presence (legacy table; no Alembic revision).
+        if inspect(connection).has_table("project_members"):
+            existing = {c["name"] for c in inspect(connection).get_columns("project_members")}
+            for name, definition in {
+                "machine": "VARCHAR(100)",
+                "doing": "VARCHAR(200)",
+                "doing_at": "DATETIME",
+            }.items():
+                if name not in existing:
+                    connection.execute(
+                        text(f"ALTER TABLE project_members ADD COLUMN {name} {definition}")
+                    )
     # Local preview databases also need additive onboarding fields. Hosted releases
     # apply the versioned Alembic migration before starting the service.
     with engine.begin() as connection:

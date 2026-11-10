@@ -33,9 +33,11 @@ from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
 from agent_ptt.models import (
+    WORK_ITEM_BODY_MAX,
     WORK_ITEM_TITLE_MAX,
     ChannelDB,
     EventRef,
+    MemberPatch,
     MemberRef,
     ProjectDB,
     ProjectJoinRequest,
@@ -250,10 +252,31 @@ class JoinResult:
     member: ProjectMemberDB
     channel_created: bool
     effects: Effects
+    resumed: bool = False
+
+
+def _member_by_handle(db: Session, project_id: str, handle: str) -> ProjectMemberDB | None:
+    """The member with this handle (casefold); the most recently seen on a tie."""
+    wanted = handle.strip().casefold()
+    matches = [m for m in project_members(db, project_id) if m.handle.casefold() == wanted]
+    if not matches:
+        return None
+    return max(matches, key=lambda m: as_utc(m.last_seen) or datetime.min.replace(tzinfo=UTC))
+
+
+def _set_doing(member: ProjectMemberDB, doing: str | None, now: datetime) -> None:
+    text = (doing or "").strip()[:200]
+    member.doing = text or None
+    member.doing_at = now if text else None
 
 
 def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
-    """Find or create the project, then create or update the member."""
+    """Find or create the project, then create or update the member.
+
+    With ``resume_handle`` (and no ``member_key``) an existing member whose
+    handle matches is resumed: same member_id and member_key, so a pinned
+    handle keeps its inbox across sessions and machines.
+    """
     rejoining = member_by_key(db, req.member_key) if req.member_key else None
     if req.member_key and rejoining is None:
         raise ProjectError(401, "Unknown member_key")
@@ -285,6 +308,10 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
 
     if rejoining is not None and rejoining.project_id != project.project_id:
         raise ProjectError(403, "member_key belongs to another project")
+    resumed = False
+    if rejoining is None and req.resume_handle and not req.member_key:
+        rejoining = _member_by_handle(db, project.project_id, req.handle)
+        resumed = rejoining is not None
 
     channel_created = _ensure_channel(db, project)
     now = now_utc()
@@ -297,6 +324,10 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
             member.mode = req.mode
         if req.harness is not None:
             member.harness = req.harness
+        if req.machine is not None:
+            member.machine = req.machine or None
+        if req.doing is not None:
+            _set_doing(member, req.doing, now)
         member.last_seen = now
     else:
         member = ProjectMemberDB(
@@ -306,15 +337,17 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
             roles=list(req.roles or []),
             mode=req.mode or "monitor",
             harness=req.harness,
+            machine=req.machine or None,
             created_at=now,
             last_seen=now,
         )
+        _set_doing(member, req.doing, now)
         db.add(member)
     db.flush()
     effects = Effects()
     _deliver_open_items_to(db, member, effects)
     db.commit()
-    return JoinResult(project, member, channel_created, effects)
+    return JoinResult(project, member, channel_created, effects, resumed)
 
 
 def project_members(db: Session, project_id: str) -> list[ProjectMemberDB]:
@@ -328,6 +361,51 @@ def project_members(db: Session, project_id: str) -> list[ProjectMemberDB]:
 
 def touch_member(member: ProjectMemberDB) -> None:
     member.last_seen = now_utc()
+
+
+def update_member(db: Session, member: ProjectMemberDB, patch: MemberPatch) -> Effects:
+    """``PATCH members/me``: presence and settings; new roles get their open items."""
+    now = now_utc()
+    effects = Effects()
+    if patch.doing is not None:
+        _set_doing(member, patch.doing, now)
+    if patch.machine is not None:
+        member.machine = patch.machine.strip()[:100] or None
+    if patch.mode is not None:
+        member.mode = patch.mode
+    if patch.roles is not None:
+        member.roles = list(patch.roles)
+        db.flush()
+        _deliver_open_items_to(db, member, effects)
+    member.last_seen = now
+    db.commit()
+    return effects
+
+
+ACTIVE_SECONDS = 600
+IDLE_SECONDS = 86400
+_PLAIN_HANDLE = re.compile(r"[\w-]+")
+
+
+def presence(member: ProjectMemberDB, now: datetime | None = None) -> str:
+    """``listening`` (open inbox wait) > ``active`` (< 10 min) > ``idle`` (< 24 h) > ``away``."""
+    now = now or now_utc()
+    if listening(member.member_id, now):
+        return "listening"
+    last = as_utc(member.last_seen)
+    if last is None:
+        return "away"
+    age = (now - last).total_seconds()
+    if age < ACTIVE_SECONDS:
+        return "active"
+    if age < IDLE_SECONDS:
+        return "idle"
+    return "away"
+
+
+def mention_text(handle: str) -> str:
+    """How to address ``handle`` in a channel: ``@Handle`` or ``@"Multi Word"``."""
+    return f"@{handle}" if _PLAIN_HANDLE.fullmatch(handle) else f'@"{handle}"'
 
 
 # ---------------------------------------------------------------------------
@@ -1012,7 +1090,13 @@ async def wait_for_inbox(
 def _member_ref(member: ProjectMemberDB | None) -> MemberRef | None:
     if member is None:
         return None
-    return MemberRef(member_id=member.member_id, handle=member.handle, harness=member.harness)
+    return MemberRef(
+        member_id=member.member_id,
+        handle=member.handle,
+        harness=member.harness,
+        machine=member.machine,
+        doing=member.doing,
+    )
 
 
 def _members_by_id(db: Session, ids: Iterable[str | None]) -> dict[str, ProjectMemberDB]:
@@ -1208,3 +1292,91 @@ def board_items(
             or_(WorkItemDB.assignee_member_id == member_id, WorkItemDB.from_member_id == member_id)
         )
     return query.order_by(WorkItemDB.updated_at).all()
+
+
+# ---------------------------------------------------------------------------
+# Durable mentions: channel @mentions that land in the project inbox
+# ---------------------------------------------------------------------------
+
+
+def project_for_channel(db: Session, channel_id: str) -> ProjectDB | None:
+    """The project whose default channel this is (the oldest, if several)."""
+    return (
+        db.query(ProjectDB).filter_by(channel_id=channel_id).order_by(ProjectDB.created_at).first()
+    )
+
+
+def sender_member(db: Session, project: ProjectDB, handle: str) -> ProjectMemberDB:
+    """The project member speaking as ``handle``; created (mode hooks) if missing.
+
+    ``harness`` comes from the session identity that owns the handle, if any.
+    """
+    member = _member_by_handle(db, project.project_id, handle)
+    if member is not None:
+        touch_member(member)
+        return member
+    from agent_ptt.models import SessionIdentityDB
+
+    identity = db.query(SessionIdentityDB).filter_by(handle=handle).first()
+    now = now_utc()
+    member = ProjectMemberDB(
+        project_id=project.project_id,
+        member_key=secrets.token_urlsafe(32),
+        handle=handle,
+        roles=[],
+        mode="hooks",
+        harness=(identity.agent.lower()[:40] if identity else None),
+        created_at=now,
+        last_seen=now,
+    )
+    db.add(member)
+    db.flush()
+    return member
+
+
+def create_mention_items(
+    db: Session,
+    project: ProjectDB,
+    handle: str,
+    message_id: str,
+    channel_id: str,
+    text: str,
+    addresses: list[str],
+) -> tuple[list[dict[str, Any]], Effects]:
+    """One ``instruction`` work item per durable address of a channel message.
+
+    Idempotent per (message, address) through ``client_id``. Returns the
+    public ``{item_id, to, to_label}`` refs and the effects to publish.
+    """
+    effects = Effects()
+    member = sender_member(db, project, handle)
+    _deliver_open_items_to(db, member, effects)
+    db.commit()
+    refs: list[dict[str, Any]] = []
+    for address in addresses:
+        try:
+            result = create_item(
+                db,
+                member,
+                WorkItemCreate(
+                    kind="instruction",
+                    to=address,
+                    body=text[:WORK_ITEM_BODY_MAX],
+                    context={"channel_id": channel_id, "message_id": message_id},
+                    client_id=f"mention:{message_id}:{address}",
+                ),
+            )
+        except ProjectError as exc:  # The message is committed; log and go on.
+            db.rollback()
+            logger.warning("Durable mention to %s failed: %s", address, exc.detail)
+            continue
+        effects.notices += result.effects.notices
+        effects.wake |= result.effects.wake
+        refs.append(
+            {
+                "item_id": result.item.item_id,
+                "to": result.item.to_address,
+                "to_label": _address_label(db, result.item.to_address),
+            }
+        )
+    return refs, effects

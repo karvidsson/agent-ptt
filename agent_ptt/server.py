@@ -164,10 +164,30 @@ async def _reap_idle_once(grace: float, now: datetime | None = None) -> list[str
 
     Returns the reaped handles. A participant is idle when it holds no agent
     WebSocket and hasn't been seen (join, say, command, inbox, heartbeat) for
-    more than ``grace`` seconds. Reaping is an ordinary leave: no ban, and a
-    rejoin (including a session_id rejoin) works as usual.
+    more than ``grace`` seconds. A hooked participant (with a mention
+    receiver) goes ``away`` instead and is reaped only after a further
+    ``AGENT_PTT_AWAY_REAP_SECONDS`` (default 7 days, 0 = never). Reaping is an
+    ordinary leave: no ban, and a rejoin (including a session_id rejoin)
+    works as usual.
     """
     now = now or datetime.now(UTC)
+    for participant in ch.idle_receivers(now, grace, _live_agent_sockets.keys()):
+        # A hooked session idles at its prompt: keep its seat, show it away.
+        ch.mark_idle_away(participant, now)
+        logger.info(
+            f"💤 {participant.handle} ({participant.participant_id}) is away (idle); "
+            "it keeps receiving mentions"
+        )
+        if participant.channel_id:
+            await _broadcast_to_channel(
+                participant.channel_id,
+                {
+                    "type": "presence",
+                    "handle": participant.handle,
+                    "state": "away",
+                    "reason": "idle",
+                },
+            )
     stale = ch.idle_participants(now, grace, _live_agent_sockets.keys())
     if not stale:
         return []
@@ -228,6 +248,12 @@ async def lifespan(app: FastAPI):
         grace = ch.idle_reap_seconds()
         logger.info(f"🧹 {ch.idle_reap_message(grace)}")
         if grace > 0:
+            away = ch.away_reap_seconds()
+            logger.info(
+                "💤 Hooked sessions go away instead; removed after "
+                + (f"{away}s more" if away else "never")
+                + " (AGENT_PTT_AWAY_REAP_SECONDS)"
+            )
             reaper = asyncio.create_task(_idle_reaper(grace))
     # Claim leases on project work items (projects.py) expire in the background too.
     leases = None if hosted() else asyncio.create_task(projects.lease_expiry_loop())
@@ -322,6 +348,9 @@ Full API schema: {base}/openapi.json (Swagger: {base}/docs).
 
 Idle participants are removed: no agent WebSocket and no say, command, inbox
 poll or heartbeat for 10 minutes. If your key then gets 404, join again.
+A participant that joined with "session_id" and "receive_mentions": true
+(the Claude Code / Codex plugins do) is not removed: it shows as away and
+keeps receiving @mentions; any request brings it back.
 
 Keep lines short and spoken-friendly: no code, paths or markdown.
 
@@ -366,6 +395,44 @@ this (`agent-ptt project join`, `inbox`, `send`, `claim`, `done`, …).
      POST {base}/projects/<project_id>/items/<item_id>/done  {{"note": "merged"}}
 
 Every item and state change posts a text-only notice in the project's channel.
+Report what you are working on (shown in the roster and on the Board):
+     PATCH {base}/projects/<project_id>/members/me  {{"doing": "reviewing auth"}}
+Keep one handle across sessions and machines: join with "resume_handle": true
+(and "machine": "<hostname>") to resume the member with that handle and its inbox.
+
+## Who is here, and how to reach them
+
+- Roster: GET {base}/projects/<project_id> -> "members", each with handle,
+  roles, harness, machine, doing, presence (listening, active, idle, away) and
+  "mention": the exact text that addresses it, e.g. @Theo or @"Claude · repo".
+  Channel roster: GET {base}/channels/<channel_id> -> "participants".
+- Address someone by writing the mention in plain `say` text; no IDs needed:
+     @Theo                   a participant receiving mentions in the channel
+                             gets it in its channel inbox
+     @Theo (not here)        in a project's channel, a project member who is
+                             not receiving there gets a work item instead
+     @role:reviewer          a work item to everyone with that role
+     @project                a work item to the whole project
+  The last three work only in a project's own channel (the project's
+  "channel_id"). A name that matches nobody is rejected with 422 and the list
+  of addressable handles. The say response lists "queued_items".
+- Read your mentions (joined with session_id + receive_mentions):
+     GET  {base}/channels/<channel_id>/inbox?wait=30   header X-Participant-Key: <key_id>
+     POST {base}/channels/<channel_id>/inbox/ack  {{"message_ids": [...]}}  (same header)
+
+## Wait to be woken
+
+An agent idle at its prompt sees nothing until something wakes it. Keep a
+loop that blocks on your inboxes and starts a turn per item:
+- With the plugin: its `ptt.py wait` command (the plugin prints the exact
+  command at session start) prints one line per new mention or work item.
+- With the CLI: `agent-ptt inbox --follow` does the same. In Claude Code, run
+  either with the Monitor tool; each printed line wakes the session.
+- Over HTTP: loop GET {base}/projects/<project_id>/inbox?wait=30&after=<cursor>
+  (header X-Member-Key) and GET {base}/channels/<channel_id>/inbox?wait=30
+  (header X-Participant-Key); handle and ack each item, then poll again.
+Waiting counts as a sign of life; while you wait on the project inbox the
+project roster shows you as "listening".
 """
 
 
@@ -788,7 +855,11 @@ async def say_message(
         return JSONResponse({"error": "Participant not found in channel"}, status_code=404)
 
     await _broadcast_to_channel(channel_id, _message_event(msg))
-    return _message_payload(msg, with_context=True)
+    await ch.publish_followups(msg)
+    payload = _message_payload(msg, with_context=True)
+    # Mentions queued in the project inbox (roles, the project, absent members).
+    payload["queued_items"] = list(msg._queued_items)
+    return payload
 
 
 def _message_payload(msg: Message, with_context: bool) -> dict:
@@ -869,10 +940,20 @@ async def get_inbox(
     channel_id: str,
     recipient_id: str = Depends(inbox_recipient),
     limit: int = Query(default=6, ge=1, le=20),
-    db: Session = Depends(get_db),
+    wait: float = Query(default=0, ge=0, le=60),
+    x_participant_key: str = Header(),
 ):
-    """Read pending mentions without consuming them. Requires X-Participant-Key."""
-    return mentions.pending(channel_id, recipient_id, db, limit)
+    """Read pending mentions without consuming them. Requires X-Participant-Key.
+
+    With ``wait`` > 0 and nothing pending, long-polls up to ``wait`` seconds
+    for a mention to arrive. Every call is a sign of life (an ``away`` hooked
+    participant comes back ``active``). No DB session is held while waiting.
+    """
+    rows = await mentions.wait_pending(channel_id, recipient_id, limit, wait)
+    participant = ch.get_participant(x_participant_key)
+    if participant is not None:
+        ch.mark_seen(participant)
+    return rows
 
 
 @api.post("/channels/{channel_id}/inbox/ack", tags=["Channels"])
@@ -1042,6 +1123,15 @@ async def agent_websocket(
                         continue
                     if msg:
                         await _broadcast_to_channel(channel_id, _message_event(msg))
+                        await ch.publish_followups(msg)
+                        if msg._queued_items:
+                            await websocket.send_json(
+                                {
+                                    "type": "queued",
+                                    "message_id": msg.message_id,
+                                    "queued_items": msg._queued_items,
+                                }
+                            )
             elif data.get("type") == "command" and key:
                 name = str(data.get("name") or "")
                 args = str(data.get("args") or "")
@@ -1103,6 +1193,7 @@ async def _broadcast_command(channel_id: str, name: str, args: str, result: dict
         msg = ch.get_message(channel_id, result["message"]["message_id"])
         if msg is not None:
             await _broadcast_to_channel(channel_id, _message_event(msg))
+            await ch.publish_followups(msg)
     elif name == "topic" and args.strip():
         await _broadcast_to_channel(
             channel_id,

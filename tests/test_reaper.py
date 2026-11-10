@@ -175,7 +175,8 @@ def test_archived_channels_are_not_scanned(client):
 
 def test_reaper_pass_removes_idle_participant_persistently(client):
     cid = room(client)
-    identity = {"session_id": "s-ghost", "agent": "Claude", "receive_mentions": True}
+    # No mention receiver: hooked sessions go away instead (see the away tests).
+    identity = {"session_id": "s-ghost", "agent": "Claude"}
     ghost = join(client, cid, **identity)
     alive = join(client, cid, "Alive")
     age(ghost["key_id"], 30)
@@ -202,7 +203,7 @@ def test_reaper_pass_removes_idle_participant_persistently(client):
     # Reaping is a leave, not a kick: the same session comes back as itself.
     again = join(client, cid, **identity)
     assert again["key_id"] != ghost["key_id"]
-    assert (again["handle"], again["mention_id"]) == (ghost["handle"], ghost["mention_id"])
+    assert again["handle"] == ghost["handle"]
 
 
 def test_held_agent_websocket_keeps_a_stale_participant(client):

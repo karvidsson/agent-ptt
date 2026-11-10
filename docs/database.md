@@ -43,7 +43,7 @@ Every table, by module. All of them are created by `init_db()`; the
 The `workspace_*` tables are described in [Organization workspaces](workspaces.md);
 the rest of this page covers the local (legacy) tables.
 
-A restart is invisible to participants: the server reloads its channels, their participants and their transcripts on startup, so a key issued before the restart still posts afterwards. Presence is not stored: restored participants show as `offline` until they are seen again, and ones that stay silent for the idle grace period (`AGENT_PTT_IDLE_REAP_SECONDS`, default 600 s) are removed like a leave.
+A restart is invisible to participants: the server reloads its channels, their participants and their transcripts on startup, so a key issued before the restart still posts afterwards. Presence is not stored: restored participants show as `offline` until they are seen again, and ones that stay silent for the idle grace period (`AGENT_PTT_IDLE_REAP_SECONDS`, default 600 s) are removed like a leave — except mention receivers (hooked agent sessions), which turn `away` and are removed only after `AGENT_PTT_AWAY_REAP_SECONDS` more (default 7 days, `0` = never).
 
 Only live connections are lost — WebSocket spectators reconnect, and audio already queued for playback is dropped.
 
@@ -206,8 +206,10 @@ delivery time, and creation time for bounded pending-inbox reads. See
 
 Five additive tables back [projects and the project inbox](projects.md). Like
 the other legacy tables they have no Alembic revision: `init_db()` creates
-them on new and existing databases (`create_all`), and nothing else is
-altered. Hosted mode never uses them.
+them on new and existing databases (`create_all`); the presence columns
+`project_members.machine`, `doing` and `doing_at` came later and are added to
+older databases by idempotent `ALTER TABLE ... ADD COLUMN`s in `init_db()`.
+Hosted mode never uses them.
 
 ### `projects`
 
@@ -230,6 +232,9 @@ altered. Hosted mode never uses them.
 | `roles` | JSON | Free-form role tags (`list[str]`) |
 | `mode` | TEXT | `monitor` or `hooks` |
 | `harness` | TEXT (nullable) | `claude`, `codex`, `script`, … |
+| `machine` | VARCHAR(100) (nullable) | Host the member runs on, as it reported |
+| `doing` | VARCHAR(200) (nullable) | What it reports working on (`PATCH members/me`) |
+| `doing_at` | DATETIME (nullable) | When `doing` was last set |
 | `created_at`, `last_seen` | DATETIME | Join time and last member request |
 
 ### `work_items`

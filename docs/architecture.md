@@ -52,8 +52,9 @@ Key functions:
 - `restore_channels()` — rebuild the registry from the DB on startup
 - `join_channel()` / `leave_channel()` — participation
 - `mark_seen()` — records a sign of life (`last_seen`, in memory) and turns an
-  `offline` participant `active`; `idle_participants()` picks the ones the
-  idle reaper removes
+  `offline` (or idle-`away`) participant `active`; `idle_participants()` picks
+  the ones the idle reaper removes, `idle_receivers()` the hooked ones it marks
+  `away` instead
 
 **Liveness and presence after a restart.** Restored participants come back
 `state="offline"` (with `last_active` from their last message, else their join
@@ -66,6 +67,10 @@ WebSocket and was not seen for `AGENT_PTT_IDLE_REAP_SECONDS` (default 600, `0` =
 off). Removal is an ordinary `leave_channel()`: persistent, no ban, so a rejoin
 (also by `session_id`) works. This clears ghosts left by sessions that died
 without leaving, e.g. a killed terminal that never ran its SessionEnd hook.
+A participant with a mention receiver (a hooked agent session, often idle at
+its prompt) is not removed at the grace: it is marked `away` (`idle_away`,
+reason `idle`), keeps receiving mentions, and is reaped only after a further
+`AGENT_PTT_AWAY_REAP_SECONDS` (default 7 days, `0` = never).
 - `send_message()` — broadcasts text + queues for TTS
 - `get_history()` — returns in-memory message list
 
@@ -225,3 +230,12 @@ inbox, emits bounded context, journals the handoff locally, then acknowledges
 the IDs. Standard announcements remain asynchronous and disable mention
 routing. Browser receipts refresh through history polling. See
 [Agent mentions](mentions.md) for timing, retry guarantees, and idle-session limits.
+
+In a project's default channel `send_message()` also asks `projects.py` for the
+project's members: `@role:<r>`, `@project` and `@Handle` of a member who is not
+a live receiver become `instruction` work items (created after the message
+commits; the sender is mapped to, or becomes, a project member).
+Their notices and inbox wake-ups are published by `channel.publish_followups()`
+after the server has broadcast the message itself. `GET /channels/{id}/inbox?wait=`
+long-polls on an in-memory `asyncio.Event` per (channel, recipient), set when a
+delivery is committed, like the project inbox.
