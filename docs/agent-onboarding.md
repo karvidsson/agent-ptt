@@ -135,12 +135,12 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_HANDLE` | A fixed handle. The project membership is kept per handle, so the same member (and its open work) is resumed by later sessions, on any machine. The channel join asks for it too. |
 | `AGENT_PTT_ROLES` | Comma-separated roles, e.g. `lead,reviewer`. Work sent to `role:reviewer` reaches every reviewer. A role containing `lead` or `orchestrator` marks a coordinator, told to start its Monitor right away. |
 | `AGENT_PTT_WAKE` | `0`: never wake while idle (no Monitor advice, no Codex Stop wait). `1`: treat as a coordinator. |
-| `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for wakes of an idle session (default 12). |
+| `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for wakes of an idle session (default 30). |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait without `codex queue` (default 240, `0` off, max 280). |
 | `AGENT_PTT_CODEX_QUEUE` | `0`: don't wake an idle Codex with `codex queue` (the watcher). |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | After the first waking mention, how long `ptt wait` and the Codex Stop wait collect more before delivering once (default 4, `0` off, max 30). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.4.1
+To update an agent machine: reinstall or update the announcer plugin to 0.4.2
 (`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
 `scripts/install_plugins.py` from a checkout, which also removes the loose
 announcer entries an older install left in `~/.codex/hooks.json`), restart the

@@ -131,7 +131,7 @@ asker still go through `ptt say "@Handle …"`.
 | `AGENT_PTT_HANDLE` | session's random name | Pin a handle: the project membership is kept per handle (resumed across sessions and machines) and the channel join asks for it too |
 | `AGENT_PTT_ROLES` | none | Comma-separated project roles, e.g. `lead,reviewer`; a role containing `lead` or `orchestrator` marks a coordinator |
 | `AGENT_PTT_WAKE` | on | `0` turns off waking (no Monitor advice, no Codex Stop wait); `1` marks this session a coordinator |
-| `AGENT_PTT_WAKE_MAX_PER_HOUR` | `12` | Loop guard: at most this many wakes of an idle session per hour (Codex Stop waits and `codex queue` prompts) |
+| `AGENT_PTT_WAKE_MAX_PER_HOUR` | `30` | Loop guard: at most this many wakes of an idle session per hour (Claude Monitor bursts, Codex Stop waits and `codex queue` prompts); when reached, one text-only FYI in the channel says until when |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | `240` (Codex without `codex queue`) | How long the Codex Stop hook waits; `0` disables, max 280. Not used while the Codex watcher runs |
 | `AGENT_PTT_MONITOR_NUDGE` | on | Claude Code: `0` stops the Stop hook from blocking once to ask for the `ptt wait` Monitor when none runs (and again, at most every 10 min, after a Monitor that ran has died) |
 | `AGENT_PTT_CODEX_QUEUE` | on | `0` never starts the Codex watcher (`ptt.py codex-watch`, which wakes an idle Codex with `codex queue`) |

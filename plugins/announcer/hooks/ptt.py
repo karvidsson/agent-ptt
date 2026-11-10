@@ -338,12 +338,18 @@ class Waiter:
         self.flush_at: float | None = None
         self.cursor = int(session.member.get("cursor") or 0)
         self.heartbeat = None  # called every 15 s while running (keeps the lock fresh)
+        self.capped: set[str] = set()  # held back by the wake cap: the next hook delivers
+        self.cap = True  # `wait --once` prints on request: not a wake
 
     def wake_only(self) -> str:
         return "&wake_only=1" if self.session.channel().get("fyi_supported") else ""
 
     def _known(self, entry_id: str) -> bool:
-        return entry_id in self.printed or any(held[2] == entry_id for held in self.held)
+        return (
+            entry_id in self.printed
+            or entry_id in self.capped
+            or any(held[2] == entry_id for held in self.held)
+        )
 
     def hold(self, entries: list[tuple[str, str, str]]) -> None:
         """Queue waking lines; the first opens the batch window."""
@@ -364,6 +370,11 @@ class Waiter:
         """Print the held lines plus anything else pending (FYIs, notes) at once, then ack."""
         with self.lock:
             if self.flush_at is None:
+                return 0
+            if self.held and self.cap and not take_wake(self.session):
+                # Loop guard: leave them pending for the next hook; don't print again.
+                self.capped |= {entry_id for _, _, entry_id in self.held}
+                self.held, self.flush_at = [], None
                 return 0
             entries = list(self.held)
             for message in self._read_channel():
@@ -540,6 +551,7 @@ def _wait_lock(session: Session, path: Path | None = None) -> Path | None:
 def cmd_wait(session: Session, args) -> None:
     if args.once:
         waiter = Waiter(session, batch=0)
+        waiter.cap = False
         waiter.flush_at = waiter.clock()  # one read of everything pending, FYIs included
         count = waiter.flush()
         if not count:
@@ -569,6 +581,42 @@ def cmd_wait(session: Session, args) -> None:
         if session.member_path and session.member:
             session.member["cursor"] = waiter.cursor
             link.save_membership(session.member_path, session.member)
+
+
+# --- wake cap -------------------------------------------------------------------
+
+
+def cap_notice(session: Session, until: float, now: float | None = None) -> None:
+    """One text-only FYI per cap window, so senders know why nothing happens."""
+    now = time.time() if now is None else now
+    base, sid = session.base, session.session_id
+    if now - float(link.load_session(base, sid).get("cap_noticed_at") or 0) < 3600:
+        return
+    link.save_session(base, sid, cap_noticed_at=now)
+    me = session.member.get("handle") or session.agent
+    when = time.strftime("%H:%M", time.localtime(until))
+    text = (
+        f"{me} reached its wake cap ({link.wake_cap()} per hour): new mentions wait"
+        f" until {when} or its next prompt."
+    )
+    with contextlib.suppress(Exception):
+        session.channel_call(
+            "POST",
+            "/channels/{cid}/say",
+            lambda state: {"key_id": state["key_id"], "text": text, "speak": False, "fyi": True},
+        )
+
+
+def take_wake(session: Session, now: float | None = None) -> bool:
+    """Count one wake against AGENT_PTT_WAKE_MAX_PER_HOUR; False (and a notice) if capped."""
+    now = time.time() if now is None else now
+    base, sid = session.base, session.session_id
+    wakes = link.recent_wakes(link.load_session(base, sid), now)
+    if len(wakes) >= link.wake_cap():
+        cap_notice(session, min(wakes) + 3600, now)
+        return False
+    link.save_session(base, sid, wakes=[*wakes, now])
+    return True
 
 
 # --- codex-watch ----------------------------------------------------------------
@@ -601,7 +649,6 @@ class CodexWatch:
         self.started = clock()
         self.run_queue = runner or self._codex_queue
         self.poked: dict[str, tuple[float, int]] = {}
-        self.cap_noticed = 0.0
         self.batch = link.wake_batch_seconds()
         self.heartbeat = None
 
@@ -679,27 +726,7 @@ class CodexWatch:
         return True
 
     def notice_cap(self, until: float) -> None:
-        """One text-only FYI per cap window, so senders know why nothing happens."""
-        if self.cap_noticed > self.clock() - 3600:
-            return
-        self.cap_noticed = self.clock()
-        me = self.session.member.get("handle") or self.session.agent
-        when = time.strftime("%H:%M", time.localtime(until))
-        text = (
-            f"{me} reached its wake cap ({link.wake_cap()} per hour): new mentions wait"
-            f" until {when} or its next prompt."
-        )
-        with contextlib.suppress(Exception):
-            self.session.channel_call(
-                "POST",
-                "/channels/{cid}/say",
-                lambda state: {
-                    "key_id": state["key_id"],
-                    "text": text,
-                    "speak": False,
-                    "fyi": True,
-                },
-            )
+        cap_notice(self.session, until, self.clock())
 
     def step(self, wait: int, sleep) -> None:
         ids = self.waking(wait)
