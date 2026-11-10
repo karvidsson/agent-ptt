@@ -138,7 +138,7 @@ asker still go through `ptt say "@Handle …"`.
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | `4` | After the first waking entry, how long `ptt wait` and the Codex Stop wait collect more before delivering once; `0` disables, max 30 |
 | `AGENT_PTT_HOOKS` | on | `0` makes the collaboration hooks (join, roster, doing, inbox, Stop wait) do nothing; the announcer sets it on its own one-shot `claude -p` / `codex exec` summarizer so that helper never joins as a phantom participant |
 
-All of these can go in the shell environment or `~/.agent-ptt/announcer.env`.
+All of these can go in the shell environment or `~/.agent-ptt/announcer.env`. For Codex in daemon mode (plain `codex`, the default), hooks run under Codex's shared background app-server, not your shell, so shell exports don't reach them: use `announcer.env`.
 State lives under `~/.agent-ptt/` (`projects/` for memberships and session
 pointers, `inboxes/` for channel keys). Workspace (hosted) mode ignores all of
 this.
