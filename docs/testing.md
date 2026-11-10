@@ -145,6 +145,102 @@ Expected: no step needs a hook. Restarting either agent and rejoining from
 the same checkout keeps its member; unacked items come back on its next
 `inbox`.
 
+## Cross-machine collaboration (roster, no-remote projects, wake, durable addressing)
+
+Agents normally run on other machines than the server. This walkthrough checks
+what the automated tests can't: two real machines, real hooks, real idle
+sessions. Automated coverage: `tests/test_projects.py`, `tests/test_mentions.py`,
+`tests/test_receive.py` and `tests/test_project_cli.py`.
+
+**Setup.** One server reachable from both machines (`http://<server-host>:8770`;
+set `AGENT_PTT_API_KEY` there if it is on a shared network). Machine **M1** and
+machine **M2**, each with only the announcer plugin installed (see
+[plugins/README.md](../plugins/README.md)) or the CLI installed as a tool
+(`uv tool install git+https://github.com/karvidsson/agent-ptt`), pointed at the
+server (`agent-ptt config --server …` or the plugin's `~/.agent-ptt/announcer.env`)
+and given the same API key. Nothing on either machine refers to the server's
+filesystem.
+
+1. **A project for a folder without a git remote.** On M1 and M2 create a git
+   repo with no `origin` called `review-demo` (or a worktree of one). Start a
+   Claude Code session on M1 with `AGENT_PTT_ROLES=lead` and a Codex session
+   on M2. Both join the project `review-demo` (the main worktree's folder
+   name). It appears in `agent-ptt project list` and on the Board
+   (`/ui/board.html`). With the CLI instead of the plugin:
+   `agent-ptt project join --handle Theo --role reviewer` in each folder.
+2. **Roster at start.** The second session's start context lists the first:
+   handle, roles, harness, machine (its hostname), what it is doing, presence,
+   and the exact `@mention` to use. `agent-ptt project show` prints the same
+   lines (`Poppy  @Poppy  roles lead  claude  on m1-host  active  — …`).
+   `agent-ptt project doing "reading the docs"` on one machine shows up in
+   the other's `project show`.
+3. **The commands are portable.** Every command in the start context is an
+   absolute path on *that* machine (the plugin's own `ptt.py`, run with that
+   machine's Python) or the `agent-ptt` CLI; none points into a checkout on
+   the server.
+4. **Mention an absent agent → queued.** End the M2 session (or wait until it
+   is reaped). From M1, say `@Theo please review chapter 2` in the project
+   channel. Expected: no 422; the message is posted, and a project work item
+   `instruction` to Theo appears (a notice in the channel, a card on the Board).
+   Rejoin on M2 with the pinned handle (`AGENT_PTT_HANDLE=Theo`, or
+   `agent-ptt project join --handle Theo --resume-handle`): it is the same
+   member and the item is in its inbox (`ptt.py inbox` / `agent-ptt inbox`).
+   A name that matches nobody still fails, and the error lists who can be
+   addressed.
+5. **The Monitor wakes an idle agent.** In the M1 Claude Code session, start
+   the Monitor on the command the start context gives (`ptt.py wait`, or
+   `agent-ptt inbox --follow --ack` with the CLI), then leave the session idle
+   at its prompt. From M2, `ptt.py tell Poppy "found a broken link in ch. 3"`
+   (or `agent-ptt send --kind note --to agent:Poppy "…"`). Expected: within a
+   few seconds the Monitor prints
+   `[ptt] note from Theo: found a broken link in ch. 3 (item …)` and the
+   session starts a turn on it without anyone typing. The item is not
+   injected a second time at the next hook.
+6. **Idle but present.** Leave the M1 session idle past the reaper grace.
+   Expected: it shows as `away` in the channel's participant list and web UI
+   instead of disappearing, and a `@Poppy` mention still reaches its channel
+   inbox. Any activity brings it back to active; ending the session removes it.
+7. **Role addressing.** From M1, say `@role:reviewer please take chapter 4`
+   in the project channel (or `ptt.py tell role:reviewer "…"`). Expected: a
+   work item to `role:reviewer`, delivered to every member with that role,
+   including one that is not in the channel right now; whoever claims it is
+   shown on the Board. `@project …` reaches every member.
+
+## Acceptance: a folder review split between Claude and Codex, no pasted instructions
+
+Task 2's acceptance test. The user gives each agent only its normal task
+and never pastes keys, IDs, curl lines or instructions about Agent PTT.
+
+**Setup** as above: one server, machine M1 with Claude Code, machine M2 with
+Codex, both with the announcer plugin at the current version and the server URL
+and API key in `~/.agent-ptt/announcer.env`. A folder (`docs-to-review/`, a
+handful of Markdown files, no git remote) is present on both machines, as a
+copy or a clone. Give the agents handles and roles, e.g. `AGENT_PTT_HANDLE=Poppy`
+on M1 and `AGENT_PTT_HANDLE=Theo` on M2.
+
+1. On M1 start Claude Code in the folder and type only:
+   *"Review the docs in this folder for errors and unclear passages."*
+2. A minute later, on M2 start Codex in the same folder and type the same task.
+3. Expected without further input from the user:
+   - Each session's start context names the other (harness, machine, what it is
+     doing) and the `ptt` commands. The later one introduces itself
+     (`ptt.py say "@Poppy Theo here (Codex on m2) …"`) and the two agree a
+     split of the files in the channel, by `@mention` or `ptt.py tell`.
+   - Poppy keeps a Monitor on `ptt.py wait`; Theo is woken by the Codex
+     route the plugin documents (see the wake-up section of
+     [plugins/README.md](../plugins/README.md)). Neither sits idle while a
+     mention to it waits.
+   - Each reviews only its share, posts findings and a final handoff
+     (`ptt.py tell <other> "…" --kind handoff`), not narration, and answers the
+     other's `@mentions`. Neither edits a file the other claimed.
+   - The channel and the Board show the split, the findings and the handoffs.
+     `ptt.py inbox` on either side ends empty, every item acked or done.
+4. Fail the test if the user has to relay a message, paste a key or an ID,
+   or start a turn by hand to make an agent read a mention. Note the
+   auto-wake count: it must stay under the hourly cap
+   (`AGENT_PTT_WAKE_MAX_PER_HOUR`), and no wake may come from narration,
+   notices or the agent's own messages.
+
 ## Popular Voices
 
 | Voice ID | Engine |
@@ -179,5 +275,8 @@ restart recovery, receipt isolation, and hook handoff/retry coverage. For a
 live check, refresh the plugins and start an agent session, select it from
 the browser composer’s `@` menu, and send a request while it works. The receipt
 should change from pending to delivered after a tool or turn boundary. Repeat
-while idle: it stays pending until another hook event runs. Delivered records
+while idle: it stays pending until another hook event runs, unless the session
+runs the plugin's wake-up loop (`ptt.py wait` under Claude Code's Monitor, or
+the Codex route in [plugins/README.md](../plugins/README.md)); see
+[Cross-machine collaboration](#cross-machine-collaboration-roster-no-remote-projects-wake-durable-addressing). Delivered records
 a hook handoff, not task completion. See [Agent mentions](mentions.md).

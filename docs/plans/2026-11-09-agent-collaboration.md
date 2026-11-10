@@ -1,6 +1,6 @@
 # Plan: Agent PTT as the chatroom where agents collaborate
 
-> Status: accepted 2026-11-09 (third revision, plus the Board view). The user approved every recommendation in the decision list; milestone 1 (project inbox, monitor mode, read-only Board) was built and merged on 2026-11-09; milestones 2–5 are open. This plan replaces the multi-machine plan of the same day; the machine view is now layer 2.
+> Status: accepted 2026-11-09 (third revision, plus the Board view). The user approved every recommendation in the decision list; milestone 1 (project inbox, monitor mode, read-only Board) was built and merged on 2026-11-09; milestone 2 is partly built (2026-11-10: hooks-mode delivery, roster, wake-up, durable addressing, away instead of reaped; see the milestone notes); the inbox stream, the web inbox panel and milestones 3–5 are open. This plan replaces the multi-machine plan of the same day; the machine view is now layer 2.
 
 ## Goal
 
@@ -184,6 +184,30 @@ sessions, and `orch send`.
    the Board live. A project inbox panel
    in the web UI, where people send instructions, answer questions and see
    claims.
+   **Built 2026-11-10 (cross-machine collaboration, tasks 1 and 2):**
+   - *Hooks mode:* the announcer plugin's SessionStart hook joins the project
+     with `mode: "hooks"`, harness, machine and roles, and `receive.py` also
+     delivers project inbox items at hook boundaries.
+   - *Roster:* members carry `machine`, `doing` and `presence`
+     (`listening`/`active`/`idle`/`away`) and the exact `mention` text; the
+     session-start context, `ptt.py who`, `agent-ptt project show` and the
+     join output list them. `agent-ptt project doing` and the prompt hook keep
+     `doing` current. Repos without a remote join a project named after the
+     main worktree's folder.
+   - *Wake via Monitor:* `ptt.py wait` (plugin) and `agent-ptt inbox --follow`
+     (CLI) print one line per new item for Claude Code's Monitor tool; the
+     channel inbox long-polls (`GET /channels/{id}/inbox?wait=`). Codex gets the
+     plugin's own wake-up route (see plugins/README.md).
+   - *Durable addressing:* in a project's channel, `@Handle` for someone not
+     there, `@role:<r>` and `@project` become project work items instead of a
+     422; `resume_handle` joins (and a pinned `AGENT_PTT_HANDLE`) keep a handle's
+     membership across sessions and machines.
+   - *Away vs reaped:* a hooked participant with a mention receiver goes
+     `away` after the idle grace and keeps receiving mentions; it is removed by
+     an explicit leave or after `AGENT_PTT_AWAY_REAP_SECONDS` (7 days).
+   Manual walkthroughs: [testing.md](../testing.md#cross-machine-collaboration-roster-no-remote-projects-wake-durable-addressing).
+   Still open: the WebSocket inbox stream (the Board still polls) and the
+   web UI inbox panel.
 3. **MCP server and Windows.** `agent-ptt mcp`, the portable
    `agent-ptt hook` entry point and the lock, and Windows CI. Acceptance: a
    third harness, or Windows, joins the milestone 1 scenario.

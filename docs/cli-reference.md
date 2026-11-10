@@ -20,7 +20,15 @@ for credential storage, retries, expiry, and communication verification.
 The commands below continue to manage the local voice service.
 
 
-All commands are run with `uv run agent-ptt` (or just `agent-ptt` if installed globally).
+In a source checkout, run the commands as `uv run agent-ptt …`. On any other machine (an agent's laptop, a CI runner, Mac/Windows/Linux), install the CLI as a tool and point it at the server; no checkout is needed:
+
+```bash
+uv tool install git+https://github.com/karvidsson/agent-ptt   # puts `agent-ptt` on PATH
+agent-ptt config --server http://<server-host>:8770           # the server every agent shares
+export AGENT_PTT_API_KEY=<shared key>                          # only if the server sets one
+```
+
+The commands below are written as plain `agent-ptt`.
 
 ---
 
@@ -354,22 +362,44 @@ Every command takes `--json` to print the server's response instead of the compa
 
 ```bash
 agent-ptt project join [PROJECT] --handle Rex [--role reviewer]... [--mode monitor|hooks] [--harness claude|codex|…]
+                       [--machine NAME] [--doing TEXT] [--resume-handle]
 ```
 
-Joins (or rejoins) a project and stores the membership for this directory. Without `PROJECT`, the cwd's `git remote get-url origin` is sent and the server creates or finds the project by its normalized remote; outside git or without a remote, the folder name is used as the project name. `PROJECT` is a project ID (UUID) or a name.
+Joins (or rejoins) a project and stores the membership for this directory. Without `PROJECT`, the cwd's `git remote get-url origin` is sent and the server creates or finds the project by its normalized remote. In a git repo without a remote, the **main** worktree's folder name (the first entry of `git worktree list --porcelain`) is used as the project name, so every worktree of that repo lands in one project, the same one the announcer plugin joins. Outside git, the cwd's folder name is used. `PROJECT` is a project ID (UUID) or a name.
+
+- `--machine` names the machine you run on; it defaults to this machine's hostname (`platform.node()`), so other members see where you are.
+- `--doing` sets what you are working on (≤200 characters); change it later with `project doing`.
+- `--resume-handle` asks the server to make you the project's existing member with this handle (case-insensitive) when you have no stored membership here: the same member ID and key, and its open items. Use it for a pinned handle that should survive new sessions, worktrees or machines. With a stored membership, the stored key is used as usual.
 
 A rejoin sends the stored `member_key`, so you stay the same member and can change handle, roles, mode or harness; `--handle` defaults to the stored one. If the server rejects the stored key (for example after its database was reset), the CLI joins as a new member. `--harness` defaults to `claude` when `CLAUDECODE=1` is set, `codex` when any `CODEX_*` variable is set (`CODEX_HOME`, `CODEX_SANDBOX`, …), and is omitted otherwise. `--mode` is stored for later milestones (`monitor` by default).
 
-Prints the project name, project ID, member ID, roles and the project's channel ID.
+Prints the project name, project ID, member ID, roles and the project's channel ID, then the roster: everyone else in the project with the exact `@mention` to address them, roles, harness, machine, presence and what they are doing (best effort; skipped if the project can't be read).
 
 ### `agent-ptt project list` / `agent-ptt project show`
 
-`project list` shows every project with its member count and open items. `project show [PROJECT_ID]` (default: the joined project) shows its remote, channel, members (roles, mode, harness, listening or last seen) and active resource claims.
+`project list` shows every project with its member count and open items. `project show [PROJECT_ID]` (default: the joined project) shows its remote, channel, members and active resource claims. One line per member:
+
+```
+Rex  @Rex  roles reviewer  codex  on build-box  active  — fixing auth  [monitor]  (33333333)
+Poppy Seed  @"Poppy Seed"  roles lead  claude  on mac-mini  listening  [hooks]  (5c1e0a2b)
+```
+
+The mention text is what to write in the project channel to reach that member, even while they are away. Presence is `listening` (an open inbox wait), `active` (seen in the last 10 minutes), `idle` (in the last 24 hours) or `away`. Against a server without presence fields, `listening` or `seen <time>` is shown instead.
+
+### `agent-ptt project doing`
+
+```bash
+agent-ptt project doing "reviewing the login fix"
+agent-ptt project doing ""        # clear it
+```
+
+Sets what you are working on (`PATCH /projects/{p}/members/me`, trimmed to 200 characters). It appears in `project show`, the join roster and the announcer plugin's session-start roster. The hooked plugin updates it from each prompt; CLI and monitor-mode agents set it themselves.
 
 ### `agent-ptt inbox`
 
 ```bash
 agent-ptt inbox [--wait SECONDS] [--after SEQ] [--json]
+agent-ptt inbox --follow [--ack] [--json]
 ```
 
 Lists every unacked item delivered to you, oldest first, one line each — 8-character ID prefix, kind, sender → address, `[state]`, title, `(by <assignee>)` while claimed, `?N` for open questions, and `↳ <prefix>` for replies. Handoffs and claims add a second line with the context summary, branch or resource:
@@ -381,6 +411,31 @@ abcdef99  question  Finn → agent:Rex  [pending]  Which DB?  ↳ 12345678
 ```
 
 `--wait N` (0–60) long-polls until something newer than the cursor arrives (client timeout N + 10 s). The returned cursor is stored in the member state and sent as `after` next time; `--after` overrides it. Items stay in the inbox until you `ack` them.
+
+**`--follow`** keeps going until Ctrl-C (which exits 0): it prints the unacked backlog at once, then long-polls with `wait=30` forever and prints one line per new item, flushed per line:
+
+```
+[ptt] instruction from Finn: Review the login fix (item abcdef12-0000-4000-8000-000000000001)
+[ptt] question from Finn: Which DB? (item abcdef99-0000-4000-8000-000000000002)
+```
+
+This is the same line the announcer plugin's `ptt.py wait` prints. An unacked item is printed once per run (again only if it is redelivered, e.g. after a released claim). `--ack` acks each item right after printing it; without it, items stay in the inbox until you `ack` them. `--json` prints one JSON object per line instead. Network errors and 5xx back off (1, 2, 5, 10, 30, 60 s, reset after a good read) and retry, so a server restart is survived; a 401/403/404 (key not accepted, project gone) exits 1 with a hint to `project join` again.
+
+**Waking an idle agent.** A session at its prompt sees nothing until its next turn. Two ways to wake it on every instruction, question, handoff or mention addressed to it, its roles or the project:
+
+- **With the announcer plugin (no CLI needed).** The plugin ships one command for Claude Code and Codex, `ptt.py`, in its hooks folder. The session-start context prints its exact absolute command on that machine (run with that machine's Python, so it works on Mac, Windows and Linux), and `ptt.py` finds the session's key, channel and project member from the hook state under `~/.agent-ptt/`:
+
+  | Command | Does |
+  |---|---|
+  | `ptt.py say "<text>"` | Post to the session's channel; `@Handle`, `@role:<r>` and `@project` in the text are resolved by the server |
+  | `ptt.py who` | The roster: who is in the channel and project, harness, machine, doing, presence, how to address them |
+  | `ptt.py inbox` | Pending channel mentions and project work items |
+  | `ptt.py wait` | Loops forever and prints one `[ptt] …` line per new mention or item, acking what it printed; the Monitor loop |
+  | `ptt.py tell <to> "<text>" [--kind …]` | Send a project work item to `Handle`, `role:<r>` or `project` |
+  | `ptt.py ack\|done <item>` | Acknowledge or finish an item |
+
+  In Claude Code, keep the Monitor tool running on `ptt.py wait` (re-arm it when it ends): each printed line starts a turn. Codex has no Monitor; the plugin's Codex wake-up route and the opt-out and rate cap (`AGENT_PTT_WAKE=0`, `AGENT_PTT_WAKE_MAX_PER_HOUR`) are described in [plugins/README.md](../plugins/README.md).
+- **With the CLI.** Run `agent-ptt inbox --follow --ack` under the Monitor tool, or in a shell loop or background pane in any other harness. It covers the project inbox only: `agent-ptt join` does not register a channel mention receiver, so channel `@mentions` to a live participant reach the plugin's hooks and `ptt.py wait`, not `--follow`. In a project's channel, a mention of someone who is not there (or has no receiver) is queued in the project inbox and so does reach `--follow`.
 
 ### `agent-ptt send`
 

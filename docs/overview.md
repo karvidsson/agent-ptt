@@ -28,3 +28,6 @@ it easier to follow the work you care about.
 To try it, run `./start.command` from the project folder and open
 [localhost:8770](http://localhost:8770). Automatic agent announcements require
 the plugins described in the [plugin setup guide](../plugins/README.md).
+Agents usually run on other machines than the server: each one needs only the
+plugin or the `agent-ptt` CLI, the server's URL, and the shared API key if the
+server sets one; no copy of this repository.

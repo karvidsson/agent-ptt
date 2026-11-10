@@ -15,9 +15,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -82,6 +84,25 @@ def _git(*args: str) -> str | None:
 
 def _workdir() -> str:
     return _git("rev-parse", "--show-toplevel") or str(Path.cwd())
+
+
+def _main_worktree_name() -> str:
+    """The main worktree's folder name (the first `git worktree list` entry).
+
+    Every worktree of a repo without a remote then maps to one project, the
+    same name the announcer plugin derives. Outside git: the cwd's name.
+    """
+    listing = _git("worktree", "list", "--porcelain") or ""
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree ") :]).name
+    return Path(_workdir()).name
+
+
+def _machine() -> str | None:
+    """This machine's hostname, trimmed to the server's 100-char limit."""
+    name = platform.node().strip()
+    return name[:100] or None
 
 
 def _detect_harness() -> str | None:
@@ -161,6 +182,29 @@ def _detail(resp) -> str:
     return resp.text or f"HTTP {resp.status_code}"
 
 
+def _raw_request(
+    method: str,
+    path: str,
+    *,
+    member: dict | None = None,
+    json_body: dict | None = None,
+    params: dict | None = None,
+    timeout: float = 30.0,
+):
+    """One HTTP call with the shared and member auth headers; raises on transport errors."""
+    headers = dict(_cli()._auth_headers())
+    if member is not None:
+        headers["X-Member-Key"] = member["member_key"]
+    return httpx.request(
+        method,
+        f"{_base_url()}{path}",
+        headers=headers,
+        json=json_body,
+        params=params,
+        timeout=timeout,
+    )
+
+
 def _request(
     method: str,
     path: str,
@@ -179,19 +223,11 @@ def _request(
     carry a `client_id`).
     """
     base = _base_url()
-    headers = dict(_cli()._auth_headers())
-    if member is not None:
-        headers["X-Member-Key"] = member["member_key"]
     attempts = 2 if retry else 1
     for attempt in range(attempts):
         try:
-            resp = httpx.request(
-                method,
-                f"{base}{path}",
-                headers=headers,
-                json=json_body,
-                params=params,
-                timeout=timeout,
+            resp = _raw_request(
+                method, path, member=member, json_body=json_body, params=params, timeout=timeout
             )
             break
         except httpx.TransportError as exc:
@@ -319,6 +355,15 @@ def project_join(
     harness: str = typer.Option(
         None, "--harness", help="claude, codex, script, … (default: detected from the env)"
     ),
+    machine: str = typer.Option(
+        None, "--machine", help="The machine you run on (default: this hostname)"
+    ),
+    doing: str = typer.Option(None, "--doing", help="What you are working on (≤200 chars)"),
+    resume_handle: bool = typer.Option(
+        False,
+        "--resume-handle",
+        help="Become the project's existing member with this handle (keeps its items)",
+    ),
     as_json: bool = _JSON,
 ):
     """Join (or rejoin) the project for this repo and remember the membership."""
@@ -339,7 +384,7 @@ def project_join(
         if remote:
             payload["remote"] = remote
         else:
-            payload["name"] = Path(_workdir()).name
+            payload["name"] = _main_worktree_name()
     if roles:
         payload["roles"] = roles
     if mode:
@@ -347,6 +392,13 @@ def project_join(
     harness = harness or _detect_harness()
     if harness:
         payload["harness"] = harness
+    machine = (machine or "").strip() or _machine()
+    if machine:
+        payload["machine"] = machine[:100]
+    if doing is not None:
+        payload["doing"] = doing.strip()[:200]
+    if resume_handle:
+        payload["resume_handle"] = True
 
     member_key = os.environ.get("AGENT_PTT_MEMBER_KEY", "").strip() or stored.get("member_key")
     resp = None
@@ -389,6 +441,55 @@ def project_join(
     typer.echo(f"  project: {project.get('project_id')}")
     typer.echo(f"  member:  {entry['member_id']}  roles: {roles_text}  mode: {member.get('mode')}")
     typer.echo(f"  channel: {project.get('channel_id')}")
+    _print_roster(project.get("project_id"), entry["member_id"])
+
+
+def _print_roster(project_id: str | None, me: str | None) -> None:
+    """Best effort: who else is in the project and how to address them."""
+    if not project_id:
+        return
+    try:
+        resp = _raw_request("GET", f"/projects/{project_id}")
+        members = resp.json().get("members", []) if resp.status_code == 200 else []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return
+    others = [m for m in members if m.get("member_id") != me]
+    if not others:
+        typer.echo("No one else has joined this project yet.")
+        return
+    typer.echo(f"Also here ({len(others)}):")
+    for m in others:
+        typer.echo("  " + _member_line(m))
+    typer.echo(
+        "Address them in the project channel with the @mention shown, or "
+        '`agent-ptt send --kind instruction --to agent:<handle> "…"`; '
+        "see who is around with `agent-ptt project show`."
+    )
+
+
+def _mention(member: dict) -> str:
+    if member.get("mention"):
+        return member["mention"]
+    handle = member.get("handle") or "?"
+    return f'@"{handle}"' if re.search(r"\s", handle) else f"@{handle}"
+
+
+def _presence(member: dict) -> str:
+    if member.get("presence"):
+        return member["presence"]
+    # Servers without presence fields (before task 1) only report listening/last_seen.
+    return "listening" if member.get("listening") else f"seen {_time(member.get('last_seen'))}"
+
+
+def _member_line(m: dict) -> str:
+    roles = ",".join(m.get("roles") or []) or "-"
+    line = (
+        f"{m.get('handle')}  {_mention(m)}  roles {roles}  {m.get('harness') or '-'}"
+        f"  on {m.get('machine') or '?'}  {_presence(m)}"
+    )
+    if m.get("doing"):
+        line += f"  — {m['doing']}"
+    return line
 
 
 @project_app.command("list")
@@ -429,12 +530,7 @@ def project_show(
     members = data.get("members", [])
     typer.echo(f"Members ({len(members)}):")
     for m in members:
-        roles = ",".join(m.get("roles") or []) or "-"
-        status = "listening" if m.get("listening") else f"seen {_time(m.get('last_seen'))}"
-        typer.echo(
-            f"  {m.get('handle')}  roles {roles}  {m.get('mode')}  "
-            f"{m.get('harness') or '-'}  {status}  ({_short(m.get('member_id'))})"
-        )
+        typer.echo(f"  {_member_line(m)}  [{m.get('mode')}]  ({_short(m.get('member_id'))})")
     claims = data.get("resource_claims", [])
     if claims:
         typer.echo("Resource claims:")
@@ -443,18 +539,141 @@ def project_show(
             typer.echo(f"  {resource}  by {_handle(c.get('from'))}  {_short(c.get('item_id'))}")
 
 
+@project_app.command("doing")
+def project_doing(
+    text: str = typer.Argument(help='What you are working on; "" clears it'),
+    as_json: bool = _JSON,
+):
+    """Tell the project what you are working on (shown in `project show`)."""
+    member = _member()
+    text = text.strip()
+    if len(text) > 200:
+        typer.echo("Note: trimmed to 200 characters.", err=True)
+        text = text[:200]
+    resp = _request(
+        "PATCH",
+        f"/projects/{member['project_id']}/members/me",
+        member=member,
+        json_body={"doing": text},
+        handled=(404, 405),
+    )
+    if resp.status_code == 404 and _detail(resp) != "Not Found":
+        _fail(f"not found: {_detail(resp)}")
+    if resp.status_code in (404, 405):
+        _fail("this server does not support `project doing` yet — update it")
+    data = resp.json()
+    if as_json:
+        _print_json(data)
+        return
+    typer.echo(f"Doing: {text}" if text else "Cleared what you are doing.")
+
+
 # ---------------------------------------------------------------------------
 # inbox / send / ask / answer
 # ---------------------------------------------------------------------------
 
 
+FOLLOW_WAIT = 30
+_BACKOFF = (1, 2, 5, 10, 30, 60)
+_sleep = time.sleep  # patched in tests
+
+
+def _follow_line(item: dict) -> str:
+    """One compact line per item, the same shape the plugin's wait_inbox.py prints."""
+    title = " ".join((item.get("title") or item.get("body") or "").split())
+    sender = _handle(item.get("from"))
+    return f"[ptt] {item.get('kind', '?')} from {sender}: {title} (item {item.get('item_id')})"
+
+
+def _follow(member: dict, *, ack_items: bool, as_json: bool) -> None:
+    """Long-poll the inbox forever, one line per new item; Ctrl-C exits cleanly."""
+    path = f"/projects/{member['project_id']}/inbox"
+    cursor = member.get("cursor", 0)
+    seen: set[tuple[str, object]] = set()
+    failures = 0
+    wait = 0  # first round: print the backlog at once
+    while True:
+        try:
+            resp = _raw_request(
+                "GET",
+                path,
+                member=member,
+                params={"wait": wait, "after": cursor},
+                timeout=wait + 10,
+            )
+        except httpx.TransportError as exc:
+            resp, problem = None, f"cannot reach the server ({type(exc).__name__})"
+        else:
+            problem = None
+            if resp.status_code in (401, 403, 404):
+                _fail(
+                    f"{_detail(resp)} (HTTP {resp.status_code}) — run `agent-ptt project join` "
+                    "and start following again"
+                )
+            if resp.status_code >= 400:
+                problem = f"{_detail(resp)} (HTTP {resp.status_code})"
+        if problem:
+            delay = _BACKOFF[min(failures, len(_BACKOFF) - 1)]
+            failures += 1
+            typer.echo(f"[ptt] inbox: {problem}; retrying in {delay}s", err=True)
+            _sleep(delay)
+            continue
+        failures = 0
+        data = resp.json()
+        for item in data.get("items", []):
+            seq = (item.get("delivery") or {}).get("seq")
+            mark = (item.get("item_id"), seq)
+            if mark in seen:
+                continue
+            seen.add(mark)
+            typer.echo(json.dumps(_redact(item), default=str) if as_json else _follow_line(item))
+            if ack_items:
+                _ack_quietly(member, item.get("item_id"))
+        if data.get("cursor") is not None and data["cursor"] != cursor:
+            cursor = data["cursor"]
+            _update_state(member["_key"], cursor=cursor)
+        wait = FOLLOW_WAIT
+
+
+def _ack_quietly(member: dict, item_id: str | None) -> None:
+    if not item_id:
+        return
+    path = f"/projects/{member['project_id']}/items/{item_id}/ack"
+    try:
+        resp = _raw_request("POST", path, member=member)
+    except httpx.TransportError as exc:
+        typer.echo(f"[ptt] could not ack {item_id}: {type(exc).__name__}", err=True)
+        return
+    if resp.status_code >= 400:
+        typer.echo(f"[ptt] could not ack {item_id}: {_detail(resp)}", err=True)
+
+
 def inbox(
     wait: int = typer.Option(0, "--wait", "-w", min=0, max=60, help="Long-poll up to N seconds"),
     after: int = typer.Option(None, "--after", help="Cursor (default: the stored one)"),
+    follow: bool = typer.Option(
+        False,
+        "--follow",
+        "-f",
+        help="Keep long-polling forever; one line per new item (for Monitor or a shell loop)",
+    ),
+    ack_items: bool = typer.Option(
+        False, "--ack", help="With --follow: ack each item once printed"
+    ),
     as_json: bool = _JSON,
 ):
-    """Show unacked work items addressed to you; --wait long-polls for new ones."""
+    """Show unacked work items addressed to you; --wait long-polls, --follow keeps going."""
     member = _member()
+    if ack_items and not follow:
+        _fail("--ack only works with --follow (use `agent-ptt ack <item>` otherwise)")
+    if follow:
+        if after is not None:
+            member["cursor"] = after
+        try:
+            _follow(member, ack_items=ack_items, as_json=as_json)
+        except KeyboardInterrupt:
+            raise typer.Exit(0) from None
+        return
     cursor = member.get("cursor", 0) if after is None else after
     params = {"wait": wait, "after": cursor}
     resp = _request(
@@ -537,7 +756,7 @@ def send(
     member = _member()
     context: dict = {}
     if kind == "handoff":
-        repo = repo or _git("remote", "get-url", "origin") or Path(_workdir()).name
+        repo = repo or _git("remote", "get-url", "origin") or _main_worktree_name()
         branch = branch or _git("rev-parse", "--abbrev-ref", "HEAD")
         commit = commit or _git("rev-parse", "HEAD")
     for name, value in (("repo", repo), ("branch", branch), ("commit", commit)):
