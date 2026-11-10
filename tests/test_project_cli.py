@@ -39,6 +39,10 @@ class FakeServer:
         self.calls: list[dict] = []
         self.routes: dict[tuple[str, str], object] = {}
         self.fail_next = 0  # raise ConnectError this many times
+        self.sleeps: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
 
     def on(self, method: str, path: str, body=None, status: int = 200):
         """Route a response; `body` may be a callable(call) -> (status, body)."""
@@ -156,6 +160,8 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     server = FakeServer()
     monkeypatch.setattr(pcli.httpx, "request", server)
+    monkeypatch.setattr(pcli.platform, "node", lambda: "testbox")
+    monkeypatch.setattr(pcli, "_sleep", server.sleep)
     server.on("POST", "/projects/join", _join_response)
     work = tmp_path / "work"
     work.mkdir()
@@ -201,6 +207,7 @@ def test_join_uses_git_remote_and_stores_member(env, monkeypatch):
         "remote": "git@github.com:Owner/Repo.git",
         "roles": ["reviewer", "dev"],
         "harness": "claude",
+        "machine": "testbox",
     }
     assert "repo" in result.output and MEMBER in result.output and CHANNEL in result.output
     state = _members(env)
@@ -227,7 +234,13 @@ def test_join_outside_git_uses_folder_name_and_detects_codex(env, monkeypatch):
 
     assert result.exit_code == 0, result.output
     body = env.last("POST", "/projects/join")["json"]
-    assert body == {"handle": "Cody", "name": "my-folder", "mode": "hooks", "harness": "codex"}
+    assert body == {
+        "handle": "Cody",
+        "name": "my-folder",
+        "mode": "hooks",
+        "harness": "codex",
+        "machine": "testbox",
+    }
 
 
 def test_join_by_project_id_or_name_argument(env):
@@ -236,6 +249,7 @@ def test_join_by_project_id_or_name_argument(env):
         "handle": "Rex",
         "project_id": PROJECT,
         "harness": "script",
+        "machine": "testbox",
     }
     run("project", "join", "agent-ptt", "--handle", "Rex")
     body = env.last("POST", "/projects/join")["json"]
@@ -597,8 +611,9 @@ def test_prefix_falls_back_to_inbox(joined):
 
 def test_full_uuid_skips_lookup(joined):
     joined.on("POST", f"/projects/{PROJECT}/items/{ITEM}/claim", _item(ITEM, state="claimed"))
+    joined.calls.clear()
     run("claim", ITEM)
-    assert [c["method"] for c in joined.calls[1:]] == ["POST"]
+    assert [c["method"] for c in joined.calls] == ["POST"]
 
 
 # ---------------------------------------------------------------------------
@@ -720,3 +735,237 @@ def test_json_output_redacts_secret_fields(joined):
     joined.on("GET", f"/projects/{PROJECT}/inbox", leaky)
     data = json.loads(run("inbox", "--json").output)
     assert "member_key" not in data["items"][0]
+
+
+# ---------------------------------------------------------------------------
+# Task 1: machine, doing, resume-handle, roster, presence, inbox --follow
+# ---------------------------------------------------------------------------
+
+
+def _member_entry(handle, member_id, **over) -> dict:
+    data = {
+        "member_id": member_id,
+        "handle": handle,
+        "roles": [],
+        "mode": "hooks",
+        "harness": "claude",
+        "machine": None,
+        "doing": None,
+        "presence": "idle",
+        "mention": f"@{handle}",
+        "last_seen": "2026-11-10T10:00:00Z",
+        "listening": False,
+    }
+    data.update(over)
+    return data
+
+
+def test_join_without_remote_in_a_worktree_uses_main_worktree_name(env, monkeypatch):
+    main = _repo(env.work / "litium-brain", commit=True)
+    _git(main, "worktree", "add", "-q", "-b", "side", str(env.work / "wt-side"))
+    monkeypatch.chdir(env.work / "wt-side")
+
+    assert run("project", "join", "--handle", "Theo").exit_code == 0
+    assert env.last("POST", "/projects/join")["json"]["name"] == "litium-brain"
+    # The membership is still keyed by this worktree, not the main one.
+    assert f"{BASE}|{(env.work / 'wt-side').resolve()}" in _members(env)
+
+
+def test_join_sends_machine_doing_and_resume_handle(env):
+    result = run(
+        "project",
+        "join",
+        "--handle",
+        "Ember",
+        "--machine",
+        "krille-mac",
+        "--doing",
+        "  reviewing the login fix ",
+        "--resume-handle",
+    )
+    assert result.exit_code == 0, result.output
+    body = env.last("POST", "/projects/join")["json"]
+    assert body["machine"] == "krille-mac"
+    assert body["doing"] == "reviewing the login fix"
+    assert body["resume_handle"] is True
+
+
+def test_join_prints_the_roster_with_mentions(env):
+    env.on(
+        "GET",
+        f"/projects/{PROJECT}",
+        {
+            "project_id": PROJECT,
+            "name": "repo",
+            "members": [
+                _member_entry("Rex", MEMBER),
+                _member_entry(
+                    "Poppy Seed",
+                    "m-poppy",
+                    roles=["lead"],
+                    machine="mac-mini",
+                    doing="writing docs",
+                    presence="listening",
+                    mention='@"Poppy Seed"',
+                ),
+            ],
+        },
+    )
+    result = run("project", "join", "--handle", "Rex")
+    assert result.exit_code == 0, result.output
+    assert "Also here (1):" in result.output
+    line = next(ln for ln in result.output.splitlines() if "Poppy Seed" in ln)
+    assert '@"Poppy Seed"' in line and "lead" in line and "mac-mini" in line
+    assert "listening" in line and "writing docs" in line
+    assert "  Rex  " not in result.output  # yourself is not listed
+
+
+def test_join_roster_is_best_effort(env):
+    # No GET route: the join still succeeds, and says nothing about members.
+    result = run("project", "join", "--handle", "Rex")
+    assert result.exit_code == 0, result.output
+    assert "Also here" not in result.output
+
+
+def test_show_prints_machine_doing_presence_and_mention(joined):
+    joined.on(
+        "GET",
+        f"/projects/{PROJECT}",
+        {
+            "project_id": PROJECT,
+            "name": "repo",
+            "channel_id": CHANNEL,
+            "members": [
+                _member_entry(
+                    "Rex", MEMBER, machine="kbot", doing="fixing auth", presence="active"
+                ),
+                _member_entry("Ember Two", "m-ember", presence="away", mention='@"Ember Two"'),
+            ],
+        },
+    )
+    result = run("project", "show")
+    assert result.exit_code == 0, result.output
+    rex = next(ln for ln in result.output.splitlines() if ln.strip().startswith("Rex"))
+    assert "@Rex" in rex and "on kbot" in rex and "active" in rex and "fixing auth" in rex
+    ember = next(ln for ln in result.output.splitlines() if "Ember Two" in ln)
+    assert '@"Ember Two"' in ember and "away" in ember
+
+
+def test_project_doing_patches_members_me(joined):
+    joined.on(
+        "PATCH",
+        f"/projects/{PROJECT}/members/me",
+        lambda c: (200, _member_entry("Rex", MEMBER, doing=c["json"]["doing"] or None)),
+    )
+    result = run("project", "doing", "reviewing PR 12")
+    assert result.exit_code == 0, result.output
+    call = joined.last("PATCH")
+    assert call["json"] == {"doing": "reviewing PR 12"}
+    assert call["headers"]["X-Member-Key"] == KEY
+    assert "Doing: reviewing PR 12" in result.output
+
+    result = run("project", "doing", "")
+    assert joined.last("PATCH")["json"] == {"doing": ""}
+    assert "Cleared" in result.output
+
+    run("project", "doing", "x" * 250)
+    assert joined.last("PATCH")["json"] == {"doing": "x" * 200}
+
+
+def test_project_doing_on_an_old_server(joined):
+    # No PATCH route: FakeServer's 404 carries a different detail, so emulate FastAPI's.
+    joined.on("PATCH", f"/projects/{PROJECT}/members/me", {"detail": "Not Found"}, status=404)
+    result = run("project", "doing", "x")
+    assert result.exit_code == 1
+    assert "does not support" in result.output
+
+
+def _inbox_script(server, responses):
+    """Answer inbox reads from `responses` in order, then stop the loop with Ctrl-C."""
+    queue = list(responses)
+
+    def handler(call):
+        if not queue:
+            raise KeyboardInterrupt
+        nxt = queue.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
+    server.on("GET", f"/projects/{PROJECT}/inbox", handler)
+
+
+def test_inbox_follow_prints_one_line_per_new_item(joined):
+    first = _item(ITEM, delivery={"seq": 3, "state": "delivered"})
+    second = _item(
+        ITEM2, kind="question", title="Which DB?\nmore", delivery={"seq": 4, "state": "delivered"}
+    )
+    _inbox_script(
+        joined,
+        [
+            (200, {"items": [first], "cursor": 3}),
+            (200, {"items": [first, second], "cursor": 4}),  # first is unacked, comes back
+            (200, {"items": [first, second], "cursor": 4}),
+        ],
+    )
+    result = run("inbox", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        f"[ptt] instruction from Finn: Review the login fix (item {ITEM})",
+        f"[ptt] question from Finn: Which DB? more (item {ITEM2})",
+    ]
+    reads = [c for c in joined.calls if c["path"].endswith("/inbox")]
+    assert [c["params"] for c in reads] == [
+        {"wait": 0, "after": 0},
+        {"wait": 30, "after": 3},
+        {"wait": 30, "after": 4},
+        {"wait": 30, "after": 4},
+    ]
+    assert reads[1]["timeout"] == 40
+    assert next(iter(_members(joined).values()))["cursor"] == 4
+    assert not any(c["path"].endswith("/ack") for c in joined.calls)
+
+
+def test_inbox_follow_ack_acks_each_printed_item(joined):
+    joined.on("POST", f"/projects/{PROJECT}/items/{ITEM}/ack", _item(ITEM, state="acked"))
+    _inbox_script(joined, [(200, {"items": [_item(ITEM, delivery={"seq": 1})], "cursor": 1})])
+    result = run("inbox", "--follow", "--ack")
+    assert result.exit_code == 0, result.output
+    acks = [c for c in joined.calls if c["path"].endswith("/ack")]
+    assert len(acks) == 1 and acks[0]["headers"]["X-Member-Key"] == KEY
+
+
+def test_inbox_follow_backs_off_on_errors(joined):
+    _inbox_script(
+        joined,
+        [
+            httpx.ConnectError("refused"),
+            httpx.ConnectError("refused"),
+            (500, {"detail": "boom"}),
+            (200, {"items": [_item(ITEM, delivery={"seq": 2})], "cursor": 2}),
+            httpx.ConnectError("refused"),
+        ],
+    )
+    result = run("inbox", "--follow")
+    assert result.exit_code == 0, result.output
+    assert joined.sleeps == [1, 2, 5, 1]  # reset after a good read
+    assert f"(item {ITEM})" in result.output
+    assert "retrying in 1s" in result.output
+
+
+def test_inbox_follow_stops_when_the_key_is_rejected(joined):
+    _inbox_script(joined, [(401, {"detail": "Unknown member key"})])
+    result = run("inbox", "--follow")
+    assert result.exit_code == 1
+    assert "agent-ptt project join" in result.output
+
+
+def test_inbox_follow_json_lines_and_ack_needs_follow(joined):
+    _inbox_script(joined, [(200, {"items": [_item(ITEM, delivery={"seq": 1})], "cursor": 1})])
+    result = run("inbox", "--follow", "--json")
+    lines = result.output.splitlines()
+    assert len(lines) == 1 and json.loads(lines[0])["item_id"] == ITEM
+
+    result = run("inbox", "--ack")
+    assert result.exit_code == 1 and "--follow" in result.output
