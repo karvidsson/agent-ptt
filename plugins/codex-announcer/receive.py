@@ -214,6 +214,8 @@ def deliver(event: dict) -> None:
             project.ack_outstanding()  # retry acks a crashed hook left behind
             project.save()
             save(path, state)
+            if name == "Stop" and not text and monitor_nudge(base, session_id, agent):
+                return  # the turn goes on: the agent starts its Monitor, then stops again
             if name == "Stop":
                 link.mark_turn(base, session_id, False)  # idle: the Codex watcher may poke
             return
@@ -238,6 +240,42 @@ def deliver(event: dict) -> None:
             session_id,
             [("message", mid) for mid, _ in picked] + [("item", i["item_id"]) for i in items],
         )
+
+
+MONITOR_RENUDGE = 600.0
+
+
+def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
+    """Claude Code wakes only through a Monitor on `ptt wait`, which the agent must start.
+
+    At a Stop with no live `ptt wait`, block once with the exact command. Later, if
+    a Monitor ran before and has died (an expiry the agent didn't re-arm), remind
+    again at most every 10 minutes. Prints the Stop block; True when it did.
+    """
+    if agent != "Claude" or routing.setting("AGENT_PTT_WAKE", "") == "0":
+        return False
+    if routing.setting("AGENT_PTT_MONITOR_NUDGE", "1") == "0":
+        return False
+    pointer = link.load_session(base, session_id)
+    if not pointer or pointer.get("ended"):
+        return False
+    if link.lock_alive(link.wait_lock_path(base, session_id)):
+        if not pointer.get("monitor_seen"):
+            link.save_session(base, session_id, monitor_seen=True)
+        return False
+    now = time.time()
+    last = float(pointer.get("monitor_nudged_at") or 0)
+    if last and not (pointer.get("monitor_seen") and now - last > MONITOR_RENUDGE):
+        return False
+    link.save_session(base, session_id, monitor_nudged_at=now, monitor_seen=False)
+    wait = link.script_command("ptt.py", "--session", session_id) + " wait"
+    reason = (
+        f"Agent PTT: before you stop, start the Monitor tool on `{wait}` (longest timeout)."
+        " Without it, other agents in this project can't reach you while you're idle."
+        " Then end your turn; no need to report this."
+    )
+    print(json.dumps({"decision": "block", "reason": reason}), flush=True)
+    return True
 
 
 def codex_watch(base: str, session_id: str, agent: str, name: str) -> bool:

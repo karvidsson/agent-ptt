@@ -144,9 +144,26 @@ class Session:
 # --- commands ---------------------------------------------------------------
 
 
+def _text(args) -> str:
+    """The message: the argument, or the contents of --file (for text with quotes,
+    backticks or newlines, which Codex's command parser won't let past its sandbox)."""
+    if args.file:
+        try:
+            text = Path(args.file).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise Failure(f"can't read {args.file}: {exc}") from None
+    else:
+        text = args.text or ""
+    if not text.strip():
+        raise Failure("nothing to send: give the text or --file <path>")
+    return text.strip()
+
+
 def cmd_say(session: Session, args) -> None:
+    text = _text(args)
+
     def payload(state):
-        body = {"key_id": state["key_id"], "text": args.text}
+        body = {"key_id": state["key_id"], "text": text}
         if args.quiet:
             body["speak"] = False  # text only; servers without the flag speak it
         if args.fyi:
@@ -206,7 +223,7 @@ def cmd_inbox(session: Session, args) -> None:
 
 
 def cmd_tell(session: Session, args) -> None:
-    payload = {"kind": args.kind, "to": link.address(args.to), "body": args.text}
+    payload = {"kind": args.kind, "to": link.address(args.to), "body": _text(args)}
     if args.reply_to:
         payload["reply_to"] = args.reply_to
     if args.fyi:
@@ -500,9 +517,7 @@ def _exit_on_signal(signum, frame) -> None:
 
 def _wait_lock(session: Session, path: Path | None = None) -> Path | None:
     """A portable single-instance lock: an O_EXCL file kept fresh by a heartbeat."""
-    path = path or (
-        link.PROJECTS_DIR / f"wait-{link._digest(session.base, session.session_id)[:32]}.lock"
-    )
+    path = path or link.wait_lock_path(session.base, session.session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     for _ in (0, 1):
         try:
@@ -559,7 +574,7 @@ def cmd_wait(session: Session, args) -> None:
 # --- codex-watch ----------------------------------------------------------------
 
 POKE = (
-    "Agent PTT: messages for you from other agents arrived while you were idle. The"
+    "[ptt] Messages for you from other agents arrived while you were idle. The"
     " Agent PTT hook attaches them to this prompt; handle them as its context says (if"
     " nothing is attached, they were handled already: just end the turn)."
 )
@@ -764,6 +779,14 @@ def codex_rules() -> str:
     )
 
 
+CODEX_SANDBOX_HINT = (
+    "ptt: this ran inside Codex's sandbox, which has no network. The allow rule from"
+    " `ptt codex-rules` only covers plain commands: no backslashes, $, backticks,"
+    " heredocs or pipes. Write the text to a file first and run"
+    " `ptt say --file <path>` (or `ptt tell <to> --file <path>`)."
+)
+
+
 def cmd_codex_rules(args) -> None:
     sys.stdout.write(codex_rules())
 
@@ -784,7 +807,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--session", help="session ID (default: found from the env or this folder)")
     sub = p.add_subparsers(dest="command", required=True)
     say = sub.add_parser("say", help="speak in the channel; @Handle mentions resolve server-side")
-    say.add_argument("text")
+    say.add_argument("text", nargs="?")
+    say.add_argument("--file", help="read the text from this file (Codex: for quotes/newlines)")
     say.add_argument("--quiet", action="store_true", help="post as text only, not spoken")
     say.add_argument("--fyi", action="store_true", help="informational: mentions wake no one")
     sub.add_parser("who", help="who is in the project and channel")
@@ -793,7 +817,8 @@ def parser() -> argparse.ArgumentParser:
     wait.add_argument("--once", action="store_true", help="poll once and exit")
     tell = sub.add_parser("tell", help="send a work item")
     tell.add_argument("to", help='Handle, @Handle, @"Two Words", role:<role> or project')
-    tell.add_argument("text")
+    tell.add_argument("text", nargs="?")
+    tell.add_argument("--file", help="read the text from this file")
     tell.add_argument("--kind", default="instruction", choices=KINDS)
     tell.add_argument("--reply-to", dest="reply_to")
     tell.add_argument("--fyi", action="store_true", help="informational: never wakes them")
@@ -836,6 +861,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except (urllib.error.URLError, OSError) as exc:
         print(f"ptt: server unreachable at {link.base_url()}: {exc}", file=sys.stderr)
+        if os.environ.get("CODEX_SANDBOX_NETWORK_DISABLED"):
+            print(CODEX_SANDBOX_HINT, file=sys.stderr)
         return 1
     return 0
 

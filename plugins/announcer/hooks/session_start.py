@@ -123,15 +123,21 @@ def compose(
     lead = link.wants_wake(member_roles)
     if agent.lower() == "codex":
         lines.append(
-            codex_wake_text(codex_route) + " If every ptt call asks for sandbox"
+            codex_wake_text(codex_route)
+            + " Keep ptt commands plain so the sandbox lets them through: double-quote the"
+            " text with no $, backticks, backslashes or newlines; for anything else write it"
+            " to a file and run `ptt say --file <path>`. If every ptt call asks for sandbox"
             " approval, tell the user `ptt codex-rules` prints a one-time allow rule."
         )
     elif wake:
-        lines.append(
-            ("You coordinate others: start" if lead else "Start")
-            + f" the Monitor tool now on `{ptt} wait` (longest timeout) so mentions wake"
-            " you while idle (FYIs don't); each burst of lines is one delivery, FYI lines need"
-            " no reply. When it ends, start it again."
+        # Second line, before the roster: sessions that read on past it tend to skip it.
+        lines.insert(
+            1,
+            ("You coordinate others. First, start" if lead else "First, start")
+            + f" the Monitor tool on `{ptt} wait` (longest timeout), even if nobody else is"
+            " here yet: other agents can only reach you while you're idle through it (FYIs"
+            " don't wake you). Each burst of lines is one delivery; FYI lines need no reply."
+            " When it ends, start it again.",
         )
     else:
         lines.append(f"Mentions reach you at your next hook (`{ptt} wait` in Monitor wakes you).")
@@ -199,7 +205,7 @@ def start(event: dict) -> str | None:
         pointer["wake_route"] = route
         if route == "queue":
             pointer["codex_pid"] = link.codex_pid()
-    pointer.update(turn="idle", turn_at=time.time())
+    pointer.update(turn="idle", turn_at=time.time(), ended=False)
     link.save_session(base, session_id, **pointer)
     if route == "queue":
         link.start_codex_watch(base, session_id, pointer["codex_pid"])

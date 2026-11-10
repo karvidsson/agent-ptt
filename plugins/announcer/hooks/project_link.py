@@ -504,9 +504,10 @@ ETIQUETTE = (
     "When someone else works on this project: introduce yourself with what you're doing,"
     " agree a split before editing, answer @mentions, post handoffs and findings (not"
     " narration), and don't edit files another agent has claimed. Add --fyi"
-    ' (`ptt say --fyi "…"`, `ptt tell … --fyi`) to status updates, acknowledgements, "done"'
+    ' (`ptt say --fyi "…"`, `ptt tell … --fyi`) only to status updates, acknowledgements'
     " and claim releases: they arrive at the recipient's next step without waking them."
-    " Ask questions and hand work off without it. Don't reply to an FYI unless it needs action."
+    " Findings, answers, questions and handoffs go without it, so they wake the recipient."
+    " Don't reply to an FYI unless it needs action."
 )
 
 TRUST_RULES = (
@@ -632,18 +633,26 @@ def alive(pid: int) -> bool:
     return True
 
 
-def watch_lock_path(base: str, session_id: str) -> Path:
-    return PROJECTS_DIR / f"codexwatch-{_digest(base, session_id)[:32]}.lock"
+def wait_lock_path(base: str, session_id: str) -> Path:
+    """`ptt wait`'s single-instance lock (the Claude Monitor loop)."""
+    return PROJECTS_DIR / f"wait-{_digest(base, session_id)[:32]}.lock"
 
 
-def watcher_running(base: str, session_id: str, stale: float = 120.0) -> bool:
-    path = watch_lock_path(base, session_id)
+def lock_alive(path: Path, stale: float = 120.0) -> bool:
     try:
         age = time.time() - path.stat().st_mtime
         pid = int(path.read_text().strip() or 0)
     except (OSError, ValueError):
         return False
     return age < stale and alive(pid)
+
+
+def watch_lock_path(base: str, session_id: str) -> Path:
+    return PROJECTS_DIR / f"codexwatch-{_digest(base, session_id)[:32]}.lock"
+
+
+def watcher_running(base: str, session_id: str, stale: float = 120.0) -> bool:
+    return lock_alive(watch_lock_path(base, session_id), stale)
 
 
 def start_codex_watch(base: str, session_id: str, pid: int) -> bool:

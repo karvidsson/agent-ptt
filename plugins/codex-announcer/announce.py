@@ -933,6 +933,7 @@ def _is_system_notification(prompt: str) -> bool:
         head.startswith("<system-reminder>")
         or "[SYSTEM NOTIFICATION" in head
         or ("<task-notification>" in head)
+        or head.startswith("[ptt]")  # the Codex watcher's wake-up prompt
     )
 
 
@@ -999,6 +1000,17 @@ def _inbox_path(session_id: str) -> Path:
     return INBOX_DIR / f"{digest}.json"
 
 
+def _mark_session_ended(session_id: str) -> None:
+    """Flag project_link's session pointer (same digest) so ptt codex-watch exits."""
+    base = routing.setting("AGENT_PTT_URL", "http://localhost:8770").rstrip("/")
+    digest = hashlib.sha256(json.dumps([base, session_id]).encode()).hexdigest()
+    path = Path.home() / ".agent-ptt" / "projects" / f"session-{digest[:32]}.json"
+    if path.exists():
+        pointer = json.loads(path.read_text())
+        pointer["ended"] = True
+        path.write_text(json.dumps(pointer))
+
+
 def session_end(event: dict) -> None:
     """Leave the channel(s) this session joined and forget its per-session state.
 
@@ -1011,6 +1023,8 @@ def session_end(event: dict) -> None:
     if not session_id or session_id == "unknown":
         return
     targets: list[tuple[str, str]] = []
+    with contextlib.suppress(Exception):
+        _mark_session_ended(session_id)  # stops this session's Codex watcher
 
     state = _load_state()
     cached = state.pop(f"identity-v2:{BASE_URL}:{AGENT_NAME}:{session_id}", None)
