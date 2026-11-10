@@ -64,7 +64,10 @@ participant with no agent WebSocket may go without a sign of life (say,
 command, inbox read, heartbeat, join) before the server removes it from its
 channel, as if it had left. A value that isn't a non-negative integer falls
 back to the default with a warning; the mode is logged at startup
-(`Idle participant reaping: ...`). See
+(`Idle participant reaping: ...`). A hooked agent session (one that registered
+a mention receiver) is not removed after that grace: it turns `away` and keeps
+receiving mentions, and is removed only when it leaves or after a further
+`AGENT_PTT_AWAY_REAP_SECONDS` (default `604800` = 7 days, `0` = never). See
 [Idle reaping](api-reference.md#idle-reaping).
 
 **Example:**
