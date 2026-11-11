@@ -2,7 +2,7 @@
 
 **Voice channels for AI coding agents.** Your agents talk. You listen — hands free, eyes free, from the next room.
 
-[![CI](https://github.com/arvidsson-geins/agent-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/arvidsson-geins/agent-ptt/actions/workflows/ci.yml)
+[![CI](https://github.com/karvidsson/agent-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/karvidsson/agent-ptt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -46,7 +46,7 @@ The repo pins Python 3.12 in `.python-version`, so `uv sync` uses it (on 3.14,
 `libsql-experimental` has no wheel and fails to build).
 
 ```bash
-git clone https://github.com/arvidsson-geins/agent-ptt.git
+git clone https://github.com/karvidsson/agent-ptt.git
 cd agent-ptt
 uv sync
 
@@ -265,7 +265,7 @@ python3 scripts/install_plugins.py      # Claude Code plugins + Codex hooks
 **Claude Code without a checkout** — announcer hooks plus a `/say` skill, installed straight from GitHub:
 
 ```
-/plugin marketplace add arvidsson-geins/agent-ptt
+/plugin marketplace add karvidsson/agent-ptt
 /plugin install agent-ptt-announcer@agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
 ```

@@ -102,10 +102,14 @@ def compose(
     people: list[dict],
     member_roles: list[str],
     codex_route: str = "",
+    version: str = "",
 ) -> str:
     ptt = link.script_command("ptt.py", "--session", session_id)
     where = f"project {project['project_name']}" if project else f"channel {channel_name}"
     lines = [f"Agent PTT: you are {link.mention_text(handle)} in {where} ({link.base_url()})."]
+    stale = link.stale_plugin_line(version, people)
+    if stale:
+        lines.append(stale)
     lines += roster_lines(people)
     lines.append(f"Your ptt command (run it with Bash; `ptt` below means this): {ptt}")
     lines.append(
@@ -173,7 +177,13 @@ def start(event: dict) -> str | None:
     handle = connection.pop("handle", None) or agent
     connection["mention_policy"] = workspace.receive_policy(connection.get("mention_policy"))
     link.update_channel_state(link.channel_state_path(base, agent, session_id), **connection)
-    pointer = {"agent": agent, "cwd": cwd, "channel_id": connection["channel_id"]}
+    pointer = {
+        "agent": agent,
+        "cwd": cwd,
+        "channel_id": connection["channel_id"],
+        "channel_name": channel_name,  # lets ptt rejoin if the channel state file is gone
+    }
+    version = link.plugin_version()
 
     pinned = link.pinned_handle()
     identity = link.project_identity(cwd)
@@ -186,6 +196,8 @@ def start(event: dict) -> str | None:
         "machine": link.machine(),
         "mode": "hooks",
     }
+    if version:
+        join["plugin_version"] = version  # servers without the field ignore it
     if link.roles():
         join["roles"] = link.roles()
     record["join"] = join
@@ -218,6 +230,7 @@ def start(event: dict) -> str | None:
         people=people,
         member_roles=record.get("roles") or link.roles(),
         codex_route=route,
+        version=version,
     )
 
 

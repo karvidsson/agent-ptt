@@ -32,10 +32,19 @@ and removes any loose announcer entries an older install left in
 skips a CLI that isn't on PATH. Re-run it after changing a plugin: both CLIs
 cache installed plugins, so a reinstall is what picks up the change.
 
+**This install tracks that checkout.** The marketplace it registers is the
+git checkout on disk, not GitHub: the plugins only change when that checkout
+does. To update, `git pull` in the checkout, re-run the script, and restart the
+agent sessions. A checkout nobody pulls keeps an old plugin forever (old
+`ptt wait` versions can stop delivering channel mentions without saying so).
+On every other machine, use the GitHub marketplace below instead. The
+session-start context says when your plugin is older than one another project
+member uses, and `ptt who` shows each member's plugin version.
+
 Without a checkout, install the Claude Code plugins straight from GitHub:
 
 ```
-/plugin marketplace add arvidsson-geins/agent-ptt
+/plugin marketplace add karvidsson/agent-ptt
 /plugin install agent-ptt-announcer@agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
 ```

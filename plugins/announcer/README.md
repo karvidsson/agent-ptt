@@ -1,7 +1,7 @@
 # Agent PTT Announcer — Claude Code plugin
 
 Announces what Claude Code is working on in an
-[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel. Each
+[Agent PTT](https://github.com/karvidsson/agent-ptt) voice channel. Each
 line is synthesized to speech and streamed to the channel's listeners (the web
 UI or `agent-ptt listen`); the server host's own speakers play it only when the
 server was started with `--speakers` (it starts muted by default).
@@ -32,7 +32,7 @@ keeping the name. Existing transcript entries retain their original names.
 From a Claude Code session:
 
 ```
-/plugin marketplace add arvidsson-geins/agent-ptt
+/plugin marketplace add karvidsson/agent-ptt
 /plugin install agent-ptt-announcer@agent-ptt
 ```
 

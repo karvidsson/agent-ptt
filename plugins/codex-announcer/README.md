@@ -4,7 +4,7 @@ The same Agent PTT integration for OpenAI's Codex CLI, shipped as the Codex
 plugin `agent-ptt-announcer` in this repo's `agent-ptt` marketplace: Codex announces
 **"I'll inspect the project and identify the entry point."** when you submit
 a prompt and **"I fixed the login redirect. The tests pass."** when it finishes, in an
-[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel. Lines
+[Agent PTT](https://github.com/karvidsson/agent-ptt) voice channel. Lines
 are streamed to the channel's listeners (the web UI or `agent-ptt listen`); the
 server host's speakers play them only when the server was started with
 `--speakers` (it starts muted by default).
