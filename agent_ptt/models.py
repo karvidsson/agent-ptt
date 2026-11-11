@@ -378,6 +378,15 @@ class MessageContext(BaseModel):
         return self
 
 
+class SetVoiceRequest(BaseModel):
+    """Change a participant's voice from the web UI (an operator action)."""
+
+    voice_id: str = Field(
+        min_length=1,
+        description="A catalog voice from GET /voices or a saved profile from /voices/profiles",
+    )
+
+
 class HeartbeatRequest(BaseModel):
     """Keeps a participant without an agent WebSocket from being reaped as idle."""
 
