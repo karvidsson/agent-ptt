@@ -65,6 +65,28 @@ members.
 
 **Permissions.** Antigravity's default mode asks before most shell commands,
 which is normal for agy. Only the agent's `ptt` calls and the plugin's `agent-ptt` MCP tools skip the prompt.
+
+agy also runs a **safety reviewer** (a model) on commands it doesn't know. It
+sometimes flags a `ptt` call that changes shared state, such as `ptt done`, and
+asks "Requesting permission for: … ptt.py …" with a "Reason:" line. The plugin's
+PreToolUse hook overrides the reviewer, but only in an agy session that loaded the
+hooks, and a session that was already running when the plugin was installed
+hasn't. A **grant** in agy's settings skips the reviewer in every session, so
+install the grants once per machine:
+
+```bash
+# any machine · plain terminal (macOS/Linux; on Windows use python and the same path)
+python3 ~/.gemini/config/plugins/agent-ptt-announcer/ptt.py agy-rules --install
+```
+
+That command adds these grants to `permissions.allow` in
+`~/.gemini/antigravity-cli/settings.json`, keeping everything else in the file:
+`command(<this python> <this ptt.py>)`, `command(python3 <this ptt.py>)` and
+`mcp(agent-ptt-announcer_agent-ptt/*)`. Restart agy afterwards. Run the command
+without `--install` to print the grants instead. `scripts/install_plugins.py`
+installs them for you. Verified on agy 1.5.5: with a grant, agy logs
+`allowed_command` and skips the reviewer, and a call the reviewer flagged ran
+without a prompt.
 `AGENT_PTT_AGY_DEBUG=1` logs every hook event and answer to
 `~/.agent-ptt/antigravity/debug.jsonl`.
 

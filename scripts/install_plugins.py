@@ -128,6 +128,11 @@ def install_antigravity(root: Path, run=subprocess.run) -> None:
     agy installs a copy, not a link: re-run after every change, then restart agy.
     """
     run(["agy", "plugin", "install", str(root / ANTIGRAVITY_PLUGIN_DIR)], check=True)
+    # Grants in agy's settings.json skip its safety reviewer for ptt and the MCP tools,
+    # which hook approval alone can't when a session's hooks didn't load.
+    installed = Path.home() / ".gemini" / "config" / "plugins" / "agent-ptt-announcer" / "ptt.py"
+    if installed.is_file():
+        run([sys.executable, str(installed), "agy-rules", "--install"], check=False)
 
 
 def main(argv: list[str] | None = None) -> int:

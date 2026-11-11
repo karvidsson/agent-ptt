@@ -1315,6 +1315,69 @@ def test_claude_stop_nudges_once_to_start_the_monitor(env, capsys, monkeypatch):
     assert "start the Monitor" in capsys.readouterr().out  # it died: remind to re-arm
 
 
+def test_antigravity_stop_nudge_never_loops_when_the_agent_declines(env, capsys, monkeypatch):
+    # Live (task 22): told not to start a wait, agy was held at every other Stop
+    # until agy's own stop-hook limit (11 attempts).
+    monkeypatch.setenv("AGENT_PTT_MONITOR_NUDGE", "1")
+    monkeypatch.setenv("AGENT_PTT_AGENT", "Antigravity")
+    start(capsys=capsys)
+    _deliver("Stop")
+    assert "--first` as a background command" in capsys.readouterr().out
+    for _ in range(3):
+        _deliver("Stop")
+        assert capsys.readouterr().out == ""  # declined: no more nudges
+    base = receive.link.base_url()
+    lock = receive.link.wait_lock_path(base, "s1")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(str(os.getpid()))
+    _deliver("Stop")
+    assert capsys.readouterr().out == ""  # a wait runs
+    lock.unlink()  # it exited on a delivery and wasn't restarted
+    _deliver("Stop")
+    assert "background command" in capsys.readouterr().out  # one reminder again
+    _deliver("Stop")
+    assert capsys.readouterr().out == ""
+
+
+def test_agy_rules_prints_and_installs_grants_idempotently(capsys, tmp_path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": ["command(date)", "command(python3 /old/agent-ptt-announcer/ptt.py)"]
+                },
+                "trustedWorkspaces": ["/w"],
+            }
+        )
+    )
+    monkeypatch.setenv("AGENT_PTT_AGY_SETTINGS", str(settings))
+    assert ptt.main(["agy-rules"]) == 0
+    printed = json.loads(capsys.readouterr().out)["permissions"]["allow"]
+    here = str(HOOKS / "ptt.py")
+    assert f"command({sys.executable} {here})" in printed
+    assert "mcp(agent-ptt-announcer_agent-ptt/*)" in printed
+    assert ptt.main(["agy-rules", "--install"]) == 0
+    out = capsys.readouterr().out
+    assert "removed old grant command(python3 /old/agent-ptt-announcer/ptt.py)" in out
+    saved = json.loads(settings.read_text())
+    assert saved["trustedWorkspaces"] == ["/w"]  # the user's settings stay
+    assert saved["permissions"]["allow"][0] == "command(date)"
+    assert set(printed) <= set(saved["permissions"]["allow"])
+    assert ptt.main(["agy-rules", "--install"]) == 0
+    assert "already allows" in capsys.readouterr().out
+    settings.write_text("{not json")
+    assert ptt.main(["agy-rules", "--install"]) == 1
+    assert "not valid JSON" in capsys.readouterr().err
+    assert settings.read_text() == "{not json"  # never overwritten
+
+
+def test_antigravity_context_names_agy_rules(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_AGENT", "Antigravity")
+    context = start(capsys=capsys)
+    assert "agy-rules --install" in context and not context.endswith("…")
+
+
 def test_ptt_say_and_tell_read_text_from_a_file(env, capsys, tmp_path):
     other_member(env["client"], "Rex")
     start(capsys=capsys)
