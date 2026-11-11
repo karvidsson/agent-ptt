@@ -976,8 +976,11 @@ def cmd_codex_rules(args) -> None:
 
 # --- Cursor CLI allowlist ---------------------------------------------------------
 
-# Cursor names a plugin's MCP server "plugin-<displayName>-<server name>".
+# Cursor names a plugin's MCP server "plugin-<displayName>-<server name>". Seen live
+# (task 16): when Cursor also imports the Claude announcer plugin (same name), the
+# server shows up as "plugin-<name>-agent-ptt" and runs the Claude copy's ptt_mcp.py.
 CURSOR_MCP_SERVER = "plugin-Agent PTT Announcer-agent-ptt"
+CURSOR_MCP_SERVERS = (CURSOR_MCP_SERVER, "plugin-agent-ptt-announcer-agent-ptt")
 
 
 def cursor_config_dir() -> Path:
@@ -999,7 +1002,7 @@ def cursor_rules() -> dict:
     here = link._quote(str(Path(__file__).resolve()))
     pythons = list(dict.fromkeys([sys.executable or "python3", "python3"]))
     allow = [f"Shell({link._quote(python)} {here})" for python in pythons]
-    allow.append(f"Mcp({CURSOR_MCP_SERVER}:*)")
+    allow += [f"Mcp({server}:*)" for server in CURSOR_MCP_SERVERS]
     return {"permissions": {"allow": allow, "deny": []}}  # the CLI requires both lists
 
 

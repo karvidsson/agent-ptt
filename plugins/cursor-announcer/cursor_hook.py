@@ -50,6 +50,7 @@ HERE = Path(__file__).resolve().parent
 AGENT = "Cursor"
 MCP_SERVER = "agent-ptt"  # mcp.json server name
 PLUGIN_MCP_SERVER = "plugin-Agent PTT Announcer-agent-ptt"  # plugin-<displayName>-<server>
+SHARED_MCP_SERVERS = (PLUGIN_MCP_SERVER, "plugin-agent-ptt-announcer-agent-ptt")
 STATE_DIR = Path.home() / ".agent-ptt" / "cursor"
 PERMISSION_EVENTS = ("beforeShellExecution", "beforeMCPExecution")
 
@@ -266,8 +267,18 @@ def own_mcp_call(raw: dict) -> bool:
     server = str(raw.get("mcp_server_name") or "")
     command = str(raw.get("command") or "")
     if command:
-        return server.endswith(MCP_SERVER) and str(HERE / "ptt_mcp.py") in command
-    return server == PLUGIN_MCP_SERVER
+        if not server.endswith(MCP_SERVER) or not server.startswith("plugin-"):
+            return False
+        if str(HERE / "ptt_mcp.py") in command:
+            return True
+        # Cursor's Claude-plugin import can serve the same tools from the Claude
+        # announcer's copy (seen live): its hooks dir holds the same ptt_mcp.py.
+        return server in SHARED_MCP_SERVERS and any(
+            part.endswith(("/hooks/ptt_mcp.py", "\\hooks\\ptt_mcp.py"))
+            and "agent-ptt-announcer" in part
+            for part in command.split()
+        )
+    return server in SHARED_MCP_SERVERS
 
 
 def permission(raw: dict) -> dict:

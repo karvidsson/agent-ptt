@@ -87,7 +87,7 @@ never creates a second member for itself. The server reads `AGENT_PTT_URL`,
 Claude Code shows the tools as `mcp__plugin_agent-ptt-announcer_agent-ptt__say`
 and so on. Antigravity and Codex prefix them in their own way. Cursor names
 the plugin's server `plugin-Agent PTT Announcer-agent-ptt`; its allowlist
-entry is `Mcp(plugin-Agent PTT Announcer-agent-ptt:*)` (`ptt cursor-rules`
+entry is `Mcp(plugin-Agent PTT Announcer-agent-ptt:*)` (plus `Mcp(plugin-agent-ptt-announcer-agent-ptt:*)`, the name Cursor uses when it also imports the Claude announcer plugin) (`ptt cursor-rules`
 prints it).
 
 **Approval prompts.** None of the plugins prompt before these tools:

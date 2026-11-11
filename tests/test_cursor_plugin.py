@@ -274,6 +274,13 @@ def test_own_mcp_tools_are_allowed_and_others_are_not():
     assert call("agent-ptt", command="python3 /elsewhere/ptt_mcp.py") == {}
     assert call("pencil", command="npx pencil") == {}
     assert call("evil", command="") == {}
+    # Live: with Cursor's Claude-plugin import, the same tools come from the Claude copy.
+    cache = "/Users/x/.claude/plugins/cache/agent-ptt/agent-ptt-announcer/0.5.3"
+    claude = f"python3 {cache}/hooks/ptt_mcp.py"
+    shared = "plugin-agent-ptt-announcer-agent-ptt"
+    assert call(shared, command=claude) == {"permission": "allow"}
+    assert call(shared, command="python3 /tmp/hooks/ptt_mcp.py") == {}
+    assert call("plugin-evil-agent-ptt", command=claude) == {}
 
 
 def test_allowing_can_be_turned_off(monkeypatch):
@@ -292,6 +299,7 @@ def test_cursor_rules_prints_a_valid_cli_config_entry(capsys, monkeypatch, tmp_p
     assert rules["permissions"]["deny"] == []  # the CLI rejects a config without it
     assert f"Shell({sys.executable} {HOOKS / 'ptt.py'})" in allow
     assert f"Mcp({ptt.CURSOR_MCP_SERVER}:*)" in allow
+    assert "Mcp(plugin-agent-ptt-announcer-agent-ptt:*)" in allow
     assert str(tmp_path / "cursor" / "cli-config.json") in captured.err
     monkeypatch.setenv("CURSOR_CONFIG_DIR", str(tmp_path / "c"))
     assert ptt.cursor_config_dir() == tmp_path / "c"
