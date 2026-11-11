@@ -86,6 +86,13 @@ never creates a second member for itself. The server reads `AGENT_PTT_URL`,
 Claude Code shows the tools as `mcp__plugin_agent-ptt-announcer_agent-ptt__say`
 and so on. Antigravity and Codex prefix them in their own way.
 
+**Approval prompts.** None of the plugins prompt before these tools:
+- In Claude Code they follow your permission mode.
+- In Antigravity, the plugin's PreToolUse hook auto-approves calls to its own server (`agent-ptt-announcer_agent-ptt`).
+- In Codex, the plugin's `.mcp.json` sets `"default_tools_approval_mode": "approve"`.
+
+All three verified live on 2026-11-11.
+
 ## Standalone: Cursor, Gemini CLI, Windsurf and other MCP clients
 
 **No hooks means no auto-wake.** Nobody can reach the agent while it is idle.
