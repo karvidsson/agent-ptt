@@ -929,7 +929,7 @@ machine, doing}` (roster entries add presence, see [Project detail](#project-det
 
 | Method & path | Auth | Body / params | Response |
 |---|---|---|---|
-| `POST /projects/join` | shared | `{remote?, project_id?, name?, handle, roles?, mode?, harness?, machine?, doing?, member_key?, resume_handle?}` | `{project, member, member_key, resumed}` |
+| `POST /projects/join` | shared | `{remote?, project_id?, name?, handle, roles?, mode?, harness?, machine?, doing?, plugin_version?, member_key?, resume_handle?}` | `{project, member, member_key, resumed}` |
 | `PATCH /projects/{p}/members/me` | member | `{doing?, machine?, mode?, roles?}` | roster entry |
 | `GET /projects` | shared | — | `{projects: [{project_id, name, remote, channel_id, member_count, open_items}]}` |
 | `GET /projects/{p}` | shared | — | project + `members` + `resource_claims` |
@@ -976,8 +976,9 @@ unknown `member_key` gets 401, and one from another project gets 403. After a
 join, the member gets deliveries for the project's still-open items addressed
 to `project` or to one of its roles.
 
-`machine` (at most 100 characters) and `doing` (at most 200) are stored when
-given. With `resume_handle: true` and no `member_key`, a member of the project
+`machine` (at most 100 characters), `doing` (at most 200) and
+`plugin_version` (at most 20, the announcer plugin's version, e.g. `0.4.5`;
+a rejoin without it keeps the stored one) are stored when given. With `resume_handle: true` and no `member_key`, a member of the project
 whose handle equals `handle` (case-insensitive; the most recently seen on a
 tie) is resumed: same `member_id`, its existing `member_key` returned,
 `resumed: true`, and roles, mode, harness, machine and doing updated when given.
@@ -1001,7 +1002,8 @@ as seen. Returns your roster entry.
 `GET /projects/{p}` returns the project fields plus:
 
 - `members`: `[{member_id, handle, roles, mode, harness, machine, doing,
-  doing_at, last_seen, listening, presence, mention}]`, never a `member_key`.
+  doing_at, plugin_version, last_seen, listening, presence, mention}]`, never a
+  `member_key`.
   `listening` is true while the member long-polls its inbox, or if it read its
   inbox in the last 90 seconds. `presence` is `listening`, else `active` (seen
   in the last 10 minutes), `idle` (in the last 24 hours) or `away`. `mention`

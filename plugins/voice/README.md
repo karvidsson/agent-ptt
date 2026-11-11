@@ -1,7 +1,7 @@
 # Agent PTT Voice — /say skill for Claude Code
 
 Lets Claude (or you) speak messages aloud through an
-[Agent PTT](https://github.com/arvidsson-geins/agent-ptt) voice channel:
+[Agent PTT](https://github.com/karvidsson/agent-ptt) voice channel:
 
 ```
 /agent-ptt-voice:say deploy finished, all forty-two checks green
@@ -26,7 +26,7 @@ identity as the [announcer plugin](../announcer/)).
 ## Install
 
 ```
-/plugin marketplace add arvidsson-geins/agent-ptt
+/plugin marketplace add karvidsson/agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
 ```
 

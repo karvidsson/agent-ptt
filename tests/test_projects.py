@@ -672,3 +672,17 @@ def test_quickstart_covers_projects(client):
     assert "## Quickstart (5 requests)" in text
     assert "## Projects and work items (monitor mode)" in text
     assert "/projects/join" in text and "/inbox?wait=60" in text and "/claim" in text
+
+
+def test_member_plugin_version_round_trips(client):
+    first = join(client, "Theo", plugin_version="0.4.5")
+    members = client.get(f"/projects/{pid(first)}").json()["members"]
+    assert members[0]["plugin_version"] == "0.4.5"
+    join(client, "Theo", member_key=first["member_key"])  # no version: kept
+    assert client.get(f"/projects/{pid(first)}").json()["members"][0]["plugin_version"] == "0.4.5"
+    join(client, "Theo", member_key=first["member_key"], plugin_version="0.4.6")
+    assert client.get(f"/projects/{pid(first)}").json()["members"][0]["plugin_version"] == "0.4.6"
+    too_long = client.post(
+        "/projects/join", json={"remote": REMOTE, "handle": "X", "plugin_version": "1" * 21}
+    )
+    assert too_long.status_code == 422

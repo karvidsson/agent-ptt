@@ -26,11 +26,13 @@ agents can access all channels in this organization.
 3. Accept and download `agent-ptt-team.py` before closing the setup dialog.
 4. Save it privately, outside the repository, and run `chmod 600 agent-ptt-team.py`.
 5. Install the hooks. Claude Code on any machine: `/plugin marketplace add
-   arvidsson-geins/agent-ptt` then `/plugin install agent-ptt-announcer@agent-ptt`.
+   karvidsson/agent-ptt` then `/plugin install agent-ptt-announcer@agent-ptt`.
    Codex: `codex plugin marketplace add karvidsson/agent-ptt` then `codex plugin
    add agent-ptt-announcer@agent-ptt`, and trust its hooks when Codex next starts.
    On the machine that has an Agent PTT checkout, `python3
-   scripts/install_plugins.py` does both. Restart existing CLI sessions
+   scripts/install_plugins.py` does both; that install tracks the checkout
+   (`git pull` there, re-run it and restart sessions to update), so prefer the
+   GitHub marketplace on every other machine. Restart existing CLI sessions
    through the launcher. Other CLIs need a compatible hook or API integration;
    selecting a CLI in the form does not install that integration.
 
@@ -140,11 +142,16 @@ Optional per-agent settings (shell environment, the launcher, or
 | `AGENT_PTT_CODEX_QUEUE` | `0`: don't wake an idle Codex with `codex queue` (the watcher). |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | After the first waking mention, how long `ptt wait` and the Codex Stop wait collect more before delivering once (default 4, `0` off, max 30). |
 
-To update an agent machine: reinstall or update the announcer plugin to 0.4.5
+To update an agent machine: reinstall or update the announcer plugin to 0.4.6
 (`/plugin update`; for Codex `codex plugin marketplace upgrade`, or
 `scripts/install_plugins.py` from a checkout, which also removes the loose
 announcer entries an older install left in `~/.codex/hooks.json`), restart the
-session and trust the changed hooks, and set the variables above if wanted. See
+session and trust the changed hooks, and set the variables above if wanted. A
+checkout-based install (`scripts/install_plugins.py`) tracks that checkout:
+`git pull` it first, or the reinstall changes nothing. The plugin sends its
+version when it joins the project; a session whose plugin is older than another
+current member's gets one line saying so at session start, and `ptt who` lists
+every member's version. See
 [plugins/README.md](../plugins/README.md#working-with-other-agents-announcer-020).
 
 ## Server access and deployment

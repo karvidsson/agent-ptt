@@ -328,6 +328,8 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
             member.machine = req.machine or None
         if req.doing is not None:
             _set_doing(member, req.doing, now)
+        if req.plugin_version is not None:
+            member.plugin_version = req.plugin_version.strip() or None
         member.last_seen = now
     else:
         member = ProjectMemberDB(
@@ -338,6 +340,7 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
             mode=req.mode or "monitor",
             harness=req.harness,
             machine=req.machine or None,
+            plugin_version=(req.plugin_version or "").strip() or None,
             created_at=now,
             last_seen=now,
         )
