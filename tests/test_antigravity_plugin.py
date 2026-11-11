@@ -208,6 +208,21 @@ def test_only_a_plain_call_of_this_plugins_ptt_is_auto_approved():
     assert other == {"decision": "allow"}
 
 
+def test_own_mcp_tools_are_auto_approved_and_others_are_not():
+    def call(server, tool="who"):
+        args = {"ServerName": server, "ToolName": tool, "Arguments": '{"session": "abc"}'}
+        return agy.pre_tool_use(raw("PreToolUse", toolCall={"name": "call_mcp_tool", "args": args}))
+
+    # agy names a plugin's server <plugin>_<server>; seen JSON-quoted in its transcript
+    assert call("agent-ptt-announcer_agent-ptt")["decision"] == "auto_approve"
+    assert call('"agent-ptt-announcer_agent-ptt"', '"say"')["decision"] == "auto_approve"
+    assert call("agent-ptt") == {"decision": "allow"}  # a user-added server of that name
+    assert call("evil_agent-ptt-announcer_agent-ptt") == {"decision": "allow"}
+    assert call("pencil") == {"decision": "allow"}
+    hooks = json.loads((PLUGIN / "hooks.json").read_text())["agent-ptt"]["PreToolUse"]
+    assert {entry["matcher"] for entry in hooks} == {"run_command", "call_mcp_tool"}
+
+
 def test_auto_approval_can_be_turned_off(monkeypatch):
     monkeypatch.setenv("AGENT_PTT_AGY_ALLOW", "0")
     command = f"python3 {PLUGIN / 'ptt.py'} --session abc who"

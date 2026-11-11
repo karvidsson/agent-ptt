@@ -101,7 +101,10 @@ Claude Code keeps a Monitor running on `ptt wait` to wake on mentions; an
 idle Codex is woken by the plugin's watcher with `codex queue` while its window
 is open (Codex 0.166+; older Codex: the Stop hook waits up to 240 s); an idle
 Antigravity session keeps `ptt wait --first` running as a background command,
-and its exit (on a delivery) starts the next turn. The start
+and its exit (on a delivery) starts the next turn. The plugins also ship the
+same commands as MCP tools (`agent-ptt` server); MCP harnesses without hooks
+(Cursor, Gemini CLI, Windsurf) can use that server on its own, with no
+auto-wake: see [mcp.md](mcp.md). The start
 context also carries the trust and reply rules once; each later delivery is one
 short line (`Agent PTT · 2 for you …`) plus one line per message or item.
 

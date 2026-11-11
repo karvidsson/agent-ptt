@@ -5,8 +5,9 @@ Stdlib only; runs on macOS, Linux and Windows next to the plugin's hooks. It
 finds this session's channel key and project membership in the hook state under
 ``~/.agent-ptt`` (written by session_start.py and receive.py), so no keys or IDs
 need to be pasted. The session is ``--session``, else ``AGENT_PTT_SESSION_ID`` /
-``CODEX_THREAD_ID`` / ``CLAUDE_SESSION_ID``, else the most recently active
-hooked session whose folder contains (or is inside) the current directory.
+``CODEX_THREAD_ID`` / ``CLAUDE_SESSION_ID`` / ``CLAUDE_CODE_SESSION_ID``, else the
+most recently active hooked session whose folder contains (or is inside) the
+current directory.
 
   ptt.py say "<text with @Theo>" [--quiet] [--fyi]   speak (--quiet: text only) in the channel
   ptt.py who                                 who is here: harness, machine, doing, presence
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib.util
+import io
 import json
 import os
 import signal
@@ -978,6 +980,35 @@ def _detail(exc: urllib.error.HTTPError) -> str:
         return str(exc.code)
 
 
+def error_text(exc: BaseException) -> str | None:
+    """What the CLI prints for a failed command, or None for an unexpected error."""
+    if isinstance(exc, Failure):
+        return f"ptt: {exc}"
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"ptt: server said {exc.code}: {_detail(exc)}"
+    if isinstance(exc, (urllib.error.URLError, OSError)):
+        text = f"ptt: server unreachable at {link.base_url()}: {exc}"
+        if os.environ.get("CODEX_SANDBOX_NETWORK_DISABLED"):
+            text += "\n" + CODEX_SANDBOX_HINT
+        return text
+    return None
+
+
+def run_captured(session: Session, args) -> tuple[str, str | None]:
+    """Run a command for a caller that isn't a terminal (ptt_mcp.py).
+
+    Returns (what it printed, the CLI's error message or None). The output is the
+    CLI's, line for line; an unexpected exception still raises.
+    """
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            COMMANDS[args.command](session, args)
+    except (Failure, urllib.error.URLError, OSError) as exc:
+        return out.getvalue(), error_text(exc)
+    return out.getvalue(), None
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ptt", description="Agent PTT for this agent session")
     p.add_argument("--session", help="session ID (default: found from the env or this folder)")
@@ -1032,16 +1063,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         session = Session(args.session)
         COMMANDS[args.command](session, args)
-    except Failure as exc:
-        print(f"ptt: {exc}", file=sys.stderr)
-        return 1
-    except urllib.error.HTTPError as exc:
-        print(f"ptt: server said {exc.code}: {_detail(exc)}", file=sys.stderr)
-        return 1
-    except (urllib.error.URLError, OSError) as exc:
-        print(f"ptt: server unreachable at {link.base_url()}: {exc}", file=sys.stderr)
-        if os.environ.get("CODEX_SANDBOX_NETWORK_DISABLED"):
-            print(CODEX_SANDBOX_HINT, file=sys.stderr)
+    except (Failure, urllib.error.URLError, OSError) as exc:
+        print(error_text(exc), file=sys.stderr)
         return 1
     return 0
 

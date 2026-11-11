@@ -165,6 +165,8 @@ def validate() -> list[str]:
                             where = hooks_path.relative_to(REPO_ROOT)
                             problems.append(f"{where}: {event} runs missing {script}")
 
+    problems += validate_mcp()
+
     client = REPO_ROOT / "agent_ptt/skills/agent-ptt-organization/scripts/client.py"
     bundled = PLUGINS_DIR / "voice/scripts/organization_client.py"
     if not bundled.exists() or bundled.read_bytes() != client.read_bytes():
@@ -179,6 +181,64 @@ def validate() -> list[str]:
         elif "description:" not in text.split("---\n")[1]:
             problems.append(f"{rel}: frontmatter missing 'description'")
 
+    return problems
+
+
+# Plugin MCP configs: Claude Code's root .mcp.json, Antigravity's mcp_config.json and
+# the file a Codex manifest's "mcpServers" names. Each runs ptt_mcp.py from the plugin.
+MCP_ROOT_VARS = re.compile(r"^\$\{(?:CLAUDE_)?PLUGIN_ROOT\}/")
+MCP_SERVER = "agent-ptt"
+MCP_SIBLINGS = ("ptt.py", "project_link.py", "session_start.py", "session_routing.py")
+
+
+def _mcp_configs() -> list[Path]:
+    configs = sorted(PLUGINS_DIR.glob("*/.mcp.json")) + sorted(
+        PLUGINS_DIR.glob("*/mcp_config.json")
+    )
+    for manifest in sorted(PLUGINS_DIR.glob("*/.codex-plugin/plugin.json")):
+        try:
+            named = json.loads(manifest.read_text()).get("mcpServers")
+        except (OSError, ValueError):
+            continue  # reported by the manifest checks
+        if isinstance(named, str):
+            configs.append(manifest.parent.parent / named)
+    return list(dict.fromkeys(p.resolve() for p in configs))
+
+
+def validate_mcp() -> list[str]:
+    problems: list[str] = []
+    reference = PLUGINS_DIR / "announcer" / "hooks" / "ptt_mcp.py"
+    for path in _mcp_configs():
+        rel = path.relative_to(REPO_ROOT)
+        config = _load_json(path, problems)
+        if config is None:
+            continue
+        servers = config.get("mcpServers")
+        if not isinstance(servers, dict) or MCP_SERVER not in servers:
+            problems.append(f"{rel}: no mcpServers.{MCP_SERVER}")
+            continue
+        plugin_dir = path.parent
+        server = servers[MCP_SERVER]
+        scripts = [a for a in server.get("args", []) if str(a).endswith(".py")]
+        if len(scripts) != 1:
+            problems.append(f"{rel}: {MCP_SERVER} must run one .py script")
+            continue
+        script = MCP_ROOT_VARS.sub("", scripts[0])
+        if script == scripts[0]:  # relative: Codex joins a relative cwd to the plugin root
+            if server.get("cwd") != ".":
+                problems.append(f'{rel}: a relative script needs "cwd": "."')
+            script = script.removeprefix("./")
+        target = (plugin_dir / script).resolve()
+        if not target.is_relative_to(plugin_dir.resolve()):
+            problems.append(f"{rel}: {script} points outside the plugin dir")
+        elif not target.is_file():
+            problems.append(f"{rel}: MCP script {script} does not exist")
+        elif target.read_bytes() != reference.read_bytes():
+            problems.append(f"{rel}: {script} differs from {reference.relative_to(REPO_ROOT)}")
+        else:
+            for sibling in MCP_SIBLINGS:
+                if not (target.parent / sibling).is_file():
+                    problems.append(f"{rel}: {script} needs {sibling} next to it")
     return problems
 
 

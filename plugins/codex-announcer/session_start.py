@@ -103,6 +103,7 @@ def compose(
     member_roles: list[str],
     codex_route: str = "",
     version: str = "",
+    mcp: bool = False,
 ) -> str:
     ptt = link.script_command("ptt.py", "--session", session_id)
     where = f"project {project['project_name']}" if project else f"channel {channel_name}"
@@ -121,6 +122,10 @@ def compose(
         lines.append(
             '  ptt tell <Handle|role:<r>|project> "<text>" [--kind question|note|handoff]'
             " [--reply-to <item>]  (a work item)"
+        )
+    if mcp:
+        lines.append(
+            f"MCP tools agent-ptt say/tell/who/inbox/ack/done also work; pass session={session_id}."
         )
     lines.append(link.TRUST_RULES)
     lines.append(link.ETIQUETTE)
@@ -173,28 +178,30 @@ def codex_route() -> str:
     return "queue" if link.codex_queue_supported() else "stop"
 
 
-def start(event: dict) -> str | None:
-    if event.get("agent_id"):
-        return None
-    workspace = _workspace()
-    workspace.routing.bind_event(event)
-    routing.bind_event(event)
-    if workspace.enabled():
-        return None
-    if routing.setting("AGENT_PTT_RECEIVE", "1") == "0":
-        return None
-    session_id, agent = routing.session_context(event)
-    if not session_id or session_id == "unknown":
-        return None
-    base = link.base_url()
-    cwd = event.get("cwd") or str(Path.cwd())
-    channel_name = routing.channel_name(session_id, agent, base, routing.project_name(cwd))
+def join_session(
+    base: str,
+    session_id: str,
+    agent: str,
+    cwd: str,
+    *,
+    mode: str = "hooks",
+    harness: str | None = None,
+    identity: dict | None = None,
+    **pointer_fields,
+) -> dict:
+    """Join this session's channel and project and save its pointer; the shared
+    part of SessionStart and ptt_mcp.py's standalone (hookless) join.
 
+    Returns ``{"handle", "project", "channel_name", "channel_id", "people", "record",
+    "version"}``; ``project`` is None on an older server without projects.
+    """
+    channel_name = routing.channel_name(session_id, agent, base, routing.project_name(cwd))
     connection = link.connect_channel(base, channel_name, agent, session_id)
     handle = connection.pop("handle", None) or agent
-    connection["mention_policy"] = workspace.receive_policy(connection.get("mention_policy"))
+    connection["mention_policy"] = _workspace().receive_policy(connection.get("mention_policy"))
     link.update_channel_state(link.channel_state_path(base, agent, session_id), **connection)
     pointer = {
+        **pointer_fields,
         "agent": agent,
         "cwd": cwd,
         "channel_id": connection["channel_id"],
@@ -203,15 +210,15 @@ def start(event: dict) -> str | None:
     version = link.plugin_version()
 
     pinned = link.pinned_handle()
-    identity = link.project_identity(cwd)
+    identity = identity or link.project_identity(cwd)
     path = link.membership_path(base, identity, session_id, pinned)
     record = link._read(path)
     join = {
         **identity,
         "handle": pinned or handle,
-        "harness": link.harness(agent),
+        "harness": harness or link.harness(agent),
         "machine": link.machine(),
-        "mode": "hooks",
+        "mode": mode,
     }
     if version:
         join["plugin_version"] = version  # servers without the field ignore it
@@ -228,26 +235,64 @@ def start(event: dict) -> str | None:
         record = {"handle": handle}  # an older server without projects: the channel works
     people = link.fetch_people(base, record, connection["channel_id"])
     pointer["roster"] = link.snapshot(people)
+    pointer.update(turn="idle", turn_at=time.time(), ended=False)
+    link.save_session(base, session_id, **pointer)
+    return {
+        "handle": record.get("handle") or handle,
+        "project": project,
+        "channel_name": channel_name,
+        "channel_id": connection["channel_id"],
+        "people": people,
+        "record": record,
+        "version": version,
+    }
+
+
+def mcp_present() -> bool:
+    """Whether this plugin ships ptt_mcp.py with an MCP config the harness loads."""
+    if routing.setting("AGENT_PTT_MCP", "1") == "0":
+        return False
+    here = Path(__file__).resolve().parent
+    configs = (here.parent / ".mcp.json", here / ".mcp.json", here / "mcp_config.json")
+    return (here / "ptt_mcp.py").is_file() and any(c.is_file() for c in configs)
+
+
+def start(event: dict) -> str | None:
+    if event.get("agent_id"):
+        return None
+    workspace = _workspace()
+    workspace.routing.bind_event(event)
+    routing.bind_event(event)
+    if workspace.enabled():
+        return None
+    if routing.setting("AGENT_PTT_RECEIVE", "1") == "0":
+        return None
+    session_id, agent = routing.session_context(event)
+    if not session_id or session_id == "unknown":
+        return None
+    base = link.base_url()
+    cwd = event.get("cwd") or str(Path.cwd())
+    joined = join_session(base, session_id, agent, cwd)
     route = ""
     if agent.lower() == "codex":
         route = codex_route()
-        pointer["wake_route"] = route
+        extra = {"wake_route": route}
         if route == "queue":
-            pointer["codex_pid"] = link.codex_pid()
-    pointer.update(turn="idle", turn_at=time.time(), ended=False)
-    link.save_session(base, session_id, **pointer)
-    if route == "queue":
-        link.start_codex_watch(base, session_id, pointer["codex_pid"])
+            extra["codex_pid"] = link.codex_pid()
+        link.save_session(base, session_id, **extra)
+        if route == "queue":
+            link.start_codex_watch(base, session_id, extra["codex_pid"])
     return compose(
         agent=agent,
         session_id=session_id,
-        handle=record.get("handle") or handle,
-        project=project,
-        channel_name=channel_name,
-        people=people,
-        member_roles=record.get("roles") or link.roles(),
+        handle=joined["handle"],
+        project=joined["project"],
+        channel_name=joined["channel_name"],
+        people=joined["people"],
+        member_roles=joined["record"].get("roles") or link.roles(),
         codex_route=route,
-        version=version,
+        version=joined["version"],
+        mcp=mcp_present(),
     )
 
 

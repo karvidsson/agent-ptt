@@ -14,9 +14,9 @@ what they print back:
 - ``Stop``          → announce, status, receive. A ``block`` from receive becomes
   ``decision: continue`` with the delivery as the reason. A Stop the user
   cancelled (Esc) never waits or continues.
-- ``PreToolUse`` (run_command) → ``auto_approve`` for the plugin's own ``ptt``
-  command; ``allow`` (the normal permission flow) for anything else. An empty
-  answer would deny the command.
+- ``PreToolUse`` (run_command, call_mcp_tool) → ``auto_approve`` for the plugin's
+  own ``ptt`` command and its own agent-ptt MCP tools; ``allow`` (the normal
+  permission flow) for anything else. An empty answer would deny the call.
 
 Stdlib-only; failures stay silent (Antigravity fails open on a bad hook).
 """
@@ -36,6 +36,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 AGENT = "Antigravity"
+PLUGIN_NAME = "agent-ptt-announcer"  # plugin.json name
+MCP_SERVER = "agent-ptt"  # mcp_config.json server name
 STATE_DIR = Path.home() / ".agent-ptt" / "antigravity"
 
 
@@ -211,12 +213,41 @@ def ptt_command_ok(command: str) -> bool:
     return Path(python).name.startswith("python")
 
 
+def _unquote(value) -> str:
+    """agy may hand string args JSON-encoded (``"\"who\""``); accept both forms."""
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        with contextlib.suppress(ValueError):
+            return str(json.loads(text))
+    return text
+
+
+def own_mcp_call(call: dict) -> bool:
+    """True for a call_mcp_tool call to this plugin's own agent-ptt MCP server.
+
+    agy names a plugin's server ``<plugin name>_<server name>``.
+    """
+    if call.get("name") not in (None, "", "call_mcp_tool"):
+        return False
+    args = call.get("args") or {}
+    server = _unquote(args.get("ServerName") or args.get("serverName"))
+    return server == f"{PLUGIN_NAME}_{MCP_SERVER}"
+
+
 def pre_tool_use(raw: dict) -> dict:
     call = raw.get("toolCall") or {}
     args = call.get("args") or {}
-    command = str(args.get("CommandLine") or args.get("command") or "").strip()
-    if os.environ.get("AGENT_PTT_AGY_ALLOW", "1") != "0" and ptt_command_ok(command):
-        return {"decision": "auto_approve", "reason": "Agent PTT: the plugin's own ptt command"}
+    if os.environ.get("AGENT_PTT_AGY_ALLOW", "1") != "0":
+        if args.get("ServerName") or args.get("serverName") or call.get("name") == "call_mcp_tool":
+            if own_mcp_call(call):
+                return {
+                    "decision": "auto_approve",
+                    "reason": "Agent PTT: the plugin's own MCP tools",
+                }
+            return {"decision": "allow"}
+        command = str(args.get("CommandLine") or args.get("command") or "").strip()
+        if ptt_command_ok(command):
+            return {"decision": "auto_approve", "reason": "Agent PTT: the plugin's own ptt command"}
     return {"decision": "allow"}  # no opinion: the normal permission flow (an empty answer denies)
 
 

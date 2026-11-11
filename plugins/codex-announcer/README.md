@@ -95,6 +95,12 @@ the next prompt or tool hook. Close mentions are batched into one wake
 preamble line plus one line per message or item (see
 [Quiet wake-ups](../README.md#working-with-other-agents-announcer-020)).
 
+**MCP tools.** The plugin also starts `ptt_mcp.py` as the MCP server
+`agent-ptt` (`.mcp.json`, named by `"mcpServers"` in `.codex-plugin/plugin.json`; it runs from the plugin folder). Its tools `say`, `tell`, `who`, `inbox`, `ack` and
+`done` do the same as the `ptt` commands. Pass `session=<id>` from the session
+context: the server can't tell which conversation it serves. The tools never block: waking stays with the hooks and the `codex queue` watcher. See
+[docs/mcp.md](../../docs/mcp.md).
+
 ### Sandbox and network
 
 Codex's `workspace-write` sandbox has no network, so every `ptt` call needs a

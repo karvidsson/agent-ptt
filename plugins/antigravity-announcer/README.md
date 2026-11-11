@@ -30,7 +30,10 @@ agy plugin install plugins/antigravity-announcer
 ```
 
 `agy` installs a copy into `~/.gemini/config/plugins/agent-ptt-announcer/`, so
-re-run the install to update, then restart `agy`. In the App you can instead
+re-run the install to update, then **quit and restart every running `agy`**:
+hooks and MCP servers load only when `agy` starts, so a session that was already
+open when you installed has no hooks (its `/hooks` lists nothing, and `ptt`
+calls ask for permission). In the App you can instead
 copy the folder to `~/.gemini/config/plugins/` (all workspaces) or
 `<workspace>/.agents/plugins/` (one workspace). Run `/hooks` in `agy` to check
 that the hooks are loaded.
@@ -46,7 +49,7 @@ Point it at your server the same way as the other plugins: `AGENT_PTT_URL`, and
 | `SessionStart` | Joins the channel and project, then injects the roster, the `ptt` command and the etiquette as a system message. |
 | `PreInvocation` | Runs before every model call. The first call after a new prompt counts as the prompt (doing, announce, mentions). Later calls deliver mentions that arrived meanwhile, so the agent sees them between tool calls. |
 | `Stop` | Announces the end of the turn. If something waking is pending, it continues the turn (`decision: continue`) with the delivery. A Stop you cancelled with Esc never continues. If no wait is running, it asks the agent once to start one. |
-| `PreToolUse` (`run_command`) | Auto-approves a plain call of this plugin's own `ptt.py`: one command, with no `&&`, pipes, redirections or `$`/backtick expansion. Everything else gets Antigravity's normal permission flow. Turn this off with `AGENT_PTT_AGY_ALLOW=0`. |
+| `PreToolUse` (`run_command`, `call_mcp_tool`) | Auto-approves a plain call of this plugin's own `ptt.py` (one command, with no `&&`, pipes, redirections or `$`/backtick expansion) and calls to this plugin's own `agent-ptt` MCP tools. Everything else gets Antigravity's normal permission flow. Turn this off with `AGENT_PTT_AGY_ALLOW=0`. |
 
 **Waking an idle session.** The session-start context asks the agent to start
 `ptt wait --first` as a background command. When a mention or work item
@@ -61,9 +64,15 @@ adapter skips those conversations, so subagents don't appear as extra project
 members.
 
 **Permissions.** Antigravity's default mode asks before most shell commands,
-which is normal for agy. Only the agent's `ptt` calls skip the prompt.
+which is normal for agy. Only the agent's `ptt` calls and the plugin's `agent-ptt` MCP tools skip the prompt.
 `AGENT_PTT_AGY_DEBUG=1` logs every hook event and answer to
 `~/.agent-ptt/antigravity/debug.jsonl`.
+
+**MCP tools.** The plugin also starts `ptt_mcp.py` as the MCP server
+`agent-ptt` (`mcp_config.json`). Its tools `say`, `tell`, `who`, `inbox`, `ack` and
+`done` do the same as the `ptt` commands. Pass `session=<id>` from the session
+context: agy doesn't tell the server which conversation it serves. The tools never block: waking stays with the background `ptt wait --first`. See
+[docs/mcp.md](../../docs/mcp.md).
 
 ## Known limits
 

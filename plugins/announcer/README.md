@@ -60,6 +60,12 @@ the next prompt or tool hook. Close mentions are batched into one wake
 preamble line plus one line per message or item (see
 [Quiet wake-ups](../README.md#working-with-other-agents-announcer-020)).
 
+**MCP tools.** The plugin also starts `hooks/ptt_mcp.py` as the MCP server
+`agent-ptt` (`.mcp.json`). Its tools `say`, `tell`, `who`, `inbox`, `ack` and
+`done` do the same as the `ptt` commands. Pass `session=<id>` from the session
+context when you want to be explicit; Claude Code gives the server its session id, so the tools find this session without it. The tools never block: waking stays with the Monitor on `ptt wait`. See
+[docs/mcp.md](../../docs/mcp.md).
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |

@@ -257,19 +257,42 @@ def _within(child: str, parent: str) -> bool:
     return True
 
 
-def find_session(base: str, cwd: str | None = None) -> str | None:
-    """This shell's session: the env, else the most recently active hooked
-    session whose working directory contains ``cwd`` (or is inside it)."""
-    for name in ("AGENT_PTT_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID"):
+# Session ids a harness puts in its children's env (CLAUDE_CODE_SESSION_ID also
+# reaches Claude Code's MCP servers, so ptt_mcp.py finds its conversation).
+SESSION_ENV = (
+    "AGENT_PTT_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ID",
+)
+
+
+def env_session(base: str) -> str | None:
+    """The first session id in the env that has state on this machine."""
+    for name in SESSION_ENV:
         value = os.environ.get(name, "").strip()
         if value and load_session(base, value):
             return value
+    return None
+
+
+def find_session(base: str, cwd: str | None = None) -> str | None:
+    """This shell's session: the env, else the most recently active hooked
+    session whose working directory contains ``cwd`` (or is inside it)."""
+    return env_session(base) or folder_session(base, cwd)
+
+
+def folder_session(base: str, cwd: str | None = None) -> str | None:
+    """The most recently active hooked session whose folder contains ``cwd`` (or is
+    inside it). Ended sessions and standalone MCP sessions are never borrowed."""
     cwd = str(cwd or Path.cwd())
     best, best_at = None, -1.0
     for path in PROJECTS_DIR.glob("session-*.json"):
         pointer = _read(path)
         where = pointer.get("cwd") or ""
         if pointer.get("base") != base or not pointer.get("session_id") or not where:
+            continue
+        if pointer.get("standalone") or pointer.get("ended"):
             continue
         if not (_within(cwd, where) or _within(where, cwd)):
             continue
