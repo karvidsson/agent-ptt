@@ -78,7 +78,8 @@ def wants_wake(member_roles: list[str] | None = None) -> bool:
 
 
 def harness(agent: str) -> str:
-    return "codex" if agent.lower() == "codex" else "claude"
+    name = agent.lower()
+    return name if name in ("codex", "antigravity") else "claude"
 
 
 def machine() -> str:

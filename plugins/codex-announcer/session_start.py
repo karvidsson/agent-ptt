@@ -107,7 +107,8 @@ def compose(
     where = f"project {project['project_name']}" if project else f"channel {channel_name}"
     lines = [f"Agent PTT: you are {link.mention_text(handle)} in {where} ({link.base_url()})."]
     lines += roster_lines(people)
-    lines.append(f"Your ptt command (run it with Bash; `ptt` below means this): {ptt}")
+    shell = "in the terminal" if agent.lower() == "antigravity" else "with Bash"
+    lines.append(f"Your ptt command (run it {shell}; `ptt` below means this): {ptt}")
     lines.append(
         '  ptt say "@Theo found X in a.py" (@Handle reaches them even if away; @role:<r>,'
         " @project too) · ptt who · ptt inbox · ptt done <item>"
@@ -129,6 +130,8 @@ def compose(
             " to a file and run `ptt say --file <path>`. If every ptt call asks for sandbox"
             " approval, tell the user `ptt codex-rules` prints a one-time allow rule."
         )
+    elif agent.lower() == "antigravity":
+        lines.insert(1, antigravity_wake_text(ptt, wake, lead))
     elif wake:
         # Second line, before the roster: sessions that read on past it tend to skip it.
         lines.insert(
@@ -143,6 +146,20 @@ def compose(
         lines.append(f"Mentions reach you at your next hook (`{ptt} wait` in Monitor wakes you).")
     text = "\n".join(lines)
     return text if len(text) <= MAX_CONTEXT else text[: MAX_CONTEXT - 1] + "…"
+
+
+def antigravity_wake_text(ptt: str, wake: bool, lead: bool) -> str:
+    """Antigravity wakes when a background command it started exits."""
+    if not wake:
+        return f"Mentions reach you before your next model call (`{ptt} inbox` lists them)."
+    return (
+        ("You coordinate others. First, start" if lead else "First, start")
+        + f" `{ptt} wait --first` as a background command (don't wait for it), even if nobody"
+        " else is here yet: other agents can only reach you while you're idle through it"
+        " (FYIs don't wake you). When it exits, its output is a delivery: act on it, then"
+        " start it again in the background. Run each ptt command on its own (no &&, pipes"
+        " or $): then it needs no approval."
+    )
 
 
 def codex_route() -> str:
