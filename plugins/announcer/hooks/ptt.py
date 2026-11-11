@@ -994,7 +994,12 @@ def agy_grants() -> list[str]:
     """
     here = str(Path(__file__).resolve())
     pythons = list(dict.fromkeys([sys.executable or "python3", "python3"]))
-    return [f"command({python} {here})" for python in pythons] + [f"mcp({AGY_MCP_SERVER}/*)"]
+    tools = ("say", "tell", "who", "inbox", "ack", "done")  # explicit too, in case * isn't honoured
+    return (
+        [f"command({python} {here})" for python in pythons]
+        + [f"mcp({AGY_MCP_SERVER}/*)"]
+        + [f"mcp({AGY_MCP_SERVER}/{tool})" for tool in tools]
+    )
 
 
 def _is_ptt_grant(grant: str) -> bool:

@@ -44,6 +44,8 @@ def raw(event: str, **extra) -> dict:
 def calls(monkeypatch, tmp_path):
     """Record the shared scripts the adapter runs; answer with canned outputs."""
     monkeypatch.setattr(agy, "STATE_DIR", tmp_path / "agy")
+    monkeypatch.setenv("AGENT_PTT_AGY_SETTINGS", str(tmp_path / "agy-settings.json"))
+    monkeypatch.setenv("AGENT_PTT_AGY_GRANTS", "0")  # only the grants test writes them
     seen: list[tuple[str, dict]] = []
     answers: dict[str, list[dict]] = {}
 
@@ -91,6 +93,29 @@ def test_session_start_injects_the_shared_context_as_a_system_message(calls):
     assert script == "session_start.py"
     assert event["hook_event_name"] == "SessionStart"
     assert event["session_id"] == CONV and event["cwd"] == "/work/proj"
+
+
+def test_session_start_writes_agy_grants_once_and_says_to_restart(calls, tmp_path, monkeypatch):
+    # Task 23: agy asked before ptt and MCP calls on the Mac; grants skip that,
+    # and agy reads them only at start.
+    monkeypatch.setenv("AGENT_PTT_AGY_GRANTS", "1")
+    settings = tmp_path / "agy-settings.json"
+    settings.write_text(json.dumps({"trustedWorkspaces": ["/w"]}))
+    context = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "hi"}}
+    calls["answers"]["session_start.py"] = [context]
+    first = agy.session_start(raw("SessionStart"))["injectSteps"][0]["systemMessage"]
+    assert "restart agy" in first["systemMessage"]
+    allow = json.loads(settings.read_text())["permissions"]["allow"]
+    assert f"command({sys.executable} {PLUGIN / 'ptt.py'})" in allow
+    for tool in ("say", "tell", "who", "inbox", "ack", "done"):
+        assert f"mcp(agent-ptt-announcer_agent-ptt/{tool})" in allow
+    assert json.loads(settings.read_text())["trustedWorkspaces"] == ["/w"]
+    again = agy.session_start(raw("SessionStart"))
+    assert again == {"injectSteps": [{"systemMessage": {"systemMessage": "hi"}}]}  # no repeat
+    monkeypatch.setenv("AGENT_PTT_AGY_GRANTS", "0")
+    settings.unlink()
+    agy.session_start(raw("SessionStart"))
+    assert not settings.exists()
 
 
 def test_first_model_call_of_a_prompt_plays_user_prompt_submit_then_post_tool_use(calls):
