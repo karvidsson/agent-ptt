@@ -124,3 +124,20 @@ def test_main_skips_codex_when_not_on_path(monkeypatch, capsys):
     assert installer.main([]) == 0
     out = capsys.readouterr().out
     assert "Codex: `codex` not on PATH, skipped" in out
+
+
+def test_install_antigravity_installs_the_plugin_folder(tmp_path):
+    calls = []
+    installer.install_antigravity(tmp_path, run=lambda cmd, **kw: calls.append(cmd))
+    assert calls == [["agy", "plugin", "install", str(tmp_path / "plugins/antigravity-announcer")]]
+    assert (REPO_ROOT / installer.ANTIGRAVITY_PLUGIN_DIR / "plugin.json").is_file()
+
+
+def test_main_skips_antigravity_when_not_on_path(monkeypatch, capsys):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(installer, "main_checkout", lambda: REPO_ROOT)
+    monkeypatch.setattr(
+        installer, "install_antigravity", lambda *a, **k: pytest.fail("must not run without agy")
+    )
+    assert installer.main([]) == 0
+    assert "Antigravity: `agy` not on PATH, skipped" in capsys.readouterr().out

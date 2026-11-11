@@ -364,9 +364,16 @@ def test_waiter_prints_one_line_per_item_and_acks(env, capsys):
     assert pending.json() == []
 
 
-def test_wait_loop_backs_off_and_never_spins():
+def _bare_waiter(out=None, clock=None):
     waiter = ptt.Waiter.__new__(ptt.Waiter)
-    waiter.wait = 30
+    waiter.wait, waiter.out, waiter.lock = 30, out or io.StringIO(), threading.RLock()
+    waiter.stopped, waiter.ended, waiter.trouble_after = None, False, ptt.TROUBLE_SECONDS
+    waiter.clock = clock or (lambda: 0.0)
+    return waiter
+
+
+def test_wait_loop_backs_off_and_never_spins():
+    waiter = _bare_waiter()
     stop = threading.Event()
     sleeps, results = [], [OSError(), OSError(), OSError(), 0, 0]
 
@@ -383,14 +390,138 @@ def test_wait_loop_backs_off_and_never_spins():
     assert all(s > ptt.MIN_CYCLE - 1 for s in sleeps[3:])  # an instant empty poll waits
 
 
-def test_wait_loop_ends_without_a_project():
-    waiter = ptt.Waiter.__new__(ptt.Waiter)
-    waiter.wait = 30
+def test_wait_loop_failure_stops_the_whole_wait():
+    waiter = _bare_waiter()
+    stop = threading.Event()
 
     def poll(wait):
-        raise ptt.Failure("no project")
+        raise ptt.Failure("no channel")
 
-    waiter.loop(poll, threading.Event(), sleep=lambda s: pytest.fail("slept"))
+    waiter.loop(poll, stop, sleep=lambda s: pytest.fail("slept"), name="channel")
+    assert stop.is_set()  # the other loop stops too: never one loop alone
+    assert waiter.stopped == "the channel poll failed: no channel" and not waiter.ended
+
+
+def test_wait_loop_says_once_when_failing_for_long_and_keeps_retrying():
+    now = [0.0]
+    waiter = _bare_waiter(clock=lambda: now[0])
+    stop, sleeps = threading.Event(), []
+    results = [OSError("down")] * 8 + [0]
+
+    def poll(wait):
+        result = results.pop(0)
+        if not results:
+            stop.set()
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += 60
+
+    waiter.loop(poll, stop, sleep=sleep, name="channel")
+    lines = waiter.out.getvalue().splitlines()
+    assert len(lines) == 1  # one line per failure streak
+    assert lines[0].startswith("[ptt] wait: the channel poll has failed for 5 min (OSError: down)")
+    assert "still retrying" in lines[0]
+    assert len(sleeps) >= 8 and waiter.stopped is None  # it kept polling
+
+
+def test_waiter_run_prints_one_restart_line_when_a_loop_gives_up(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    out = io.StringIO()
+    waiter = ptt.Waiter(session, out=out, batch=0)
+    waiter.channel_once = lambda wait: (_ for _ in ()).throw(ptt.Failure("boom"))
+    waiter.project_once = lambda wait: threading.Event().wait(0.05) and 0
+    waiter.run()
+    lines = out.getvalue().splitlines()
+    assert lines == [
+        "[ptt] wait stopped: the channel poll failed: boom. Start it again with: "
+        + ptt.link.script_command("ptt.py", "--session", "s1", "wait")
+    ]
+
+
+def test_reconnect_recovers_the_channel_name_from_the_session_pointer(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    cid = session.channel()["channel_id"]
+    assert ptt.link.load_session(session.base, "s1")["channel_name"] == "proj"
+    session.channel_path.unlink()  # what SessionEnd's cleanup (or an old file) leaves
+    state = session.channel()
+    assert state["channel_id"] == cid and state["key_id"] and state["name"] == "proj"
+    # an older pointer without channel_name: the name comes from GET /channels/{id}
+    session.channel_path.unlink()
+    pointer = ptt.link.load_session(session.base, "s1")
+    pointer.pop("channel_name")
+    ptt.link.pointer_path(session.base, "s1").write_text(json.dumps(pointer))
+    assert session.channel()["channel_id"] == cid
+    assert any(m == "GET" and p == f"/channels/{cid}" for m, p, _ in env["calls"])
+
+
+def test_wait_ends_with_the_session_and_says_not_to_restart(env, capsys):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    session.channel_path.unlink()
+    ptt.link.save_session(session.base, "s1", ended=True)
+    with pytest.raises(ptt.SessionEnded):
+        session.channel()  # never rejoin a session that ended
+    out = io.StringIO()
+    waiter = ptt.Waiter(session, out=out, batch=0)
+    waiter.run()
+    line = out.getvalue().strip()
+    assert line.startswith("[ptt] wait stopped: session s1 ended")
+    assert "Don't restart" in line and "Start it again" not in line
+    capsys.readouterr()
+    ptt.cmd_wait(session, ptt.parser().parse_args(["wait"]))  # an ended session: exit at once
+    assert capsys.readouterr().out.startswith("[ptt] wait stopped: session s1 ended")
+
+
+def test_plugin_versions_compare_numerically():
+    key = ptt.link.version_key
+    assert key("0.4.10") > key("0.4.9") > key("0.4") and key("0.5") == key("0.5.0")
+    assert key("v1.2.3-dev") == (1, 2, 3) and key("") == () and key(None) == ()
+    people = [
+        {"handle": "Old", "plugin_version": "0.4.4", "presence": "listening"},
+        {"handle": "New", "plugin_version": "0.4.10", "presence": "idle"},
+        {"handle": "Gone", "plugin_version": "9.0.0", "presence": "away"},
+        {"handle": "None", "presence": "active"},
+    ]
+    assert ptt.link.stale_plugin_line("0.4.9", people) == (
+        "Your Agent PTT plugin is 0.4.9, older than 0.4.10 used by @New: update it"
+        " (plugins/README.md)."
+    )
+    assert ptt.link.stale_plugin_line("0.4.10", people) is None
+    assert ptt.link.stale_plugin_line("", people) is None  # unknown: say nothing
+
+
+def test_plugin_version_comes_from_the_sibling_manifest(tmp_path):
+    version = json.loads((ROOT / "plugins/announcer/.claude-plugin/plugin.json").read_text())
+    assert ptt.link.plugin_version() == version["version"]
+    codex = json.loads((CODEX / ".codex-plugin/plugin.json").read_text())["version"]
+    assert ptt.link.plugin_version(CODEX) == codex
+    (tmp_path / "plugin.json").write_text(json.dumps({"version": "1.2.3"}))
+    assert ptt.link.plugin_version(tmp_path) == "1.2.3"  # antigravity layout
+    assert ptt.link.plugin_version(tmp_path / "missing") == ""
+
+
+def test_session_start_sends_the_version_and_warns_when_older(env, capsys, monkeypatch):
+    joined = env["client"].post(
+        "/projects/join", json={"name": "proj", "handle": "Rex", "plugin_version": "99.0"}
+    )
+    assert joined.status_code == 200
+    monkeypatch.setattr(session_start.link, "plugin_version", lambda here=None: "0.4.5")
+    context = start(capsys=capsys)
+    assert "Your Agent PTT plugin is 0.4.5, older than 99.0 used by @Rex" in context
+    _, record = session_start.link.load_membership(session_start.link.base_url(), "s1")
+    assert record["join"]["plugin_version"] == "0.4.5"
+    members = env["client"].get(f"/projects/{record['project_id']}").json()["members"]
+    assert {m["handle"]: m["plugin_version"] for m in members}[record["handle"]] == "0.4.5"
+    monkeypatch.setattr(ptt.link, "plugin_version", lambda here=None: "0.4.5")
+    ptt.cmd_who(ptt.Session("s1"), None)
+    out = capsys.readouterr().out
+    assert "@Rex" in out and "plugin 99.0" in out and "older than 99.0" in out
 
 
 def test_wait_lock_is_single_instance_and_recovers_when_stale(env, capsys):

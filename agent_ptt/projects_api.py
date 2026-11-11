@@ -87,6 +87,7 @@ def _public_member(member: ProjectMemberDB, now: datetime | None = None) -> dict
         machine=member.machine,
         doing=member.doing,
         doing_at=pj.as_utc(member.doing_at),
+        plugin_version=member.plugin_version,
         presence=pj.presence(member, now),
         mention=pj.mention_text(member.handle),
     ).model_dump(mode="json")

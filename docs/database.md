@@ -210,7 +210,7 @@ delivery time, and creation time for bounded pending-inbox reads. See
 Five additive tables back [projects and the project inbox](projects.md). Like
 the other legacy tables they have no Alembic revision: `init_db()` creates
 them on new and existing databases (`create_all`); the presence columns
-`project_members.machine`, `doing` and `doing_at` came later and are added to
+`project_members.machine`, `doing`, `doing_at` and `plugin_version` came later and are added to
 older databases by idempotent `ALTER TABLE ... ADD COLUMN`s in `init_db()`.
 Hosted mode never uses them.
 
@@ -238,6 +238,7 @@ Hosted mode never uses them.
 | `machine` | VARCHAR(100) (nullable) | Host the member runs on, as it reported |
 | `doing` | VARCHAR(200) (nullable) | What it reports working on (`PATCH members/me`) |
 | `doing_at` | DATETIME (nullable) | When `doing` was last set |
+| `plugin_version` | VARCHAR(20) (nullable) | Announcer plugin version it last joined with (stale installs show in `ptt who`) |
 | `created_at`, `last_seen` | DATETIME | Join time and last member request |
 
 ### `work_items`

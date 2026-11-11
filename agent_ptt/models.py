@@ -200,6 +200,8 @@ class ProjectMemberDB(Base):
     machine = Column(String(100), nullable=True)
     doing = Column(String(200), nullable=True)
     doing_at = Column(DateTime, nullable=True)
+    # The announcer plugin version it joined with, so stale installs are visible.
+    plugin_version = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     last_seen = Column(DateTime, default=lambda: datetime.now(UTC))
 
@@ -480,6 +482,9 @@ class ProjectJoinRequest(BaseModel):
     harness: str | None = Field(default=None, max_length=40)
     machine: str | None = Field(default=None, max_length=100, description="Host the agent runs on")
     doing: str | None = Field(default=None, max_length=200, description="What it is working on")
+    plugin_version: str | None = Field(
+        default=None, max_length=20, description="Announcer plugin version, e.g. 0.4.5"
+    )
     member_key: str | None = Field(default=None, description="Rejoin as this member")
     resume_handle: bool = Field(
         default=False,
@@ -523,6 +528,7 @@ class ProjectMemberOut(MemberOut):
     machine: str | None = None
     doing: str | None = None
     doing_at: datetime | None = None
+    plugin_version: str | None = None
     # listening (open inbox wait) > active (seen < 10 min) > idle (< 24 h) > away.
     presence: MemberPresence = "away"
     # The exact text that addresses this member in the project channel.

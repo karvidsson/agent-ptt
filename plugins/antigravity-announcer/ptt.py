@@ -45,11 +45,16 @@ WAIT_SECONDS = 30
 MIN_CYCLE = 10.0  # never poll faster than this when a poll returns nothing new
 MAX_BACKOFF = 60.0
 LOCK_STALE = 120.0
+TROUBLE_SECONDS = 300.0  # a poll failing this long gets one stdout line (and keeps retrying)
 KINDS = ("instruction", "question", "answer", "note", "handoff", "claim", "release")
 
 
 class Failure(Exception):
     pass
+
+
+class SessionEnded(Failure):
+    """The session's SessionEnd hook ran: nothing more is delivered to it."""
 
 
 class Session:
@@ -79,10 +84,36 @@ class Session:
             state = self.reconnect(state)
         return state
 
+    def ended(self) -> bool:
+        """True once SessionEnd marked the pointer (a resumed session clears it)."""
+        return bool(link.load_session(self.base, self.session_id).get("ended"))
+
+    def channel_name(self, state: dict) -> str | None:
+        """The channel's name: the state file, else the session pointer.
+
+        SessionEnd deletes the state file, and an old one may lack the name; the
+        pointer keeps ``channel_name`` (and ``channel_id``, looked up as a last resort).
+        """
+        if state.get("name"):
+            return state["name"]
+        pointer = link.load_session(self.base, self.session_id) or self.pointer
+        if pointer.get("channel_name"):
+            return pointer["channel_name"]
+        cid = pointer.get("channel_id") or state.get("channel_id")
+        if not cid:
+            return None
+        try:
+            channel = link.request(self.base, "GET", f"/channels/{cid}", timeout=5)
+        except Exception:
+            return None
+        return (channel or {}).get("name") or None
+
     def reconnect(self, state: dict | None = None) -> dict:
         with self.lock:
+            if self.ended():
+                raise SessionEnded(f"session {self.session_id} ended")
             state = state or link._read(self.channel_path)
-            name = state.get("name")
+            name = self.channel_name(state)
             if not name:
                 raise Failure("This session has no channel yet; send a prompt first.")
             fresh = link.connect_channel(self.base, name, self.agent, self.session_id)
@@ -193,8 +224,14 @@ def cmd_who(session: Session, args) -> None:
     print(f"You are {link.mention_text(me)} in {where}.")
     if not people:
         print("Nobody else is here yet.")
+    version = link.plugin_version()
+    if version:
+        print(f"Your Agent PTT plugin: {version}.")
+    stale = link.stale_plugin_line(version, people)
+    if stale:
+        print(stale)
     for person in people:
-        print(link.person_line(person))
+        print(link.person_line(person, version=True))
 
 
 def _pending(session: Session) -> tuple[list[dict], list[dict]]:
@@ -342,6 +379,9 @@ class Waiter:
         self.cap = True  # `wait --once` prints on request: not a wake
         self.first = False  # `wait --first`: exit after the first delivery (background tasks)
         self.stop_event: threading.Event | None = None
+        self.stopped: str | None = None  # why a poll loop gave up: the whole wait ends
+        self.ended = False  # the session ended (no restart advice)
+        self.trouble_after = TROUBLE_SECONDS  # failing this long: say so once, keep trying
 
     def wake_only(self) -> str:
         return "&wake_only=1" if self.session.channel().get("fyi_supported") else ""
@@ -463,46 +503,100 @@ class Waiter:
         self.hold([(link.item_line(i), "item", i["item_id"]) for i in fresh])
         return len(fresh)
 
-    def loop(self, poll, stop: threading.Event, sleep=time.sleep) -> None:
-        failures = 0
+    def say(self, line: str) -> None:
+        """One stdout line (a Monitor event), outside the batched delivery."""
+        with self.lock:
+            self.out.write(line + "\n")
+            self.out.flush()
+
+    def give_up(self, reason: str, stop: threading.Event, ended: bool = False) -> None:
+        """End the whole wait: never leave the other loop running alone."""
+        with self.lock:
+            if self.stopped is None:
+                self.stopped, self.ended = reason, ended
+        stop.set()
+
+    def loop(self, poll, stop: threading.Event, sleep=time.sleep, name: str = "inbox") -> None:
+        failures, failing_since, told = 0, None, False
         while not stop.is_set():
             started = time.monotonic()
             try:
                 fresh = poll(self.wait)
-                failures = 0
-            except Failure:
-                return  # nothing to poll (no project): this loop is done
-            except Exception:
+                failures, failing_since, told = 0, None, False
+            except SessionEnded as exc:
+                self.give_up(str(exc), stop, ended=True)
+                return
+            except Failure as exc:
+                self.give_up(f"the {name} poll failed: {exc}", stop)
+                return
+            except Exception as exc:
                 failures += 1
+                now = self.clock()
+                failing_since = now if failing_since is None else failing_since
+                if not told and now - failing_since >= self.trouble_after:
+                    told = True
+                    minutes = round((now - failing_since) / 60)
+                    self.say(
+                        f"[ptt] wait: the {name} poll has failed for {minutes} min"
+                        f" ({type(exc).__name__}: {link.one_line(str(exc), 200)});"
+                        " still retrying, mentions may be late"
+                    )
                 sleep(min(MAX_BACKOFF, 2.0 ** min(failures, 6)))
                 continue
             elapsed = time.monotonic() - started
             if not fresh and elapsed < MIN_CYCLE:
                 sleep(MIN_CYCLE - elapsed)  # older servers answer at once: don't spin
 
+    def restart_command(self) -> str:
+        return link.script_command("ptt.py", "--session", self.session.session_id, "wait")
+
+    def stop_line(self) -> str | None:
+        if self.stopped is None:
+            return None
+        if self.ended:
+            return (
+                f"[ptt] wait stopped: {self.stopped}; nothing more is delivered to it."
+                " Don't restart this wait."
+            )
+        return f"[ptt] wait stopped: {self.stopped}. Start it again with: {self.restart_command()}"
+
     def run(self, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
         self.stop_event = stop
-        threads = [threading.Thread(target=self.loop, args=(self.channel_once, stop), daemon=True)]
+        polls = [("channel", self.channel_once)]
         if self.session.has_project():
-            threads.append(
-                threading.Thread(target=self.loop, args=(self.project_once, stop), daemon=True)
+            polls.append(("project", self.project_once))
+        threads = [
+            threading.Thread(
+                target=self.loop, args=(poll, stop), kwargs={"name": name}, daemon=True
             )
+            for name, poll in polls
+        ]
         for thread in threads:
             thread.start()
         beat = self.clock()
-        while not stop.is_set() and any(t.is_alive() for t in threads):
+        while not stop.is_set():
+            if not all(t.is_alive() for t in threads):
+                self.give_up("a poll loop ended unexpectedly", stop)
+                break
             with self.lock:
                 flush_at = self.flush_at
             timeout = 15.0 if flush_at is None else max(0.0, min(15.0, flush_at - self.clock()))
             stop.wait(timeout)
             if self.due():
                 self.flush()
-            if self.heartbeat and self.clock() - beat >= 15:
-                self.heartbeat()
+            if self.clock() - beat >= 15:
                 beat = self.clock()
+                if self.heartbeat:
+                    self.heartbeat()
+                with contextlib.suppress(Exception):
+                    if self.session.ended():  # SessionEnd ran: this wait is a zombie
+                        self.give_up(f"session {self.session.session_id} ended", stop, True)
         if self.flush_at is not None:
             self.flush()  # never drop a held batch
+        line = self.stop_line()
+        if line:
+            self.say(line)
 
 
 def _holder_alive(path: Path) -> bool:
@@ -564,6 +658,10 @@ def cmd_wait(session: Session, args) -> None:
         return
     waiter = Waiter(session)
     waiter.first = bool(getattr(args, "first", False))
+    if session.ended():
+        waiter.give_up(f"session {session.session_id} ended", threading.Event(), ended=True)
+        print(waiter.stop_line(), flush=True)
+        return
     lock = _wait_lock(session)
     if lock is None:
         print("[ptt] already waiting for this session in another process", flush=True)
@@ -577,7 +675,14 @@ def cmd_wait(session: Session, args) -> None:
                 signal.signal(getattr(signal, name), _exit_on_signal)
     me = session.member.get("handle") or session.agent
     # stderr: a Monitor turns each stdout line into a turn; this one carries nothing to act on.
-    print(f"[ptt] waiting for mentions and work items as {me}", file=sys.stderr, flush=True)
+    version = link.plugin_version()
+    note = f" (plugin {version})" if version else ""
+    print(f"[ptt] waiting for mentions and work items as {me}{note}", file=sys.stderr, flush=True)
+    with contextlib.suppress(Exception):
+        people = link.fetch_people(session.base, session.member or {}, None)
+        stale = link.stale_plugin_line(version, people)
+        if stale:
+            print(f"[ptt] {stale}", file=sys.stderr, flush=True)
     try:
         waiter.run()
     except (KeyboardInterrupt, SystemExit):

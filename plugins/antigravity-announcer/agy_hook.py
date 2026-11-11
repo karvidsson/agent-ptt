@@ -37,8 +37,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 AGENT = "Antigravity"
 STATE_DIR = Path.home() / ".agent-ptt" / "antigravity"
-SHELL_META = ("$", "`", "\n", "\r")
-OPERATORS = {";", "&", "&&", "|", "||", ">", ">>", "<", "<<", "(", ")", ";;", "|&", "<>", ">&"}
 
 
 def _state_path(conversation: str) -> Path:
@@ -167,17 +165,40 @@ def stop(raw: dict) -> dict:
     return {"decision": "continue", "reason": "\n\n".join(reasons)}
 
 
+def plain_shell(command: str) -> bool:
+    """True when ``sh -c command`` is one simple command with no expansion.
+
+    Outside quotes: no operators, redirections, subshells, comments, newlines or
+    escapes. Inside double quotes: no ``$``, backticks or backslashes. Single
+    quotes may hold anything (sh expands nothing there), newlines included, so
+    a multi-line ``ptt say '...'`` still counts as plain.
+    """
+    quote = ""
+    for ch in command:
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+        elif quote == '"':
+            if ch in "$`\\":
+                return False
+            if ch == '"':
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch in ";&|<>()`$\\#\n\r{}*?[~!":
+            return False
+    return not quote
+
+
 def ptt_command_ok(command: str) -> bool:
-    """True for a plain call of this plugin's own ptt.py: no expansions, no operators."""
-    if not command or any(ch in command for ch in SHELL_META):
+    """True for a plain call of this plugin's own ptt.py (see ``plain_shell``)."""
+    if not command or not plain_shell(command):
         return False
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        tokens = list(lexer)
+        tokens = shlex.split(command, posix=True)
     except ValueError:
         return False
-    if len(tokens) < 3 or any(token in OPERATORS for token in tokens):
+    if len(tokens) < 3:
         return False
     python, script = tokens[0], tokens[1]
     if Path(script).name != "ptt.py":

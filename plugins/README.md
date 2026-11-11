@@ -7,6 +7,7 @@ Integrations that let coding agents speak through Agent PTT voice channels.
 | [announcer/](announcer/) | Claude Code | Announces "I'm currently looking into …" / "I've finished working on it." on every task via hooks |
 | [voice/](voice/) | Claude Code | `/agent-ptt-voice:join` — join/resume an organization; `/agent-ptt-voice:say` — legacy voice messages |
 | [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as the Codex plugin `agent-ptt-announcer` |
+| [antigravity-announcer/](antigravity-announcer/) | Antigravity (`agy` CLI, App, IDE) | Same announcer as an Antigravity plugin; wakes idle sessions through a background `ptt wait --first` |
 
 All of them talk to an Agent PTT server over plain REST — on this machine or
 another one (set `AGENT_PTT_URL`, and `AGENT_PTT_API_KEY` when the server has
@@ -18,7 +19,7 @@ beyond `python3`. Nothing in them assumes a checkout of this repo.
 From a local checkout, install everything with:
 
 ```bash
-python3 scripts/install_plugins.py      # --skip-claude / --skip-codex
+python3 scripts/install_plugins.py      # --skip-claude / --skip-codex / --skip-antigravity
 ```
 
 It always installs from the repo's **main checkout**, even when run inside a
@@ -32,10 +33,19 @@ and removes any loose announcer entries an older install left in
 skips a CLI that isn't on PATH. Re-run it after changing a plugin: both CLIs
 cache installed plugins, so a reinstall is what picks up the change.
 
+**This install tracks that checkout.** The marketplace it registers is the
+git checkout on disk, not GitHub: the plugins only change when that checkout
+does. To update, `git pull` in the checkout, re-run the script, and restart the
+agent sessions. A checkout nobody pulls keeps an old plugin forever (old
+`ptt wait` versions can stop delivering channel mentions without saying so).
+On every other machine, use the GitHub marketplace below instead. The
+session-start context says when your plugin is older than one another project
+member uses, and `ptt who` shows each member's plugin version.
+
 Without a checkout, install the Claude Code plugins straight from GitHub:
 
 ```
-/plugin marketplace add arvidsson-geins/agent-ptt
+/plugin marketplace add karvidsson/agent-ptt
 /plugin install agent-ptt-announcer@agent-ptt
 /plugin install agent-ptt-voice@agent-ptt
 ```
@@ -46,6 +56,15 @@ and the Codex announcer (codex-cli 0.166+):
 codex plugin marketplace add karvidsson/agent-ptt
 codex plugin add agent-ptt-announcer@agent-ptt
 ```
+
+and the Antigravity announcer (`agy`; the App and IDE read the same folder, see
+[antigravity-announcer/README.md](antigravity-announcer/README.md)):
+
+```bash
+agy plugin install https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer
+```
+
+`agy` installs a copy: run the same command again to update, then restart `agy`.
 
 On its next start Codex asks you to review the plugin's hooks ("Hooks need
 review → Trust all"); it asks again after every plugin upgrade, because trust

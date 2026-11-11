@@ -86,6 +86,66 @@ def machine() -> str:
     return (platform.node() or "").split(".")[0][:100]
 
 
+# --- plugin version ---------------------------------------------------------
+
+# Where each plugin keeps its manifest, relative to these scripts: the Claude Code
+# plugin's hooks/ folder, the Codex plugin's root, the Antigravity plugin's root.
+MANIFESTS = (
+    ("..", ".claude-plugin", "plugin.json"),
+    (".codex-plugin", "plugin.json"),
+    ("plugin.json",),
+)
+VERSION_MAX = 20
+
+
+def plugin_version(here: Path | None = None) -> str:
+    """This copy's plugin version from the sibling manifest ("" if none is found)."""
+    here = here or HERE
+    for parts in MANIFESTS:
+        try:
+            data = json.loads(here.joinpath(*parts).read_text())
+        except (OSError, ValueError):
+            continue
+        version = str(data.get("version") or "").strip() if isinstance(data, dict) else ""
+        if version:
+            return version[:VERSION_MAX]
+    return ""
+
+
+def version_key(version: str | None) -> tuple[int, ...]:
+    """``"0.4.10"`` → ``(0, 4, 10)``: numeric, so 0.4.10 is newer than 0.4.9."""
+    match = re.match(r"\s*v?(\d+(?:\.\d+)*)", str(version or ""))
+    if not match:
+        return ()
+    parts = [int(n) for n in match.group(1).split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()  # 0.5 == 0.5.0
+    return tuple(parts)
+
+
+def newest_plugin(people: list[dict]) -> tuple[str, str] | None:
+    """(version, handle) of the newest plugin among the project's current members."""
+    best = None
+    for person in people:
+        version = person.get("plugin_version")
+        if not version_key(version) or person.get("presence") == "away":
+            continue
+        if best is None or version_key(version) > version_key(best[0]):
+            best = (version, person.get("handle") or "?")
+    return best
+
+
+def stale_plugin_line(mine: str, people: list[dict]) -> str | None:
+    """One line when this session's plugin is older than another current member's."""
+    newest = newest_plugin(people)
+    if not version_key(mine) or newest is None or version_key(newest[0]) <= version_key(mine):
+        return None
+    return (
+        f"Your Agent PTT plugin is {mine}, older than {newest[0]} used by"
+        f" {mention_text(newest[1])}: update it (plugins/README.md)."
+    )
+
+
 # --- HTTP -----------------------------------------------------------------
 
 
@@ -444,7 +504,7 @@ def describe(person: dict) -> str:
     return (person.get("handle") or "?") + (f" ({where})" if where else "")
 
 
-def person_line(person: dict) -> str:
+def person_line(person: dict, version: bool = False) -> str:
     head = person.get("mention") or mention_text(person.get("handle") or "?")
     if person.get("roles"):
         head += " [" + ", ".join(person["roles"]) + "]"
@@ -452,6 +512,8 @@ def person_line(person: dict) -> str:
     where = " on ".join(x for x in (person.get("harness"), person.get("machine")) if x)
     if where:
         bits.append(where)
+    if version and person.get("plugin_version"):
+        bits.append("plugin " + one_line(person["plugin_version"], VERSION_MAX))
     bits.append(person.get("presence") or "?")
     if person.get("doing"):
         bits.append("doing: " + one_line(person["doing"], 60))

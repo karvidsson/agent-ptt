@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Install the Agent PTT plugins for Claude Code and Codex from the main checkout.
+"""Install the Agent PTT plugins for Claude Code, Codex and Antigravity from the main checkout.
 
 Claude Code gets the `.claude-plugin` marketplace; Codex gets the
 `.agents/plugins` marketplace and the agent-ptt-announcer plugin, and any loose
 announcer entries left in ~/.codex/hooks.json by the old install.sh are removed
-so hooks never fire twice.
+so hooks never fire twice. Antigravity (`agy`) gets plugins/antigravity-announcer
+copied into ~/.gemini/config/plugins/ (`agy plugin install <dir>`).
 
 Always resolves the repository's *main* worktree, even when run from a linked
 worktree (e.g. one created by the Copilot app), so neither CLI ends up pointed
 at a throwaway checkout that later disappears. Safe to re-run: that is also how
 you refresh Claude Code's and Codex's cached plugin copies after changing a plugin.
 
-    python3 scripts/install_plugins.py              # Claude Code + Codex
-    python3 scripts/install_plugins.py --skip-codex
+    python3 scripts/install_plugins.py              # Claude Code + Codex + Antigravity
+    python3 scripts/install_plugins.py --skip-codex --skip-antigravity
 
 Stdlib-only, like the plugins themselves.
 """
@@ -32,6 +33,7 @@ CODEX_PLUGIN = "agent-ptt-announcer"
 # Loose ~/.codex/hooks.json entries from the pre-plugin install.sh all name a
 # script under plugins/codex-announcer/.
 CODEX_SCRIPT_MARKER = "codex-announcer/"
+ANTIGRAVITY_PLUGIN_DIR = "plugins/antigravity-announcer"
 HERE = Path(__file__).resolve().parent
 
 
@@ -120,10 +122,21 @@ def install_codex(root: Path, codex_home: Path, run=subprocess.run) -> int:
     return migrate_codex_hooks(codex_home)
 
 
+def install_antigravity(root: Path, run=subprocess.run) -> None:
+    """Copy the Antigravity plugin into agy's plugin folder (replaces an older copy).
+
+    agy installs a copy, not a link: re-run after every change, then restart agy.
+    """
+    run(["agy", "plugin", "install", str(root / ANTIGRAVITY_PLUGIN_DIR)], check=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--skip-claude", action="store_true", help="don't touch Claude Code")
     parser.add_argument("--skip-codex", action="store_true", help="don't touch Codex")
+    parser.add_argument(
+        "--skip-antigravity", action="store_true", help="don't touch Antigravity (agy)"
+    )
     args = parser.parse_args(argv)
 
     root = main_checkout()
@@ -155,7 +168,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("⏭️  Codex: `codex` not on PATH, skipped")
 
-    print("Restart any running Claude Code / Codex sessions to pick up the plugins.")
+    if not args.skip_antigravity:
+        if shutil.which("agy"):
+            install_antigravity(root)
+            print(f"✅ Antigravity: agent-ptt-announcer installed from {root}")
+        else:
+            print("⏭️  Antigravity: `agy` not on PATH, skipped")
+
+    print("Restart any running Claude Code / Codex / agy sessions to pick up the plugins.")
     return 0
 
 

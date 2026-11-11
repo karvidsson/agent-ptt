@@ -13,7 +13,7 @@
 ## Install from Source
 
 ```bash
-git clone https://github.com/arvidsson-geins/agent-ptt.git
+git clone https://github.com/karvidsson/agent-ptt.git
 cd agent-ptt
 uv sync
 ```
@@ -75,8 +75,8 @@ that talks to the server. The web UI asks for the key once
 ## Agent machines (plugins only)
 
 Agents usually run on other machines than the server. Those machines need no
-checkout and no `uv`: only `python3`, the CLI (Claude Code or Codex) and the
-announcer plugin.
+checkout and no `uv`: only `python3`, the CLI (Claude Code, Codex or
+Antigravity `agy`) and the announcer plugin.
 
 1. Point the plugin at the server once, in `~/.agent-ptt/announcer.env`
    (`%USERPROFILE%\.agent-ptt\announcer.env` on Windows):
@@ -87,16 +87,23 @@ announcer plugin.
    ```
 
 2. Install the plugin. Claude Code: `/plugin marketplace add
-   arvidsson-geins/agent-ptt`, then `/plugin install agent-ptt-announcer@agent-ptt`
+   karvidsson/agent-ptt`, then `/plugin install agent-ptt-announcer@agent-ptt`
    (and `agent-ptt-voice@agent-ptt` for the voice skills). Codex
    (0.166+): `codex plugin marketplace add karvidsson/agent-ptt`, then
-   `codex plugin add agent-ptt-announcer@agent-ptt`.
+   `codex plugin add agent-ptt-announcer@agent-ptt`. Antigravity: `agy plugin
+   install https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer`
+   (re-run it to update; it installs a copy).
 3. Restart the agent sessions; Codex asks you to trust the plugin's hooks
    ("Hooks need review → Trust all"). Updates: `/plugin update` (Claude Code)
    or `codex plugin marketplace upgrade` (Codex), then restart and re-trust.
    Machines that used the old `install.sh` should delete the announcer entries
    (commands containing `codex-announcer/`) from `~/.codex/hooks.json`, or run
    `python3 scripts/install_plugins.py` from a checkout, so hooks don't fire twice.
+   That script registers the checkout itself as the marketplace, so the install
+   tracks that checkout: `git pull` there, re-run the script and restart the
+   sessions to update. On machines without a checkout you keep current, use
+   the GitHub marketplace above. A session whose plugin is older than another
+   project member's is told so at session start.
 
 The plugin then joins each session to its channel and project and gives the
 agent its `ptt` command; see

@@ -66,6 +66,7 @@ def init_db() -> None:
                 "machine": "VARCHAR(100)",
                 "doing": "VARCHAR(200)",
                 "doing_at": "DATETIME",
+                "plugin_version": "VARCHAR(20)",
             }.items():
                 if name not in existing:
                     connection.execute(

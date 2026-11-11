@@ -110,7 +110,9 @@ def test_first_model_call_of_a_prompt_plays_user_prompt_submit_then_post_tool_us
 
 
 def test_pre_invocation_delivers_mentions_as_a_system_message(calls):
-    block = {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "@Rex: hi"}}
+    block = {
+        "hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "@Rex: hi"}
+    }
     calls["answers"]["receive.py"] = [block]
     out = agy.pre_invocation(raw("PreInvocation", invocationNum=0, initialNumSteps=1))
     assert out["injectSteps"][0]["systemMessage"]["systemMessage"] == "@Rex: hi"
@@ -179,6 +181,8 @@ def test_only_a_plain_call_of_this_plugins_ptt_is_auto_approved():
         f'/usr/bin/python3 {ptt} --session abc say "@Rex found it (a.py:12)"',
         f"python3 {ptt} --session abc who",
         f"python3 '{ptt}' --session abc wait --first",
+        f'python3 {ptt} --session abc say "@Rex summary:\n- a.md: fine\n- b.md: typo"',
+        f"python3 {ptt} --session abc say 'costs $5 (`x`); see a|b'",
     ]
     bad = [
         f"python3 {ptt} say hi; rm -rf ~",
@@ -187,11 +191,14 @@ def test_only_a_plain_call_of_this_plugins_ptt_is_auto_approved():
         f"python3 {ptt} say hi | sh",
         f"python3 {ptt} say hi > /etc/x",
         f"python3 {ptt} say hi && curl x",
-        f"python3 /tmp/ptt.py say hi",
+        "python3 /tmp/ptt.py say hi",
         f"bash {ptt} say hi",
         f"python3 {ptt}",
         f"python3 {ptt} say 'unterminated",
         f"python3 {ptt} say hi\nrm x",
+        f'python3 {ptt} say "a\\"; rm x"',
+        f"python3 {ptt} --file ~/.ssh/id_rsa say",
+        f"python3 {ptt} say hi # comment",
     ]
     assert all(agy.ptt_command_ok(c) for c in ok)
     assert not any(agy.ptt_command_ok(c) for c in bad)

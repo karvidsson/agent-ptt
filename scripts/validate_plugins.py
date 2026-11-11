@@ -131,6 +131,40 @@ def validate() -> list[str]:
                         elif not target.is_file():
                             problems.append(f"{rel}: hook script {script} does not exist")
 
+    # Antigravity plugins: a root plugin.json + a root hooks.json of named hook groups whose
+    # commands run from the plugin folder ("python3 ./x.py"), versioned with the others
+    for manifest_path in sorted(PLUGINS_DIR.glob("*/plugin.json")):
+        plugin_dir = manifest_path.parent
+        rel = manifest_path.relative_to(REPO_ROOT)
+        manifest = _load_json(manifest_path, problems)
+        if manifest is None:
+            continue
+        if not manifest.get("name"):
+            problems.append(f"{rel}: missing 'name'")
+        version = manifest.get("version")
+        if claude_versions and claude_versions != {version}:
+            problems.append(
+                f"{rel}: version {version!r} must match every .claude-plugin version "
+                f"({', '.join(sorted(claude_versions))})"
+            )
+        hooks_path = plugin_dir / "hooks.json"
+        hooks = _load_json(hooks_path, problems) if hooks_path.exists() else {}
+        for group in (hooks or {}).values():
+            if not isinstance(group, dict):
+                problems.append(f"{hooks_path.relative_to(REPO_ROOT)}: hook groups are objects")
+                continue
+            for event, handlers in group.items():
+                if event == "enabled":
+                    continue
+                flat = []
+                for handler in handlers:
+                    flat += handler.get("hooks", [handler]) if "matcher" in handler else [handler]
+                for handler in flat:
+                    for script in re.findall(r"\./([^\s\"]+\.py)", handler.get("command", "")):
+                        if not (plugin_dir / script).is_file():
+                            where = hooks_path.relative_to(REPO_ROOT)
+                            problems.append(f"{where}: {event} runs missing {script}")
+
     client = REPO_ROOT / "agent_ptt/skills/agent-ptt-organization/scripts/client.py"
     bundled = PLUGINS_DIR / "voice/scripts/organization_client.py"
     if not bundled.exists() or bundled.read_bytes() != client.read_bytes():
@@ -158,9 +192,11 @@ def main() -> int:
 
     plugin_count = len(list(PLUGINS_DIR.glob("*/.claude-plugin/plugin.json")))
     codex_count = len(list(PLUGINS_DIR.glob("*/.codex-plugin/plugin.json")))
+    agy_count = len(list(PLUGINS_DIR.glob("*/plugin.json")))
     skill_count = len(list(PLUGINS_DIR.glob("*/skills/*/SKILL.md")))
     print(
-        f"✅ plugins OK: {plugin_count} Claude + {codex_count} Codex manifests, "
+        f"✅ plugins OK: {plugin_count} Claude + {codex_count} Codex + {agy_count} Antigravity"
+        " manifests, "
         f"{skill_count} skills, marketplaces consistent"
     )
     return 0
