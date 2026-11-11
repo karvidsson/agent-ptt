@@ -269,6 +269,8 @@ def validate_shared_copies() -> list[str]:
 # mcp.json and the file a Codex manifest's "mcpServers" names. Each runs ptt_mcp.py.
 MCP_ROOT_VARS = re.compile(r"^\$\{(?:CLAUDE_|CURSOR_)?PLUGIN_ROOT\}/")
 MCP_SERVER = "agent-ptt"
+# Cursor's own server has its own name: its Claude-plugin import would shadow "agent-ptt".
+MCP_SERVER_NAMES = {"cursor-announcer": "agent-ptt-cursor"}
 MCP_SIBLINGS = ("ptt.py", "project_link.py", "session_start.py", "session_routing.py")
 
 
@@ -297,14 +299,15 @@ def validate_mcp() -> list[str]:
         if config is None:
             continue
         servers = config.get("mcpServers")
-        if not isinstance(servers, dict) or MCP_SERVER not in servers:
-            problems.append(f"{rel}: no mcpServers.{MCP_SERVER}")
-            continue
         plugin_dir = path.parent
-        server = servers[MCP_SERVER]
+        name = MCP_SERVER_NAMES.get(plugin_dir.name, MCP_SERVER)
+        if not isinstance(servers, dict) or name not in servers:
+            problems.append(f"{rel}: no mcpServers.{name}")
+            continue
+        server = servers[name]
         scripts = [a for a in server.get("args", []) if str(a).endswith(".py")]
         if len(scripts) != 1:
-            problems.append(f"{rel}: {MCP_SERVER} must run one .py script")
+            problems.append(f"{rel}: {name} must run one .py script")
             continue
         script = MCP_ROOT_VARS.sub("", scripts[0])
         if script == scripts[0]:  # relative: Codex joins a relative cwd to the plugin root

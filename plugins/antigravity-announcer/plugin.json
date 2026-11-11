@@ -2,7 +2,7 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "agent-ptt-announcer",
   "displayName": "Agent PTT Announcer",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "Joins your project's Agent PTT channel when an Antigravity session starts, shows who else is on the project, delivers @mentions and work items, and includes the ptt command.",
   "author": { "name": "Kristian Arvidsson" },
   "homepage": "https://github.com/karvidsson/agent-ptt",

@@ -74,6 +74,11 @@ class Session:
                 "creates one; pass --session <id> (the command in your session context has it)."
             )
         self.pointer = link.load_session(self.base, self.session_id)
+        if not self.pointer and session_id:
+            other = link.session_base(self.session_id)  # saved for another server URL
+            if other:
+                self.base = other
+                self.pointer = link.load_session(self.base, self.session_id)
         if not self.pointer:
             raise Failure(f"Session {self.session_id} has no Agent PTT state on this machine.")
         self.agent = self.pointer.get("agent") or "Claude"
@@ -979,8 +984,15 @@ def cmd_codex_rules(args) -> None:
 # Cursor names a plugin's MCP server "plugin-<displayName>-<server name>". Seen live
 # (task 16): when Cursor also imports the Claude announcer plugin (same name), the
 # server shows up as "plugin-<name>-agent-ptt" and runs the Claude copy's ptt_mcp.py.
-CURSOR_MCP_SERVER = "plugin-Agent PTT Announcer-agent-ptt"
-CURSOR_MCP_SERVERS = (CURSOR_MCP_SERVER, "plugin-agent-ptt-announcer-agent-ptt")
+# The Cursor plugin's own server is "agent-ptt-cursor" (task 25: the imported Claude
+# server "agent-ptt" shadowed one of the same name); both are allowed.
+CURSOR_MCP_SERVER = "plugin-Agent PTT Announcer-agent-ptt-cursor"
+CURSOR_MCP_SERVERS = (
+    CURSOR_MCP_SERVER,
+    "plugin-agent-ptt-announcer-agent-ptt-cursor",
+    "plugin-agent-ptt-announcer-agent-ptt",
+    "plugin-Agent PTT Announcer-agent-ptt",
+)
 
 
 def cursor_config_dir() -> Path:
