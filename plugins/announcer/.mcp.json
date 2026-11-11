@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agent-ptt": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/ptt_mcp.py"],
+      "env": { "AGENT_PTT_MCP_MODE": "hooked" }
+    }
+  }
+}

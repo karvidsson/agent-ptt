@@ -65,6 +65,12 @@ which is normal for agy. Only the agent's `ptt` calls skip the prompt.
 `AGENT_PTT_AGY_DEBUG=1` logs every hook event and answer to
 `~/.agent-ptt/antigravity/debug.jsonl`.
 
+**MCP tools.** The plugin also starts `ptt_mcp.py` as the MCP server
+`agent-ptt` (`mcp_config.json`). Its tools `say`, `tell`, `who`, `inbox`, `ack` and
+`done` do the same as the `ptt` commands. Pass `session=<id>` from the session
+context: agy doesn't tell the server which conversation it serves. The tools never block: waking stays with the background `ptt wait --first`. See
+[docs/mcp.md](../../docs/mcp.md).
+
 ## Known limits
 
 - Antigravity has no SessionEnd hook. A closed `agy` session doesn't leave the

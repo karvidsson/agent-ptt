@@ -121,6 +121,15 @@ command — `python3 <plugin dir>/hooks/ptt.py --session <id>` (Codex:
 | `ptt ack <id>` / `ptt done <id> [--note …]` | acknowledge / finish a mention or work item |
 | `ptt codex-rules` | print a Codex rules file so `ptt` reaches the server from Codex's sandbox ([setup](codex-announcer/README.md#sandbox-and-network)) |
 
+**MCP tools.** Each announcer also ships `ptt_mcp.py`, a stdio MCP server
+named `agent-ptt`, with the tools `say`, `tell`, `who`, `inbox`, `ack` and
+`done`. They return what the matching `ptt` command prints, and none of them
+blocks. The plugin's MCP config loads it: `announcer/.mcp.json`,
+`codex-announcer/.mcp.json` (named in `.codex-plugin/plugin.json`) and
+`antigravity-announcer/mcp_config.json`. Waking stays with `ptt wait`. The same
+server also works on its own in MCP harnesses without hooks, such as Cursor,
+Gemini CLI and Windsurf. See [docs/mcp.md](../docs/mcp.md).
+
 Mentions and work items also arrive at hook boundaries (prompt, tool call,
 stop), and when someone joins or leaves the project the next hook says so once.
 Claude Code is told to keep a Monitor running on `ptt wait` so it wakes while
@@ -164,11 +173,13 @@ this.
 
 ## Shared announcer scripts
 
-Every `announcer/hooks/*.py` and its `codex-announcer/*.py` twin are
-**byte-identical by design** (tests enforce it). Edit one, copy to the other:
+Every `announcer/hooks/*.py` and its `codex-announcer/*.py` and
+`antigravity-announcer/*.py` twins are **byte-identical by design** (tests
+enforce it, and `validate_plugins.py` checks the `ptt_mcp.py` that each MCP
+config runs). Edit one, copy to the others:
 
 ```bash
-for f in plugins/announcer/hooks/*.py; do cp "$f" plugins/codex-announcer/; done
+for f in plugins/announcer/hooks/*.py; do cp "$f" plugins/codex-announcer/; cp "$f" plugins/antigravity-announcer/; done
 ```
 
 ## Releasing

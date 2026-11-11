@@ -166,3 +166,37 @@ def test_claude_style_hook_paths_are_checked_too(tmp_path, monkeypatch):
     config = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}
     (hooks / "hooks.json").write_text(json.dumps(config))
     assert any("hooks/missing.py does not exist" in p for p in _codex_problems())
+
+
+def test_mcp_configs_are_checked(tmp_path, monkeypatch):
+    plugins = tmp_path / "plugins"
+    hooks = plugins / "announcer" / "hooks"
+    hooks.mkdir(parents=True)
+    for name in ("ptt_mcp.py", *validate_plugins.MCP_SIBLINGS):
+        (hooks / name).write_text("# same\n")
+    monkeypatch.setattr(validate_plugins, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(validate_plugins, "PLUGINS_DIR", plugins)
+
+    def server(*args, **extra):
+        return {"mcpServers": {"agent-ptt": {"command": "python3", "args": list(args), **extra}}}
+
+    (plugins / "announcer" / ".mcp.json").write_text(
+        json.dumps(server("${CLAUDE_PLUGIN_ROOT}/hooks/ptt_mcp.py"))
+    )
+    assert validate_plugins.validate_mcp() == []
+
+    agy = plugins / "agy"
+    agy.mkdir()
+    (agy / "ptt_mcp.py").write_text("# drifted\n")
+    (agy / "mcp_config.json").write_text(json.dumps(server("${PLUGIN_ROOT}/ptt_mcp.py")))
+    codex = plugins / "codex"
+    (codex / ".codex-plugin").mkdir(parents=True)
+    (codex / ".codex-plugin" / "plugin.json").write_text('{"mcpServers": "./servers.json"}')
+    (codex / "servers.json").write_text(json.dumps(server("./ptt_mcp.py")))
+    (plugins / "bad").mkdir()
+    (plugins / "bad" / ".mcp.json").write_text('{"mcpServers": {"other": {}}}')
+    problems = validate_plugins.validate_mcp()
+    assert any("agy/mcp_config.json: ptt_mcp.py differs" in p for p in problems)
+    assert any('codex/servers.json: a relative script needs "cwd": "."' in p for p in problems)
+    assert any("codex/servers.json: MCP script ptt_mcp.py does not exist" in p for p in problems)
+    assert any("bad/.mcp.json: no mcpServers.agent-ptt" in p for p in problems)
