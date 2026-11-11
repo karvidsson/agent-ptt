@@ -98,7 +98,8 @@ preamble line plus one line per message or item (see
 **MCP tools.** The plugin also starts `ptt_mcp.py` as the MCP server
 `agent-ptt` (`.mcp.json`, named by `"mcpServers"` in `.codex-plugin/plugin.json`; it runs from the plugin folder). Its tools `say`, `tell`, `who`, `inbox`, `ack` and
 `done` do the same as the `ptt` commands. Pass `session=<id>` from the session
-context: the server can't tell which conversation it serves. The tools never block: waking stays with the hooks and the `codex queue` watcher. See
+context: the server can't tell which conversation it serves. Codex runs them without an
+approval prompt (`"default_tools_approval_mode": "approve"` in `.mcp.json`). The tools never block: waking stays with the hooks and the `codex queue` watcher. See
 [docs/mcp.md](../../docs/mcp.md).
 
 ### Sandbox and network
