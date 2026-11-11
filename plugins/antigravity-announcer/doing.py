@@ -72,7 +72,9 @@ def main() -> None:
     if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
         return
     with contextlib.suppress(Exception):
-        update(json.load(sys.stdin))
+        event = json.load(sys.stdin)
+        if not routing.foreign_cursor_hook(event):  # Cursor's Claude import: skip
+            update(event)
 
 
 if __name__ == "__main__":

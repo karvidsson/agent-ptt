@@ -141,3 +141,32 @@ def test_main_skips_antigravity_when_not_on_path(monkeypatch, capsys):
     )
     assert installer.main([]) == 0
     assert "Antigravity: `agy` not on PATH, skipped" in capsys.readouterr().out
+
+
+def test_install_cursor_copies_the_plugin_and_adds_the_noop_hooks_once(tmp_path):
+    cursor_home = tmp_path / ".cursor"
+    cursor_home.mkdir()
+    mine = {"command": "./hooks/mine.sh"}
+    (cursor_home / "hooks.json").write_text(json.dumps({"version": 1, "hooks": {"stop": [mine]}}))
+    stale = cursor_home / "plugins" / "local" / "agent-ptt-announcer"
+    stale.mkdir(parents=True)
+    (stale / "old.py").write_text("x")
+    assert installer.install_cursor(REPO_ROOT, cursor_home) == 2
+    assert (stale / "cursor_hook.py").is_file() and not (stale / "old.py").exists()
+    assert (stale / ".cursor-plugin" / "plugin.json").is_file()
+    hooks = json.loads((cursor_home / "hooks.json").read_text())["hooks"]
+    assert hooks["stop"][0] == mine  # the user's own entries stay
+    assert set(hooks) == {"stop", "beforeSubmitPrompt"}
+    assert all(installer.CURSOR_NOOP_MARKER in e["command"] for e in hooks["beforeSubmitPrompt"])
+    assert installer.install_cursor(REPO_ROOT, cursor_home) == 0  # idempotent
+    assert len(json.loads((cursor_home / "hooks.json").read_text())["hooks"]["stop"]) == 2
+
+
+def test_main_skips_cursor_when_not_on_path(monkeypatch, capsys):
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(installer, "main_checkout", lambda: REPO_ROOT)
+    monkeypatch.setattr(
+        installer, "install_cursor", lambda *a, **k: pytest.fail("must not run without agent")
+    )
+    assert installer.main([]) == 0
+    assert "Cursor: `agent` / `cursor-agent` not on PATH, skipped" in capsys.readouterr().out

@@ -5,7 +5,8 @@ Stdlib only; runs on macOS, Linux and Windows next to the plugin's hooks. It
 finds this session's channel key and project membership in the hook state under
 ``~/.agent-ptt`` (written by session_start.py and receive.py), so no keys or IDs
 need to be pasted. The session is ``--session``, else ``AGENT_PTT_SESSION_ID`` /
-``CODEX_THREAD_ID`` / ``CLAUDE_SESSION_ID`` / ``CLAUDE_CODE_SESSION_ID``, else the
+``CODEX_THREAD_ID`` / ``CLAUDE_SESSION_ID`` / ``CLAUDE_CODE_SESSION_ID`` /
+``CURSOR_CONVERSATION_ID``, else the
 most recently active hooked session whose folder contains (or is inside) the
 current directory.
 
@@ -19,6 +20,7 @@ current directory.
 hook, never waking an idle agent.
   ptt.py ack <id> | done <id> [--note N]     acknowledge / finish a mention or work item
   ptt.py codex-rules                         print a Codex rule so ptt can reach the server
+  ptt.py cursor-rules                        print a Cursor CLI allowlist entry for ptt and MCP
 """
 
 from __future__ import annotations
@@ -659,7 +661,9 @@ def cmd_wait(session: Session, args) -> None:
             print("[ptt] nothing new")
         return
     waiter = Waiter(session)
-    waiter.first = bool(getattr(args, "first", False))
+    # In Cursor's agent shell (CURSOR_AGENT=1) only a finished background command wakes
+    # the agent, so a wait there always ends after the first delivery.
+    waiter.first = bool(getattr(args, "first", False) or os.environ.get("CURSOR_AGENT") == "1")
     if session.ended():
         waiter.give_up(f"session {session.session_id} ended", threading.Event(), ended=True)
         print(waiter.stop_line(), flush=True)
@@ -969,6 +973,45 @@ def cmd_codex_rules(args) -> None:
     sys.stdout.write(codex_rules())
 
 
+# --- Cursor CLI allowlist ---------------------------------------------------------
+
+# Cursor names a plugin's MCP server "plugin-<displayName>-<server name>".
+CURSOR_MCP_SERVER = "plugin-Agent PTT Announcer-agent-ptt"
+
+
+def cursor_config_dir() -> Path:
+    """Where the Cursor CLI keeps cli-config.json (the same lookup the CLI does)."""
+    for name, suffix in (("CURSOR_CONFIG_DIR", ""), ("XDG_CONFIG_HOME", "cursor")):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return Path(value) / suffix if suffix else Path(value)
+    return Path.home() / ".cursor"
+
+
+def cursor_rules() -> dict:
+    """The Cursor CLI permissions entry that runs this ptt.py and the plugin's MCP
+    tools without a prompt. A hook's ``allow`` can't skip the CLI's prompt; only its
+    allowlist can. ``Shell(<python> <ptt.py>)`` matches that command with any
+    arguments; Cursor checks each part of a chained command (``&&``, ``;``, ``$(…)``)
+    on its own, so nothing else rides along. Re-run after a plugin update moves it.
+    """
+    here = link._quote(str(Path(__file__).resolve()))
+    pythons = list(dict.fromkeys([sys.executable or "python3", "python3"]))
+    allow = [f"Shell({link._quote(python)} {here})" for python in pythons]
+    allow.append(f"Mcp({CURSOR_MCP_SERVER}:*)")
+    return {"permissions": {"allow": allow, "deny": []}}  # the CLI requires both lists
+
+
+def cmd_cursor_rules(args) -> None:
+    where = cursor_config_dir() / "cli-config.json"
+    print(
+        f'# Agent PTT: add these to "permissions" → "allow" in {where}\n'
+        "# (or a project's .cursor/cli.json), then restart the agent CLI.",
+        file=sys.stderr,
+    )
+    sys.stdout.write(json.dumps(cursor_rules(), indent=2) + "\n")
+
+
 # --- entry point --------------------------------------------------------------
 
 
@@ -1033,6 +1076,7 @@ def parser() -> argparse.ArgumentParser:
     tell.add_argument("--reply-to", dest="reply_to")
     tell.add_argument("--fyi", action="store_true", help="informational: never wakes them")
     sub.add_parser("codex-rules", help="print a Codex rules file that lets ptt skip the sandbox")
+    sub.add_parser("cursor-rules", help="print a Cursor CLI allowlist entry for ptt and MCP")
     watch = sub.add_parser("codex-watch", help="(started by the hooks) wake idle Codex")
     watch.add_argument("--pid", type=int, default=0, help="the Codex process to follow")
     for name in ("ack", "done"):
@@ -1057,9 +1101,9 @@ COMMANDS = {
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    if args.command == "codex-rules":
-        cmd_codex_rules(args)  # needs no session
-        return 0
+    if args.command in ("codex-rules", "cursor-rules"):
+        (cmd_codex_rules if args.command == "codex-rules" else cmd_cursor_rules)(args)
+        return 0  # needs no session
     try:
         session = Session(args.session)
         COMMANDS[args.command](session, args)

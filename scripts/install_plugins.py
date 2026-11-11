@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Install the Agent PTT plugins for Claude Code, Codex and Antigravity from the main checkout.
+"""Install the Agent PTT plugins (Claude Code, Codex, Antigravity, Cursor) from the main checkout.
 
 Claude Code gets the `.claude-plugin` marketplace; Codex gets the
 `.agents/plugins` marketplace and the agent-ptt-announcer plugin, and any loose
 announcer entries left in ~/.codex/hooks.json by the old install.sh are removed
 so hooks never fire twice. Antigravity (`agy`) gets plugins/antigravity-announcer
-copied into ~/.gemini/config/plugins/ (`agy plugin install <dir>`).
+copied into ~/.gemini/config/plugins/ (`agy plugin install <dir>`). Cursor
+(`agent` / `cursor-agent`) gets plugins/cursor-announcer copied into
+~/.cursor/plugins/local/agent-ptt-announcer/, plus two no-op entries in
+~/.cursor/hooks.json without which the agent CLI never runs a plugin's
+beforeSubmitPrompt and stop hooks.
 
 Always resolves the repository's *main* worktree, even when run from a linked
 worktree (e.g. one created by the Copilot app), so neither CLI ends up pointed
 at a throwaway checkout that later disappears. Safe to re-run: that is also how
 you refresh Claude Code's and Codex's cached plugin copies after changing a plugin.
 
-    python3 scripts/install_plugins.py              # Claude Code + Codex + Antigravity
-    python3 scripts/install_plugins.py --skip-codex --skip-antigravity
+    python3 scripts/install_plugins.py              # Claude Code + Codex + Antigravity + Cursor
+    python3 scripts/install_plugins.py --skip-codex --skip-antigravity --skip-cursor
 
 Stdlib-only, like the plugins themselves.
 """
@@ -34,6 +38,12 @@ CODEX_PLUGIN = "agent-ptt-announcer"
 # script under plugins/codex-announcer/.
 CODEX_SCRIPT_MARKER = "codex-announcer/"
 ANTIGRAVITY_PLUGIN_DIR = "plugins/antigravity-announcer"
+CURSOR_PLUGIN_DIR = "plugins/cursor-announcer"
+CURSOR_PLUGIN = "agent-ptt-announcer"
+# The agent CLI (2026.11.11) runs a plugin's beforeSubmitPrompt and stop hooks only when a
+# non-plugin hooks.json also lists the event, so the install adds a no-op for each.
+CURSOR_NOOP_MARKER = "agent-ptt: lets plugin hooks run"
+CURSOR_NOOP_EVENTS = ("beforeSubmitPrompt", "stop")
 HERE = Path(__file__).resolve().parent
 
 
@@ -130,6 +140,46 @@ def install_antigravity(root: Path, run=subprocess.run) -> None:
     run(["agy", "plugin", "install", str(root / ANTIGRAVITY_PLUGIN_DIR)], check=True)
 
 
+def cursor_noop_hooks(existing: dict) -> tuple[dict, int]:
+    """Add the no-op beforeSubmitPrompt/stop entries to a Cursor hooks.json config.
+
+    Keeps every other entry; adds ours only where missing. Returns the config and how
+    many entries were added. ``exit 0`` does nothing in sh and PowerShell alike.
+    """
+    config = json.loads(json.dumps(existing or {}))  # deep copy
+    config.setdefault("version", 1)
+    hooks = config.setdefault("hooks", {})
+    added = 0
+    for event in CURSOR_NOOP_EVENTS:
+        entries = hooks.setdefault(event, [])
+        if not any(CURSOR_NOOP_MARKER in str(e.get("command", "")) for e in entries):
+            entries.append({"command": f"exit 0 # {CURSOR_NOOP_MARKER}", "timeout": 5})
+            added += 1
+    return config, added
+
+
+def install_cursor(root: Path, cursor_home: Path) -> int:
+    """Copy the Cursor plugin into ~/.cursor/plugins/local/ (replacing an older copy)
+    and add the no-op hooks.json entries; returns how many entries were added.
+
+    A copy, not a symlink: Cursor only follows links that stay inside that folder.
+    Re-run after every change, then restart Cursor (the IDE: Reload Window).
+    """
+    target = cursor_home / "plugins" / "local" / CURSOR_PLUGIN
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.exists():
+        shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(root / CURSOR_PLUGIN_DIR, target, ignore=shutil.ignore_patterns("__pycache__"))
+    hooks_path = cursor_home / "hooks.json"
+    existing = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
+    config, added = cursor_noop_hooks(existing)
+    if added:
+        hooks_path.write_text(json.dumps(config, indent=2) + "\n")
+    return added
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--skip-claude", action="store_true", help="don't touch Claude Code")
@@ -137,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-antigravity", action="store_true", help="don't touch Antigravity (agy)"
     )
+    parser.add_argument("--skip-cursor", action="store_true", help="don't touch Cursor")
     args = parser.parse_args(argv)
 
     root = main_checkout()
@@ -175,7 +226,23 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("⏭️  Antigravity: `agy` not on PATH, skipped")
 
-    print("Restart any running Claude Code / Codex / agy sessions to pick up the plugins.")
+    if not args.skip_cursor:
+        if shutil.which("agent") or shutil.which("cursor-agent"):
+            cursor_home = Path.home() / ".cursor"
+            added = install_cursor(root, cursor_home)
+            plugin = cursor_home / "plugins" / "local" / CURSOR_PLUGIN
+            print(f"✅ Cursor: {CURSOR_PLUGIN} copied to {plugin}")
+            if added:
+                print(f"   Added {added} no-op entries to {cursor_home / 'hooks.json'}")
+            print(
+                "   The agent CLI may not load ~/.cursor/plugins/local: start it with"
+                f" `agent --plugin-dir {plugin}`. For no prompt per ptt call, see"
+                f" `python3 {plugin / 'ptt.py'} cursor-rules`."
+            )
+        else:
+            print("⏭️  Cursor: `agent` / `cursor-agent` not on PATH, skipped")
+
+    print("Restart any running Claude Code / Codex / agy / Cursor sessions to pick up the plugins.")
     return 0
 
 

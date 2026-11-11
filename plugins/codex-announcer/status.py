@@ -177,7 +177,7 @@ def _latest_narration(path: str, tail_bytes: int = 1_500_000) -> str:
             continue
         if message.get("type") == "task_started":
             break
-        role = message.get("role") or record.get("type")
+        role = message.get("role") or record.get("role") or record.get("type")  # Cursor: beside
         content = message.get("content")
         if role == "user":
             if isinstance(content, list) and any(
@@ -473,6 +473,8 @@ def main() -> None:
     if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0":
         return
     event = json.load(sys.stdin)
+    if routing.foreign_cursor_hook(event):
+        return  # Cursor's Claude import: the Cursor plugin reports instead
     if event.get("hook_event_name") not in {
         "UserPromptSubmit",
         "PreToolUse",

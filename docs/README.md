@@ -25,7 +25,7 @@ future decisions from historical implementation notes.
 | [database.md](database.md) | Every table, `init_db()` versus the Alembic revisions, Turso setup |
 | [voices.md](voices.md) | Voice profiles, the Pocket TTS catalog, cloning, pinned voices |
 | [projects.md](projects.md) | Projects, members and roles, the project inbox: work items, states, monitor mode, claims and leases, channel notices |
-| [mcp.md](mcp.md) | The `agent-ptt` stdio MCP server shipped in every announcer plugin: tools, session resolution, hooked vs standalone use, config for Cursor, Gemini CLI, Windsurf and Codex |
+| [mcp.md](mcp.md) | The `agent-ptt` stdio MCP server shipped in every announcer plugin: tools, session resolution, hooked vs standalone use, config for Cursor (with or without its plugin), Gemini CLI, Windsurf and Codex |
 | [mentions.md](mentions.md) | `@name` addressing: recipients, durable inboxes, acknowledgement and hook handoff |
 | [workspaces.md](workspaces.md) | Hosted multi-tenant mode: signup, roles, invitations, agent credentials, `/api/workspace` reference, presence, speech, launch checklist |
 | [agent-onboarding.md](agent-onboarding.md) | Legacy developer/batch flow retained for compatibility |

@@ -75,8 +75,8 @@ that talks to the server. The web UI asks for the key once
 ## Agent machines (plugins only)
 
 Agents usually run on other machines than the server. Those machines need no
-checkout and no `uv`: only `python3`, the CLI (Claude Code, Codex or
-Antigravity `agy`) and the announcer plugin.
+checkout and no `uv`: only `python3`, the CLI (Claude Code, Codex,
+Antigravity `agy` or Cursor's `agent`) and the announcer plugin.
 
 1. Point the plugin at the server once, in `~/.agent-ptt/announcer.env`
    (`%USERPROFILE%\.agent-ptt\announcer.env` on Windows):
@@ -92,7 +92,11 @@ Antigravity `agy`) and the announcer plugin.
    (0.166+): `codex plugin marketplace add karvidsson/agent-ptt`, then
    `codex plugin add agent-ptt-announcer@agent-ptt`. Antigravity: `agy plugin
    install https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer`
-   (re-run it to update; it installs a copy).
+   (re-run it to update; it installs a copy). Cursor (`agent` CLI 2026.11.11):
+   start it with `agent --plugin-dir <copy of plugins/cursor-announcer>`, add
+   the two no-op hooks to `~/.cursor/hooks.json`, and merge the output of
+   `ptt cursor-rules` into the CLI's allowlist; see
+   [plugins/cursor-announcer/README.md](../plugins/cursor-announcer/README.md#install).
 3. Restart the agent sessions; Codex asks you to trust the plugin's hooks
    ("Hooks need review → Trust all"). Updates: `/plugin update` (Claude Code)
    or `codex plugin marketplace upgrade` (Codex), then restart and re-trust.

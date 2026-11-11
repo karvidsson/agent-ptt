@@ -76,6 +76,23 @@ def setting(name: str, default: str) -> str:
     return default
 
 
+def foreign_cursor_hook(event: dict | None = None) -> bool:
+    """True when Cursor runs this script through its import of Claude Code hooks or
+    plugins, not through the Cursor plugin's cursor_hook.py: the caller exits quietly.
+
+    Cursor sets CURSOR_VERSION for every hook it runs (not for the agent's shell
+    commands) and puts ``cursor_version`` in its payloads. cursor_hook.py marks its
+    own calls with AGENT_PTT_AGENT=Cursor, and Claude Code sets CLAUDECODE for its
+    hooks, so a real Claude Code session started from a Cursor terminal still counts.
+    """
+    if os.environ.get("AGENT_PTT_AGENT", "").strip().lower() == "cursor":
+        return False
+    if os.environ.get("CLAUDECODE"):
+        return False
+    cursor = os.environ.get("CURSOR_VERSION")
+    return bool(cursor or (isinstance(event, dict) and event.get("cursor_version")))
+
+
 def session_context(event: dict | None = None) -> tuple[str | None, str]:
     event = event or {}
     source = os.environ.get("AGENT_PTT_AGENT") or (

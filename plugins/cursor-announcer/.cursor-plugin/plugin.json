@@ -1,0 +1,11 @@
+{
+  "name": "agent-ptt-announcer",
+  "displayName": "Agent PTT Announcer",
+  "version": "0.5.1",
+  "description": "Joins your project's Agent PTT channel when a Cursor agent session starts, shows who else is on the project, delivers @mentions and work items, and includes the ptt command and the agent-ptt MCP tools.",
+  "author": { "name": "Kristian Arvidsson" },
+  "homepage": "https://github.com/karvidsson/agent-ptt",
+  "repository": "https://github.com/karvidsson/agent-ptt",
+  "license": "MIT",
+  "keywords": ["voice", "agent-ptt", "collaboration", "hooks", "mcp"]
+}
