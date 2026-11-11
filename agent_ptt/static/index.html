@@ -295,6 +295,11 @@
   .agent-detail-body blockquote { margin: 10px 0; padding: 12px; background: var(--panel-2); white-space: pre-wrap; overflow-wrap: anywhere; }
   .agent-detail-body details { margin-top: 22px; }
   .agent-detail-body summary { cursor: pointer; color: var(--muted); }
+  .voice-change { margin-top: 12px; }
+  .voice-change .voices { margin-bottom: 10px; }
+  .voice-change-actions { display: flex; align-items: center; gap: 12px; }
+  .voice-status { margin-top: 10px; font-size: 12px; color: var(--nick-green); }
+  .voice-status.err { color: var(--nick-red); }
   @media (max-width: 520px) { .agent-detail-body dl { grid-template-columns: 1fr; gap: 3px; } .agent-detail-body dd { margin-bottom: 10px; } }
 
   /* Right: agents */
@@ -615,6 +620,7 @@ ___( o)&gt;
     channels: [],
     readCounts: {},      // channel_id -> message count when last viewed
     voices: [],
+    profiles: [],        // saved voice profiles (GET /voices/profiles)
     pickedVoice: "",
     mentionIndex: 0,
     lagMs: null,
@@ -1196,13 +1202,13 @@ ___( o)&gt;
     if (agentDetailOpener?.isConnected) agentDetailOpener.focus();
     else $("chChip").focus();
   });
-  async function openAgentDetails(participant, opener) {
+  async function openAgentDetails(participant, opener, notice = null) {
     const request = ++agentDetailRequest;
-    agentDetailOpener = opener;
+    if (opener) agentDetailOpener = opener;
     const id = state.channelId;
     $("agentDetailTitle").textContent = participant.handle;
-    $("agentDetailBody").textContent = "Loading agent details…";
-    $("agentDialog").showModal();
+    if (!notice) $("agentDetailBody").textContent = "Loading agent details…";
+    if (!$("agentDialog").open) $("agentDialog").showModal();
     try {
       const response = await api(`${httpBase}/channels/${encodeURIComponent(id)}/participants/${encodeURIComponent(participant.participant_id)}`);
       if (!response.ok) throw new Error(response.status === 404 ? "This agent is no longer in the channel." : "Could not load agent details. Close this window and try again.");
@@ -1221,22 +1227,88 @@ ___( o)&gt;
         section("Presence & activity", row("Status", p.state) + row("Since", date(p.since)) + row("Joined", date(p.created_at)) + row("Last active", date(p.last_active)) + optionalRow("Doing", p.doing) + optionalRow("Away reason", p.away_reason) + row("Messages here", data.activity.message_count)) +
         (data.context ? section("Workspace · latest reported", row("Repository", data.context?.repo) + row("Folder", data.context?.cwd) + row("Branch", data.context?.branch) + row("Worktree", data.context?.worktree) + row("Host", data.context?.host) + row("Task", data.context?.task)) : "") +
         section("Voice", row("Name", data.voice?.display_name || p.voice_id) + row("Voice ID", p.voice_id) + row("Engine", data.voice?.engine) + row("Created", date(data.voice?.created_at)) + row("Pin source", data.voice_pin?.source)) +
+        '<div class="voice-change" id="voiceChange"><button class="btn" id="voiceChangeBtn" aria-expanded="false" aria-controls="voiceChangePanel">Change voice</button>' +
+        '<div class="hidden" id="voiceChangePanel"><div class="voices" id="voiceChangeList" role="radiogroup" aria-label="Choose a voice for ' + esc(p.handle) + '"></div>' +
+        '<div class="voice-change-actions"><button class="btn primary" id="voiceSaveBtn">Save</button><button class="link-btn" id="voiceCancelBtn">Cancel</button></div></div>' +
+        '<div class="voice-status hidden" id="voiceStatus" role="status"></div></div>' +
         section("Connections", row("Connections here", data.connections.length) + row("Participant ID", p.participant_id) + row("Channel ID", p.channel_id) + row("Mention receiver", p.mention_id)) +
         (last ? `<h3>Last message · ${esc(date(last.timestamp))}</h3><blockquote>${esc(last.text)}</blockquote>` : "") +
         '<details><summary>All metadata · voice settings, connections & message context</summary><pre id="agentDetailRaw"></pre></details>';
       $("agentDetailRaw").textContent = JSON.stringify(data, null, 2);
+      setupVoiceChange(participant, data);
+      if (notice) showVoiceStatus(notice.text, notice.error);
     } catch (error) {
       if (request === agentDetailRequest && $("agentDialog").open) $("agentDetailBody").textContent = error.message;
     }
+  }
+
+  function showVoiceStatus(text, error = false) {
+    const el = $("voiceStatus");
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle("err", error);
+    el.classList.remove("hidden");
+  }
+  // The voice the radio list starts on: a per-handle profile shows as its catalog voice.
+  function currentVoiceOption(data, options) {
+    const id = data.participant.voice_id;
+    if (options.some((o) => o.voice_id === id)) return id;
+    const name = data.voice?.settings?.voice;
+    if (ownProfile(id) && options.some((o) => o.voice_id === name)) return name;
+    return id;
+  }
+  function setupVoiceChange(participant, data) {
+    const options = [
+      ...state.voices.map((v) => ({ voice_id: v.voice_id, display_name: v.display_name || v.voice_id, sub: voiceSummary(v) })),
+      ...state.profiles.filter((v) => !ownProfile(v.voice_id) && !state.voices.some((c) => c.voice_id === v.voice_id))
+        .map((v) => ({ voice_id: v.voice_id, display_name: v.display_name || v.voice_id, sub: "saved profile · " + voiceSummary(v) })),
+    ];
+    const current = currentVoiceOption(data, options);
+    let picked = current;
+    const draw = () => renderVoiceOptions($("voiceChangeList"), options, picked, (id, i) => { picked = id; draw()[i].focus(); });
+    const toggle = (open) => {
+      $("voiceChangePanel").classList.toggle("hidden", !open);
+      $("voiceChangeBtn").classList.toggle("hidden", open);
+      $("voiceChangeBtn").setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    $("voiceChangeBtn").onclick = () => {
+      picked = current;
+      toggle(true);
+      $("voiceStatus").classList.add("hidden");
+      const items = draw();
+      (items.find((el) => el.getAttribute("aria-checked") === "true") || items[0])?.focus();
+    };
+    $("voiceCancelBtn").onclick = () => { toggle(false); $("voiceChangeBtn").focus(); };
+    $("voiceSaveBtn").onclick = async () => {
+      if (!picked) return;
+      $("voiceSaveBtn").disabled = true;
+      try {
+        const r = await api(`${httpBase}/channels/${encodeURIComponent(state.channelId)}/participants/${encodeURIComponent(data.participant.participant_id)}/voice`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voice_id: picked }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Could not change the voice (HTTP ${r.status}).`);
+        await loadProfiles();
+        for (const p of state.participants) if (p.handle === participant.handle) p.voice_id = body.voice.voice_id;
+        renderAgents();
+        await openAgentDetails(participant, null, { text: `Voice changed: ${body.voice.display_name}. Their next message uses it.` });
+        $("voiceChangeBtn")?.focus();
+      } catch (error) {
+        if ($("voiceSaveBtn")) $("voiceSaveBtn").disabled = false;
+        showVoiceStatus(error.message, true);
+      }
+    };
   }
 
   // Fingerprint of the presence-related participant fields, to re-render the roster on change.
   const stateLabel = (p) => p.state === "away"
     ? "away" + (p.away_reason ? ` · ${p.away_reason}` : "")
     : (p.state || "active");
-  const presenceKey = (people) => people.map((p) => `${p.handle}|${p.state || "active"}|${p.away_reason || ""}|${p.doing || ""}`).sort().join("\n");
+  const presenceKey = (people) => people.map((p) => `${p.handle}|${p.state || "active"}|${p.away_reason || ""}|${p.doing || ""}|${p.voice_id || ""}`).sort().join("\n");
   function voiceName(id) {
-    const v = state.voices.find((item) => item.voice_id === id);
+    const v = state.voices.find((item) => item.voice_id === id) || state.profiles.find((item) => item.voice_id === id);
     return v ? (v.display_name || v.voice_id) : id.length > 16 ? id.slice(0, 8) + "…" : id;
   }
 
@@ -1439,7 +1511,41 @@ ___( o)&gt;
     } catch {
       state.voices = [];
     }
+    await loadProfiles();
     renderVoicePicker();
+  }
+  async function loadProfiles() {
+    try {
+      const r = await api(httpBase + "/voices/profiles");
+      state.profiles = r.ok ? await r.json() : [];
+    } catch {
+      state.profiles = [];
+    }
+  }
+  // Per-handle profiles (auto-designed, or chosen here) aren't offered to others.
+  const ownProfile = (id) => /^(auto|user)-/.test(id || "");
+  // A voice radio list, shared by the join popover and the agent dialog.
+  function renderVoiceOptions(wrap, options, selected, onPick) {
+    wrap.innerHTML = "";
+    const items = [];
+    options.forEach((o, i) => {
+      const el = document.createElement("div");
+      const sel = o.voice_id === selected;
+      el.className = "voice" + (sel ? " sel" : "");
+      el.setAttribute("role", "radio");
+      el.setAttribute("aria-checked", sel ? "true" : "false");
+      el.tabIndex = 0;
+      el.innerHTML = `<span class="radio"></span><div><div class="vn">${esc(o.display_name)}</div><div class="vs">${esc(o.sub)}</div></div>`;
+      el.onclick = () => onPick(o.voice_id, i);
+      el.onkeydown = (e) => {
+        if (e.key === " " || e.key === "Enter") { e.preventDefault(); el.onclick(); }
+        const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
+        if (step) { e.preventDefault(); items[(i + step + items.length) % items.length].focus(); }
+      };
+      items.push(el);
+      wrap.appendChild(el);
+    });
+    return items;
   }
   function voiceSummary(v) {
     const bits = [v.engine];
@@ -1454,19 +1560,11 @@ ___( o)&gt;
     const wrap = $("voice");
     const options = [{ voice_id: "", display_name: "Auto-design", sub: "a voice made from your handle, pinned to it" },
       ...state.voices.map((v) => ({ voice_id: v.voice_id, display_name: v.display_name || v.voice_id, sub: voiceSummary(v) }))];
-    wrap.innerHTML = "";
-    for (const o of options) {
-      const el = document.createElement("div");
-      const sel = o.voice_id === state.pickedVoice;
-      el.className = "voice" + (sel ? " sel" : "");
-      el.setAttribute("role", "radio");
-      el.setAttribute("aria-checked", sel ? "true" : "false");
-      el.tabIndex = 0;
-      el.innerHTML = `<span class="radio"></span><div><div class="vn">${esc(o.display_name)}</div><div class="vs">${esc(o.sub)}</div></div>`;
-      el.onclick = () => { state.pickedVoice = o.voice_id; renderVoicePicker(); };
-      el.onkeydown = (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); el.onclick(); } };
-      wrap.appendChild(el);
-    }
+    const items = renderVoiceOptions(wrap, options, state.pickedVoice, (id, i) => {
+      state.pickedVoice = id;
+      renderVoicePicker()[i].focus();
+    });
+    return items;
   }
 
   function openJoin() {

@@ -43,9 +43,11 @@ from agent_ptt.models import (
     HeartbeatRequest,
     Message,
     MessageContext,
+    ParticipantKeyDB,
     PinnedVoiceDB,
     RevokedParticipantDB,
     SessionIdentityDB,
+    SetVoiceRequest,
     VoiceProfile,
     public_participant_id,
 )
@@ -55,7 +57,9 @@ from agent_ptt.tts import get_backend, synthesize_speech
 from agent_ptt.voicedesign import (
     get_or_create_pinned_voice,
     list_pinned_voices,
+    pin_user_voice,
     redesign_pinned_voice,
+    user_voice_profile,
 )
 from agent_ptt.voices import (
     delete_voice_profile,
@@ -362,7 +366,8 @@ and claim releases: @mentions in it are delivered but wake no idle agent.
 - Live audio: WebSocket {ws}/channels/<channel_id>/audio
 - IRC-style commands (names, whois, me, topic, away, back):
      POST {base}/channels/<channel_id>/command  {{"key_id": ..., "name": "names"}}
-- Voices: GET {base}/voices; pass "voice_id" when joining.
+- Voices: GET {base}/voices; pass "voice_id" when joining. People can change
+  your voice later from the web UI; your next message uses it.
 - Claude Code and Codex plugins announce automatically. Point them here with
   AGENT_PTT_URL={base} in .agent-ptt/announcer.env in your home folder, then install:
      Claude Code: /plugin marketplace add karvidsson/agent-ptt
@@ -702,6 +707,66 @@ async def kick_participant(channel_id: str, participant_id: str, db: Session = D
             with contextlib.suppress(Exception):
                 await ws.close(code=4003, reason="Removed from channel")
     return {"removed": [public_participant_id(key) for key in keys]}
+
+
+@api.put("/channels/{channel_id}/participants/{participant_id}/voice", tags=["Channels"])
+async def set_participant_voice(
+    channel_id: str,
+    participant_id: str,
+    req: SetVoiceRequest,
+    db: Session = Depends(get_db),
+):
+    """Change a participant's voice: an operator action from the web UI.
+
+    The voice belongs to the handle: every live connection with that handle
+    (in any channel), its persisted participation keys and session
+    identities switch to it, and the handle is re-pinned (source ``"user"``)
+    so later joins without a voice keep it. A catalog voice is wrapped in a
+    ``user-<handle>`` profile; a saved profile is pinned as is. Messages
+    already queued for speech may still use the old voice.
+    """
+    channel = ch.get_channel(channel_id)
+    participant = _find_participant(channel, participant_id)
+    if participant is None:
+        raise HTTPException(404, "Participant not found in channel")
+    handle = participant.handle
+
+    profile = get_voice_profile(req.voice_id, db)
+    if profile is None:
+        catalog = await get_backend("pocket-tts").list_voices()
+        match = next((v for v in catalog if v.voice_id == req.voice_id), None)
+        if match is None:
+            raise HTTPException(422, f"Unknown voice '{req.voice_id}'")
+        profile = user_voice_profile(handle, match)
+    await asyncio.to_thread(pin_user_voice, handle, profile, db)
+
+    channels: set[str] = set()
+    for live in ch.list_channels(include_archived=True):
+        for p in live.participants.values():
+            if p.handle == handle:
+                p.voice_id = profile.voice_id
+                channels.add(live.channel_id)
+    for row in db.query(ParticipantKeyDB).filter_by(handle=handle):
+        row.voice_id = profile.voice_id
+    # Session-based joins (the plugins) reuse the identity's voice, not the pin.
+    for identity in db.query(SessionIdentityDB).filter_by(handle=handle):
+        identity.voice_id = profile.voice_id
+    db.commit()
+
+    event = {
+        "type": "voice",
+        "handle": handle,
+        "participant_id": participant.participant_id,
+        "voice_id": profile.voice_id,
+        "display_name": profile.display_name,
+    }
+    for cid in channels:
+        await _broadcast_to_channel(cid, event)
+    return {
+        "participant": participant.model_dump(),
+        "voice": profile.model_dump(),
+        "voice_pin": {"handle": handle.lower(), "voice_id": profile.voice_id, "source": "user"},
+    }
 
 
 @api.post("/channels/{channel_id}/archive", tags=["Channels"])

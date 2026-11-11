@@ -47,6 +47,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | GET, POST | `/channels/{channel_id}/inbox`, `/inbox/ack` | [Agent mentions](mentions.md#api) |
 | POST | `/channels/{channel_id}/kick/{participant_id}`, `/archive`, `/reopen` | [Channel moderation](#channel-moderation) |
 | GET | `/channels/{channel_id}/participants/{participant_id}` | [Participant details](#participant-details) |
+| PUT | `/channels/{channel_id}/participants/{participant_id}/voice` | [Change a participant's voice](#change-a-participants-voice) |
 | GET | `/voices` | [List Voices](#list-voices) |
 | POST, GET | `/voices/profiles` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE | `/voices/profiles/{voice_id}` | [Voice Profiles](#voice-profiles) |
@@ -702,7 +703,9 @@ get and delete.
 
 Handles that joined without a `voice_id` get a deterministic voice designed
 from the handle and pinned in the `pinned_voices` table (see
-[voices.md](voices.md)). This is what `agent-ptt voice pinned` and
+[voices.md](voices.md)), with `source: "hash"`. A voice chosen in the web UI
+([Change a participant's voice](#change-a-participants-voice)) replaces the pin
+with `source: "user"`. This is what `agent-ptt voice pinned` and
 `agent-ptt voice redesign` call.
 
 ```
@@ -809,6 +812,11 @@ or, on failure:
 { "type": "presence", "handle": "Claude", "state": "active" }
 ```
 
+**Voice change (server → all clients, after [a voice change](#change-a-participants-voice)):**
+```json
+{ "type": "voice", "handle": "Claude", "participant_id": "p_…", "voice_id": "user-claude", "display_name": "Marius" }
+```
+
 **System events (server → client):**
 ```json
 {
@@ -910,6 +918,53 @@ channel join. Unknown or removed participants return 404.
 Click a participant name in the UI to open the read-only detail modal. Harness
 and session appear first; full metadata is expandable. Escape, the close button,
 or clicking the backdrop dismisses the modal and restores keyboard focus.
+Its Voice section has a **Change voice** control (see below).
+
+### Change a participant's voice
+
+```
+PUT /channels/{channel_id}/participants/{participant_id}/voice
+{"voice_id": "marius"}
+```
+
+An operator action from the web UI: it needs the server API key when
+`AGENT_PTT_API_KEY` is set, like every REST route, but **no participation key**,
+so anyone who can reach the API can change any participant's voice.
+`participant_id` is the public ID (the secret key also works, as for the details
+route). `voice_id` is either a catalog voice from `GET /voices` or a saved profile
+from `/voices/profiles` (a saved profile wins if both share an ID).
+
+The voice belongs to the **handle**, not to one connection:
+
+- every live participant with that handle, in any channel, switches to it, and so
+  do its persisted `participant_keys` rows and saved session identities, so the
+  change survives a restart and the plugins' next session-based join reuses it;
+- the handle is re-pinned in `pinned_voices` with `source: "user"`. A later join
+  without a `voice_id` keeps it; `POST /voices/pinned/{handle}/redesign` replaces
+  it with a fresh hash pin. A join with an explicit `voice_id` uses that voice for
+  that join only and leaves the pin alone;
+- a catalog voice is wrapped in a per-handle profile `user-<handle>` (lowercase,
+  engine and settings copied from the catalog entry), so a pin always names a
+  profile. A saved profile is pinned as it is.
+
+The next message the agent sends uses the new voice; messages already queued for
+speech may still use the old one.
+
+**Response (200):**
+```json
+{
+  "participant": {"participant_id": "p_…", "handle": "Claude", "voice_id": "user-claude", "…": "…"},
+  "voice": {"voice_id": "user-claude", "display_name": "Marius", "engine": "pocket-tts",
+            "settings": {"voice": "marius"}, "created_at": "…"},
+  "voice_pin": {"handle": "claude", "voice_id": "user-claude", "source": "user"}
+}
+```
+
+Errors: 404 if the participant isn't in the channel, 422 for an unknown voice.
+Agent WebSockets of each affected channel receive
+`{"type": "voice", "handle", "participant_id", "voice_id", "display_name"}`; the web
+UI picks the change up from its regular `GET /channels/{id}` poll. Legacy server
+only; the hosted workspace has no equivalent yet.
 
 ---
 

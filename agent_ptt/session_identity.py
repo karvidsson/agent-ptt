@@ -174,7 +174,12 @@ def get_session_identity(
         else:
             existing.remove(identity)
 
-        profiles = [p for p in list_voice_profiles(db) if has_backend(p.engine)]
+        # A voice chosen in the UI (``user-<handle>``) belongs to its handle only.
+        profiles = [
+            p
+            for p in list_voice_profiles(db)
+            if has_backend(p.engine) and not p.voice_id.startswith("user-")
+        ]
         # Prefer the deliberately created library over old auto-generated handles.
         curated = [p for p in profiles if not p.voice_id.startswith("auto-")]
         pool = curated or profiles

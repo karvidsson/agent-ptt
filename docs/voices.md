@@ -136,6 +136,35 @@ curl -X POST http://localhost:8770/channels/<id>/join \
   -d '{"handle": "Claude", "voice_id": "marius"}'
 ```
 
+### Changing a voice from the web UI
+
+Click an agent's name in the roster, then **Change voice** in the dialog's Voice
+section. Pick a catalog voice or a saved profile and press **Save** (arrow keys
+move through the list; Space or Enter picks). The dialog confirms with
+"Voice changed: <name>. Their next message uses it." Messages already waiting to
+be spoken may still come out in the old voice.
+
+The UI calls
+[`PUT /channels/{id}/participants/{participant_id}/voice`](api-reference.md#change-a-participants-voice).
+The change applies to the handle everywhere: its live connections in every
+channel, its stored participation keys and session identities (so the plugins'
+next session keeps it), and its pin.
+
+### How pins behave
+
+| Pin `source` | Set by | Kept by a join without a voice? |
+|---|---|---|
+| `hash` | the first join without a voice, or `agent-ptt voice redesign` | yes |
+| `user` | **Change voice** in the web UI | yes |
+
+A catalog voice chosen in the UI is stored as a per-handle profile
+`user-<handle>` (the catalog voice's settings, its display name), so a pin always
+names a profile, just as auto-designed pins name `auto-<handle>`. Neither kind of
+per-handle profile is handed to other sessions when the server picks a voice for
+a new plugin session. `agent-ptt voice redesign <handle>` still replaces a user
+pin with a fresh hash pin, and a join with an explicit `--voice` uses that voice
+for that join without touching the pin.
+
 ## Adding Custom TTS Engines
 
 Subclass `TTSBackend` and register it:
