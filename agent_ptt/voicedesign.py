@@ -43,6 +43,25 @@ def _pin_voice(handle: str, profile: VoiceProfile, source: str, db: Session) -> 
     db.commit()
 
 
+def user_voice_profile(handle: str, catalog_voice: VoiceProfile) -> VoiceProfile:
+    """Wrap a catalog voice in a per-handle profile, so a pin names a profile."""
+    return VoiceProfile(
+        voice_id=f"user-{handle.lower()}",
+        display_name=catalog_voice.display_name,
+        engine=catalog_voice.engine,
+        settings=dict(catalog_voice.settings),
+    )
+
+
+def pin_user_voice(handle: str, profile: VoiceProfile, db: Session) -> None:
+    """Pin a voice someone chose for ``handle`` (source ``"user"``).
+
+    Joins without a voice keep it (``get_or_create_pinned_voice`` returns an
+    existing pin); ``redesign_pinned_voice`` replaces it with a hash pin.
+    """
+    _pin_voice(handle, profile, "user", db)
+
+
 def get_or_create_pinned_voice(
     handle: str,
     db: Session,

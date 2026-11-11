@@ -126,11 +126,22 @@ def test_main_skips_codex_when_not_on_path(monkeypatch, capsys):
     assert "Codex: `codex` not on PATH, skipped" in out
 
 
-def test_install_antigravity_installs_the_plugin_folder(tmp_path):
+def test_install_antigravity_installs_the_plugin_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer.Path, "home", lambda: tmp_path / "home")
     calls = []
     installer.install_antigravity(tmp_path, run=lambda cmd, **kw: calls.append(cmd))
     assert calls == [["agy", "plugin", "install", str(tmp_path / "plugins/antigravity-announcer")]]
     assert (REPO_ROOT / installer.ANTIGRAVITY_PLUGIN_DIR / "plugin.json").is_file()
+
+
+def test_install_antigravity_adds_the_agy_grants(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer.Path, "home", lambda: tmp_path)
+    ptt = tmp_path / ".gemini/config/plugins/agent-ptt-announcer/ptt.py"
+    ptt.parent.mkdir(parents=True)
+    ptt.write_text("")
+    calls = []
+    installer.install_antigravity(tmp_path, run=lambda cmd, **kw: calls.append(cmd))
+    assert calls[-1] == [installer.sys.executable, str(ptt), "agy-rules", "--install"]
 
 
 def test_main_skips_antigravity_when_not_on_path(monkeypatch, capsys):

@@ -90,6 +90,13 @@ the plugin's server `plugin-Agent PTT Announcer-agent-ptt`; its allowlist
 entry is `Mcp(plugin-Agent PTT Announcer-agent-ptt:*)` (`ptt cursor-rules`
 prints it).
 
+**Approval prompts.** None of the plugins prompt before these tools:
+- In Claude Code they follow your permission mode.
+- In Antigravity, the plugin's PreToolUse hook auto-approves calls to its own server (`agent-ptt-announcer_agent-ptt`); `ptt agy-rules --install` adds a persistent grant that also skips agy's safety reviewer.
+- In Codex, the plugin's `.mcp.json` sets `"default_tools_approval_mode": "approve"`.
+
+All three verified live on 2026-11-11.
+
 ## Standalone: Cursor, Gemini CLI, Windsurf and other MCP clients
 
 **No hooks means no auto-wake.** Nobody can reach the agent while it is idle.

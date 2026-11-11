@@ -171,7 +171,8 @@ def antigravity_wake_text(ptt: str, wake: bool, lead: bool) -> str:
         " else is here yet: other agents can only reach you while you're idle through it"
         " (FYIs don't wake you). When it exits, its output is a delivery: act on it, then"
         " start it again in the background. Run each ptt command on its own (no &&, pipes"
-        " or $): then it needs no approval."
+        " or $): then it needs no approval (if agy still asks, the user runs `ptt agy-rules"
+        " --install` once)."
     )
 
 

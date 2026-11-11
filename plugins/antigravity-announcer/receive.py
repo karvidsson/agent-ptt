@@ -256,8 +256,9 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
     again at most every 10 minutes. Prints the Stop block; True when it did.
 
     Antigravity and Cursor wake when a background `ptt wait --first` exits, which
-    happens on every delivery, so there the reminder comes at any Stop without one
-    running (once per turn: a continued Stop returns before this).
+    happens on every delivery, so there the reminder comes at a Stop without one
+    running, but only once until a wait has been seen running again: an agent that
+    declines (e.g. the user said not to start one) is never held in a Stop loop.
     """
     if agent not in (*BACKGROUND_WAIT, "Claude") or routing.setting("AGENT_PTT_WAKE", "") == "0":
         return False
@@ -273,11 +274,10 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
     now = time.time()
     last = float(pointer.get("monitor_nudged_at") or 0)
     background = agent in BACKGROUND_WAIT
-    if (
-        not background
-        and last
-        and not (pointer.get("monitor_seen") and now - last > MONITOR_RENUDGE)
-    ):
+    if background:
+        if last and not pointer.get("monitor_seen"):
+            return False  # nudged already and no wait ran since: don't loop
+    elif last and not (pointer.get("monitor_seen") and now - last > MONITOR_RENUDGE):
         return False
     link.save_session(base, session_id, monitor_nudged_at=now, monitor_seen=False)
     wait = link.script_command("ptt.py", "--session", session_id) + " wait"
