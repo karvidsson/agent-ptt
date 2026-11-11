@@ -11,7 +11,7 @@ hooked session whose folder contains (or is inside) the current directory.
   ptt.py say "<text with @Theo>" [--quiet] [--fyi]   speak (--quiet: text only) in the channel
   ptt.py who                                 who is here: harness, machine, doing, presence
   ptt.py inbox                               pending mentions and work items (not acked)
-  ptt.py wait [--once]                       print one line per waking mention/work item
+  ptt.py wait [--once|--first]               print one line per waking mention/work item
   ptt.py tell <to> "<text>" [--kind K] [--fyi]   send a work item: Handle, role:<r> or project
 
 --fyi marks status, acknowledgements and "done": delivered at the recipient's next
@@ -377,6 +377,8 @@ class Waiter:
         self.heartbeat = None  # called every 15 s while running (keeps the lock fresh)
         self.capped: set[str] = set()  # held back by the wake cap: the next hook delivers
         self.cap = True  # `wait --once` prints on request: not a wake
+        self.first = False  # `wait --first`: exit after the first delivery (background tasks)
+        self.stop_event: threading.Event | None = None
         self.stopped: str | None = None  # why a poll loop gave up: the whole wait ends
         self.ended = False  # the session ended (no restart advice)
         self.trouble_after = TROUBLE_SECONDS  # failing this long: say so once, keep trying
@@ -426,6 +428,8 @@ class Waiter:
             if entries:
                 self.out.write("".join(line + "\n" for line, _, _ in entries))
                 self.out.flush()
+                if self.first and self.stop_event:
+                    self.stop_event.set()  # the exit is the wake (an Antigravity background task)
             self.printed |= {entry_id for _, _, entry_id in entries}
             self.held, self.flush_at = [], None
         if entries:
@@ -558,6 +562,7 @@ class Waiter:
 
     def run(self, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
+        self.stop_event = stop
         polls = [("channel", self.channel_once)]
         if self.session.has_project():
             polls.append(("project", self.project_once))
@@ -652,6 +657,7 @@ def cmd_wait(session: Session, args) -> None:
             print("[ptt] nothing new")
         return
     waiter = Waiter(session)
+    waiter.first = bool(getattr(args, "first", False))
     if session.ended():
         waiter.give_up(f"session {session.session_id} ended", threading.Event(), ended=True)
         print(waiter.stop_line(), flush=True)
@@ -985,6 +991,9 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("inbox", help="pending mentions and work items")
     wait = sub.add_parser("wait", help="print one line per new mention/work item (Monitor)")
     wait.add_argument("--once", action="store_true", help="poll once and exit")
+    wait.add_argument(
+        "--first", action="store_true", help="exit after the first delivery (a background task)"
+    )
     tell = sub.add_parser("tell", help="send a work item")
     tell.add_argument("to", help='Handle, @Handle, @"Two Words", role:<role> or project')
     tell.add_argument("text", nargs="?")

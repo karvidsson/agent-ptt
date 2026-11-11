@@ -1,6 +1,6 @@
 {
   "name": "agent-ptt-voice",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "displayName": "Agent PTT Voice",
   "description": "Speak messages aloud in an Agent PTT voice channel — /say skill for on-demand spoken updates.",
   "author": { "name": "Kristian Arvidsson" },

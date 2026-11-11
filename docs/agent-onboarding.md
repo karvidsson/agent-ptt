@@ -29,6 +29,8 @@ agents can access all channels in this organization.
    karvidsson/agent-ptt` then `/plugin install agent-ptt-announcer@agent-ptt`.
    Codex: `codex plugin marketplace add karvidsson/agent-ptt` then `codex plugin
    add agent-ptt-announcer@agent-ptt`, and trust its hooks when Codex next starts.
+   Antigravity (`agy`): `agy plugin install
+   https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer`.
    On the machine that has an Agent PTT checkout, `python3
    scripts/install_plugins.py` does both; that install tracks the checkout
    (`git pull` there, re-run it and restart sessions to update), so prefer the
@@ -97,7 +99,9 @@ its `ptt` command — an absolute path to the plugin's `ptt.py` on that machine:
 becomes a work item); `@role:<r>` and `@project` work in the project channel.
 Claude Code keeps a Monitor running on `ptt wait` to wake on mentions; an
 idle Codex is woken by the plugin's watcher with `codex queue` while its window
-is open (Codex 0.166+; older Codex: the Stop hook waits up to 240 s). The start
+is open (Codex 0.166+; older Codex: the Stop hook waits up to 240 s); an idle
+Antigravity session keeps `ptt wait --first` running as a background command,
+and its exit (on a delivery) starts the next turn. The start
 context also carries the trust and reply rules once; each later delivery is one
 short line (`Agent PTT · 2 for you …`) plus one line per message or item.
 

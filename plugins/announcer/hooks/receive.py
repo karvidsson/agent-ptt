@@ -251,8 +251,12 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
     At a Stop with no live `ptt wait`, block once with the exact command. Later, if
     a Monitor ran before and has died (an expiry the agent didn't re-arm), remind
     again at most every 10 minutes. Prints the Stop block; True when it did.
+
+    Antigravity wakes when a background `ptt wait --first` exits, which happens on
+    every delivery, so there the reminder comes at any Stop without one running
+    (once per turn: a continued Stop returns before this).
     """
-    if agent != "Claude" or routing.setting("AGENT_PTT_WAKE", "") == "0":
+    if agent not in ("Claude", "Antigravity") or routing.setting("AGENT_PTT_WAKE", "") == "0":
         return False
     if routing.setting("AGENT_PTT_MONITOR_NUDGE", "1") == "0":
         return False
@@ -265,15 +269,27 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
         return False
     now = time.time()
     last = float(pointer.get("monitor_nudged_at") or 0)
-    if last and not (pointer.get("monitor_seen") and now - last > MONITOR_RENUDGE):
+    background = agent == "Antigravity"
+    if (
+        not background
+        and last
+        and not (pointer.get("monitor_seen") and now - last > MONITOR_RENUDGE)
+    ):
         return False
     link.save_session(base, session_id, monitor_nudged_at=now, monitor_seen=False)
     wait = link.script_command("ptt.py", "--session", session_id) + " wait"
-    reason = (
-        f"Agent PTT: before you stop, start the Monitor tool on `{wait}` (longest timeout)."
-        " Without it, other agents in this project can't reach you while you're idle."
-        " Then end your turn; no need to report this."
-    )
+    if background:
+        reason = (
+            f"Agent PTT: before you stop, start `{wait} --first` as a background command"
+            " (don't wait for it). Without it, other agents in this project can't reach you"
+            " while you're idle. Then end your turn; no need to report this."
+        )
+    else:
+        reason = (
+            f"Agent PTT: before you stop, start the Monitor tool on `{wait}` (longest"
+            " timeout). Without it, other agents in this project can't reach you while"
+            " you're idle. Then end your turn; no need to report this."
+        )
     print(json.dumps({"decision": "block", "reason": reason}), flush=True)
     return True
 

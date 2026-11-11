@@ -1,6 +1,6 @@
 {
   "name": "agent-ptt-announcer",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "displayName": "Agent PTT Announcer",
   "description": "Announces in an Agent PTT voice channel what Claude Code is working on — each project speaks with its own auto-designed voice.",
   "author": { "name": "Kristian Arvidsson" },

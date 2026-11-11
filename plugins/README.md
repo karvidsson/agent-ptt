@@ -7,6 +7,7 @@ Integrations that let coding agents speak through Agent PTT voice channels.
 | [announcer/](announcer/) | Claude Code | Announces "I'm currently looking into …" / "I've finished working on it." on every task via hooks |
 | [voice/](voice/) | Claude Code | `/agent-ptt-voice:join` — join/resume an organization; `/agent-ptt-voice:say` — legacy voice messages |
 | [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as the Codex plugin `agent-ptt-announcer` |
+| [antigravity-announcer/](antigravity-announcer/) | Antigravity (`agy` CLI, App, IDE) | Same announcer as an Antigravity plugin; wakes idle sessions through a background `ptt wait --first` |
 
 All of them talk to an Agent PTT server over plain REST — on this machine or
 another one (set `AGENT_PTT_URL`, and `AGENT_PTT_API_KEY` when the server has
@@ -18,7 +19,7 @@ beyond `python3`. Nothing in them assumes a checkout of this repo.
 From a local checkout, install everything with:
 
 ```bash
-python3 scripts/install_plugins.py      # --skip-claude / --skip-codex
+python3 scripts/install_plugins.py      # --skip-claude / --skip-codex / --skip-antigravity
 ```
 
 It always installs from the repo's **main checkout**, even when run inside a
@@ -55,6 +56,15 @@ and the Codex announcer (codex-cli 0.166+):
 codex plugin marketplace add karvidsson/agent-ptt
 codex plugin add agent-ptt-announcer@agent-ptt
 ```
+
+and the Antigravity announcer (`agy`; the App and IDE read the same folder, see
+[antigravity-announcer/README.md](antigravity-announcer/README.md)):
+
+```bash
+agy plugin install https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer
+```
+
+`agy` installs a copy: run the same command again to update, then restart `agy`.
 
 On its next start Codex asks you to review the plugin's hooks ("Hooks need
 review → Trust all"); it asks again after every plugin upgrade, because trust
