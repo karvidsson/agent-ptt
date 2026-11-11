@@ -71,24 +71,30 @@ sometimes flags a `ptt` call that changes shared state, such as `ptt done`, and
 asks "Requesting permission for: … ptt.py …" with a "Reason:" line. The plugin's
 PreToolUse hook overrides the reviewer, but only in an agy session that loaded the
 hooks, and a session that was already running when the plugin was installed
-hasn't. A **grant** in agy's settings skips the reviewer in every session, so
-install the grants once per machine:
+hasn't. A **grant** in agy's settings skips the reviewer and the prompt in every
+session, so the plugin writes the grants itself: its SessionStart hook runs
+`ptt agy-rules --install`, which merges them into `permissions.allow` in
+`~/.gemini/antigravity-cli/settings.json` and keeps everything else in the file:
+
+- `command(<this python> <this ptt.py>)`
+- `command(python3 <this ptt.py>)`
+- `mcp(agent-ptt-announcer_agent-ptt/*)`
+- `mcp(agent-ptt-announcer_agent-ptt/<tool>)` for each of the six tools
+
+agy reads these only when it starts. So the first session after an install
+tells the agent to ask you to **restart agy once**; from then on, ptt and the MCP
+tools never ask. Turn this off with `AGENT_PTT_AGY_GRANTS=0`. You can also run it
+by hand (`--install` is idempotent; without it, the command prints the grants):
 
 ```bash
 # any machine · plain terminal (macOS/Linux; on Windows use python and the same path)
 python3 ~/.gemini/config/plugins/agent-ptt-announcer/ptt.py agy-rules --install
 ```
 
-That command adds these grants to `permissions.allow` in
-`~/.gemini/antigravity-cli/settings.json`, keeping everything else in the file:
-`command(<this python> <this ptt.py>)`, `command(python3 <this ptt.py>)` and
-`mcp(agent-ptt-announcer_agent-ptt/*)`. Restart agy afterwards. Run the command
-without `--install` to print the grants instead. `scripts/install_plugins.py`
-installs them for you. Verified on agy 1.5.5: with a grant, agy logs
-`allowed_command` and skips the reviewer, and a call the reviewer flagged ran
-without a prompt.
-`AGENT_PTT_AGY_DEBUG=1` logs every hook event and answer to
-`~/.agent-ptt/antigravity/debug.jsonl`.
+Verified on agy 1.5.5 (kbot) with the hook's approval turned off: in the first
+session the grants were written but MCP calls still prompted. After a restart,
+MCP `who`/`say` and `ptt inbox`/`done` ran with no prompt, and agy logged
+`allowed_command` and skipped the reviewer.
 
 **MCP tools.** The plugin also starts `ptt_mcp.py` as the MCP server
 `agent-ptt` (`mcp_config.json`). Its tools `say`, `tell`, `who`, `inbox`, `ack` and

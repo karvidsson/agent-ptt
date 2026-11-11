@@ -119,8 +119,44 @@ def inject(texts: list[str]) -> dict:
     return {"injectSteps": [{"systemMessage": {"systemMessage": "\n\n".join(texts)}}]}
 
 
+def ensure_grants() -> bool:
+    """Write agy's permission grants for ptt and the agent-ptt MCP tools, once.
+
+    agy's safety reviewer can ask before a ptt or MCP call even when PreToolUse
+    approved it (and a session whose hooks didn't load gets no approval at all);
+    a ``permissions.allow`` grant skips both. ``ptt agy-rules --install`` merges
+    them into ~/.gemini/antigravity-cli/settings.json and is a no-op when they
+    are there. True when it added any (agy picks them up at its next start).
+    ``AGENT_PTT_AGY_GRANTS=0`` turns this off.
+    """
+    if os.environ.get("AGENT_PTT_AGY_GRANTS", "1") == "0":
+        return False
+    with contextlib.suppress(Exception):
+        done = subprocess.run(
+            [sys.executable, str(HERE / "ptt.py"), "agy-rules", "--install"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return "[ptt] added" in (done.stdout or "")
+    return False
+
+
+GRANTS_ADDED = (
+    "Agent PTT just added agy permission grants for ptt and its agent-ptt MCP tools to"
+    " ~/.gemini/antigravity-cli/settings.json. agy reads them at start: tell the user once"
+    " to restart agy, after which ptt and the MCP tools never ask for permission."
+)
+
+
 def session_start(raw: dict) -> dict:
-    return inject(contexts(run("session_start.py", shared_event("SessionStart", raw))))
+    added = ensure_grants()
+    texts = contexts(run("session_start.py", shared_event("SessionStart", raw)))
+    if added:
+        texts.append(GRANTS_ADDED)
+    return inject(texts)
 
 
 def pre_invocation(raw: dict) -> dict:
