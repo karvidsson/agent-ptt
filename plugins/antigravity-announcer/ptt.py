@@ -19,6 +19,7 @@ current directory.
 hook, never waking an idle agent.
   ptt.py ack <id> | done <id> [--note N]     acknowledge / finish a mention or work item
   ptt.py codex-rules                         print a Codex rule so ptt can reach the server
+  ptt.py agy-rules [--install]               Antigravity grants so ptt and its MCP tools never ask
 """
 
 from __future__ import annotations
@@ -969,6 +970,91 @@ def cmd_codex_rules(args) -> None:
     sys.stdout.write(codex_rules())
 
 
+# --- Antigravity permission grants ---------------------------------------------
+
+AGY_MCP_SERVER = "agent-ptt-announcer_agent-ptt"  # <plugin name>_<server name>
+
+
+def agy_settings_path() -> Path:
+    """The Antigravity CLI's user settings (``AGENT_PTT_AGY_SETTINGS`` overrides)."""
+    override = os.environ.get("AGENT_PTT_AGY_SETTINGS", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
+
+
+def agy_grants() -> list[str]:
+    """``permissions.allow`` grants for this ptt.py and the plugin's MCP tools.
+
+    agy's safety reviewer (a model) can flag a ptt call, e.g. a ``done`` that
+    changes shared state, and then asks the user even when the plugin's
+    PreToolUse hook approved it in a session whose hooks didn't load. A grant
+    skips the review. ``command(<prefix>)`` matches the start of the command
+    line, so the grant names this machine's python and this copy of ptt.py.
+    """
+    here = str(Path(__file__).resolve())
+    pythons = list(dict.fromkeys([sys.executable or "python3", "python3"]))
+    return [f"command({python} {here})" for python in pythons] + [f"mcp({AGY_MCP_SERVER}/*)"]
+
+
+def _is_ptt_grant(grant: str) -> bool:
+    """An Agent PTT grant from an earlier install (e.g. another python or plugin copy)."""
+    return grant.startswith(f"mcp({AGY_MCP_SERVER}/") or (
+        grant.startswith("command(")
+        and grant.rstrip(")").endswith(("/ptt.py", "\\ptt.py"))
+        and "agent-ptt" in grant
+    )
+
+
+def install_agy_grants(path: Path) -> tuple[list[str], list[str]]:
+    """Merge the grants into agy's settings.json; returns (added, removed)."""
+    settings: dict = {}
+    if path.exists():
+        try:
+            settings = json.loads(path.read_text(encoding="utf-8") or "{}")
+        except ValueError as exc:
+            raise Failure(
+                f"{path} is not valid JSON ({exc}); fix it or add the grants by hand"
+            ) from None
+        if not isinstance(settings, dict):
+            raise Failure(f"{path} is not a JSON object; add the grants by hand")
+    permissions = settings.setdefault("permissions", {})
+    allow = permissions.setdefault("allow", []) if isinstance(permissions, dict) else None
+    if not isinstance(allow, list):
+        raise Failure(f"{path}: permissions.allow is not a list; add the grants by hand")
+    wanted = agy_grants()
+    removed = [g for g in allow if isinstance(g, str) and _is_ptt_grant(g) and g not in wanted]
+    added = [g for g in wanted if g not in allow]
+    permissions["allow"] = [g for g in allow if g not in removed] + added
+    if added or removed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".agent-ptt.tmp")
+        tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    return added, removed
+
+
+def cmd_agy_rules(args) -> None:
+    path = agy_settings_path()
+    if not args.install:
+        print(json.dumps({"permissions": {"allow": agy_grants()}}, indent=2))
+        print(
+            f"Add these to permissions.allow in {path}, or run this command again with"
+            " --install, then restart agy.",
+            file=sys.stderr,
+        )
+        return
+    added, removed = install_agy_grants(path)
+    if not added and not removed:
+        print(f"[ptt] {path} already allows ptt and the agent-ptt MCP tools")
+        return
+    for grant in removed:
+        print(f"[ptt] removed old grant {grant}")
+    for grant in added:
+        print(f"[ptt] added {grant}")
+    print(f"[ptt] saved {path}; restart agy to use it")
+
+
 # --- entry point --------------------------------------------------------------
 
 
@@ -1033,6 +1119,8 @@ def parser() -> argparse.ArgumentParser:
     tell.add_argument("--reply-to", dest="reply_to")
     tell.add_argument("--fyi", action="store_true", help="informational: never wakes them")
     sub.add_parser("codex-rules", help="print a Codex rules file that lets ptt skip the sandbox")
+    agy = sub.add_parser("agy-rules", help="Antigravity grants so ptt and its MCP tools never ask")
+    agy.add_argument("--install", action="store_true", help="merge them into agy's settings.json")
     watch = sub.add_parser("codex-watch", help="(started by the hooks) wake idle Codex")
     watch.add_argument("--pid", type=int, default=0, help="the Codex process to follow")
     for name in ("ack", "done"):
@@ -1059,6 +1147,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.command == "codex-rules":
         cmd_codex_rules(args)  # needs no session
+        return 0
+    if args.command == "agy-rules":
+        try:
+            cmd_agy_rules(args)  # needs no session
+        except (Failure, OSError) as exc:
+            print(error_text(exc), file=sys.stderr)
+            return 1
         return 0
     try:
         session = Session(args.session)
