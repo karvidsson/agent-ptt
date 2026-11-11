@@ -242,6 +242,20 @@ def load_session(base: str, session_id: str) -> dict:
     return _read(pointer_path(base, session_id))
 
 
+def session_base(session_id: str) -> str | None:
+    """The server a session's pointer was saved for, when exactly one has it.
+
+    An MCP server may run without the env the hooks saw: Cursor starts it with only
+    HOME, so an AGENT_PTT_URL set in the shell is missing there (task 25).
+    """
+    bases = set()
+    for path in PROJECTS_DIR.glob("session-*.json"):
+        pointer = _read(path)
+        if pointer.get("session_id") == session_id and pointer.get("base"):
+            bases.add(pointer["base"])
+    return bases.pop() if len(bases) == 1 else None
+
+
 def save_session(base: str, session_id: str, **fields) -> dict:
     path = pointer_path(base, session_id)
     pointer = _read(path)

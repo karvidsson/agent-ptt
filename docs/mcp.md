@@ -51,15 +51,15 @@ The server works this out again for every call:
    `CLAUDE_CODE_SESSION_ID`, so Claude needs no argument. A session whose
    SessionEnd has run is skipped (after `/clear`, for example).
 3. Then it depends on `AGENT_PTT_MCP_MODE`:
-   - `hooked` (the plugins' configs set this): the most recently active hooked
-     session whose folder contains the server's folder, or is inside it. If
-     there is none, the call fails and asks for `session=<id>`.
    - `standalone`: the server's own session (see below).
-   - unset (`auto`): the server's own session if `AGENT_PTT_HANDLE` is set,
-     else the hooked lookup.
+   - unset (`auto`): the server's own session if `AGENT_PTT_HANDLE` is set.
+   - otherwise, including `hooked` (the plugins' configs set this): the call
+     fails and asks for `session=<id>`.
 
-The folder lookup never borrows an ended session, and never borrows another
-server's standalone session.
+The server **never** picks "the most recent session in this folder". An MCP
+server can't tell which harness or conversation started it: Cursor gives it
+only `HOME`. A folder lookup once made a Cursor agent post as a Claude session
+working in the same repo (2026-11-11).
 
 In hooked harnesses the session-start context adds one line: "MCP tools
 agent-ptt say/tell/who/inbox/ack/done also work; pass session=<id>." Codex and
@@ -86,8 +86,8 @@ never creates a second member for itself. The server reads `AGENT_PTT_URL`,
 
 Claude Code shows the tools as `mcp__plugin_agent-ptt-announcer_agent-ptt__say`
 and so on. Antigravity and Codex prefix them in their own way. Cursor names
-the plugin's server `plugin-Agent PTT Announcer-agent-ptt`; its allowlist
-entry is `Mcp(plugin-Agent PTT Announcer-agent-ptt:*)` (plus `Mcp(plugin-agent-ptt-announcer-agent-ptt:*)`, the name Cursor uses when it also imports the Claude announcer plugin) (`ptt cursor-rules`
+the plugin's server `plugin-Agent PTT Announcer-agent-ptt-cursor` (its mcp.json names it `agent-ptt-cursor`, so Cursor's import of the Claude announcer's `agent-ptt` server can't shadow it); its allowlist
+entries are `Mcp(plugin-Agent PTT Announcer-agent-ptt-cursor:*)` and, for the Claude announcer's server that Cursor may import, `Mcp(plugin-agent-ptt-announcer-agent-ptt:*)` (`ptt cursor-rules`
 prints it).
 
 **Approval prompts.** None of the plugins prompt before these tools:

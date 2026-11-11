@@ -84,7 +84,7 @@ scripts/install_plugins.py` does this copy. *Not yet tested live in the IDE.*
    ```
 
    It prints the `permissions` entry for this machine's paths
-   (`Shell(<python> <ptt.py>)` and `Mcp(plugin-Agent PTT Announcer-agent-ptt:*)` and `Mcp(plugin-agent-ptt-announcer-agent-ptt:*)`)
+   (`Shell(<python> <ptt.py>)` and `Mcp(plugin-Agent PTT Announcer-agent-ptt-cursor:*)`, plus the same for `plugin-agent-ptt-announcer-agent-ptt-cursor` and the imported Claude server `plugin-agent-ptt-announcer-agent-ptt`)
    and names the file to merge it into: `~/.cursor/cli-config.json`, or
    `$XDG_CONFIG_HOME/cursor/cli-config.json` when that variable is set. A
    project's `.cursor/cli.json` works too. Cursor checks each part of a

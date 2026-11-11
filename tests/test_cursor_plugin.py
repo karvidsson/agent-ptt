@@ -93,7 +93,7 @@ def test_manifest_hooks_mcp_and_rule_are_valid():
     assert manifest["name"] == "agent-ptt-announcer"
     assert manifest["version"] == claude["version"]
     # Cursor names the plugin's MCP server after displayName: the allow rules depend on it
-    assert f"plugin-{manifest['displayName']}-agent-ptt" == cursor.PLUGIN_MCP_SERVER
+    assert f"plugin-{manifest['displayName']}-agent-ptt-cursor" == cursor.PLUGIN_MCP_SERVER
     assert ptt.CURSOR_MCP_SERVER == cursor.PLUGIN_MCP_SERVER
     config = json.loads((PLUGIN / "hooks/hooks.json").read_text())
     assert config["version"] == 1
@@ -111,7 +111,7 @@ def test_manifest_hooks_mcp_and_rule_are_valid():
         # stop runs in the workspace root, so every command names the plugin root
         assert entries[0]["command"] == f'python3 "${{CURSOR_PLUGIN_ROOT}}/cursor_hook.py" {event}'
     assert hooks["stop"][0]["timeout"] >= 30 and hooks["stop"][0]["loop_limit"] is None
-    mcp = json.loads((PLUGIN / "mcp.json").read_text())["mcpServers"]["agent-ptt"]
+    mcp = json.loads((PLUGIN / "mcp.json").read_text())["mcpServers"]["agent-ptt-cursor"]
     assert mcp["args"] == ["${CURSOR_PLUGIN_ROOT}/ptt_mcp.py"]
     rule = (PLUGIN / "rules/agent-ptt.mdc").read_text()
     assert rule.startswith("---\n") and "alwaysApply: true" in rule.split("---\n")[1]
@@ -124,6 +124,17 @@ def test_repo_marketplace_lists_the_cursor_plugin():
 
 
 # --- event translation -----------------------------------------------------------
+
+
+def test_a_join_that_prints_nothing_says_why_instead_of_staying_silent(calls, monkeypatch):
+    # Task 25: on the Mac the agent got no context at all and didn't know it had ptt.
+    monkeypatch.setenv("AGENT_PTT_URL", "http://127.0.0.1:9")  # nothing listens there
+    out = cursor.session_start(raw("sessionStart"))
+    text = out["additional_context"]
+    assert "couldn't join" in text and "http://127.0.0.1:9 is unreachable" in text
+    assert "AGENT_PTT_CURSOR_DEBUG=1" in text
+    monkeypatch.setenv("AGENT_PTT_RECEIVE", "0")  # turned off on purpose: stay quiet
+    assert cursor.session_start(raw("sessionStart", conversation_id="other")) == {}
 
 
 def test_session_start_returns_the_context_as_additional_context(calls):
@@ -300,6 +311,7 @@ def test_cursor_rules_prints_a_valid_cli_config_entry(capsys, monkeypatch, tmp_p
     assert f"Shell({sys.executable} {HOOKS / 'ptt.py'})" in allow
     assert f"Mcp({ptt.CURSOR_MCP_SERVER}:*)" in allow
     assert "Mcp(plugin-agent-ptt-announcer-agent-ptt:*)" in allow
+    assert "Mcp(plugin-agent-ptt-announcer-agent-ptt-cursor:*)" in allow
     assert str(tmp_path / "cursor" / "cli-config.json") in captured.err
     monkeypatch.setenv("CURSOR_CONFIG_DIR", str(tmp_path / "c"))
     assert ptt.cursor_config_dir() == tmp_path / "c"

@@ -13,9 +13,13 @@ Which session a call acts for, per call:
 
 1. the tool's ``session`` argument;
 2. a session id in the env (``AGENT_PTT_SESSION_ID``, ``CLAUDE_CODE_SESSION_ID``, …);
-3. ``AGENT_PTT_MCP_MODE``: ``hooked`` (the plugins set it) → the most recent hooked
-   session for this folder; ``standalone`` → this server's own session; unset →
-   its own session when ``AGENT_PTT_HANDLE`` is set, else the hooked lookup.
+3. ``AGENT_PTT_MCP_MODE``: ``standalone`` → this server's own session; unset →
+   its own session when ``AGENT_PTT_HANDLE`` is set; otherwise (``hooked``, which
+   the plugins set) an error asking for ``session=<id>``.
+
+Never by folder: an MCP server can't tell which harness or conversation started it
+(Cursor gives it nothing but HOME), and "the most recent session in this folder"
+once made a Cursor agent post as a Claude session in the same repo (task 25).
 
 A standalone (hookless) session joins the channel and the project on first use,
 like SessionStart does, as ``mcp-<digest of server, harness, folder, handle>``:
@@ -233,13 +237,13 @@ class Server:
         how = mode()
         if how == "standalone" or (how == "auto" and link.pinned_handle()):
             return self.standalone(base)
-        found = link.folder_session(base, work_dir())
-        if found:
-            return found
+        # Never guess by folder: another agent's session may be the newest one there.
         raise ptt.Failure(
-            "No Agent PTT session found for this folder. With the plugin's hooks, pass"
-            " session=<id> (the session context has it). Without hooks, set AGENT_PTT_HANDLE"
-            " (or AGENT_PTT_MCP_MODE=standalone) in this MCP server's env to join on its own."
+            "this MCP server can't tell which Agent PTT session you are: pass session=<id>"
+            " (your Agent PTT session context gives it, in the ptt command's --session). No"
+            " session context means the plugin's hooks didn't run in this conversation:"
+            " restart the agent. Without hooks, set AGENT_PTT_HANDLE (or"
+            " AGENT_PTT_MCP_MODE=standalone) in this MCP server's env to join on its own."
         )
 
     def session(self, requested: str | None):

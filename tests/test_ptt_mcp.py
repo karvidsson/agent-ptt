@@ -192,7 +192,7 @@ def test_runs_as_a_subprocess_with_no_session(tmp_path):
     assert [a["id"] for a in answers] == [1, 2, 3]
     who = answers[2]["result"]
     assert who["isError"] is True
-    assert who["content"][0]["text"].startswith("ptt: No Agent PTT session found")
+    assert who["content"][0]["text"].startswith("ptt: this MCP server can't tell")
 
 
 # --- hooked sessions -----------------------------------------------------------------
@@ -208,10 +208,12 @@ def test_tools_return_what_the_cli_prints(env):
     said = [p for m, path, p in env["calls"] if path.endswith("/say")][-1]
     assert said["text"] == "hello @Rex" and said["speak"] is False
 
-    text, failed = call(server, "tell", to="@Rex", text="review the fix", kind="question")
+    text, failed = call(
+        server, "tell", to="@Rex", text="review the fix", kind="question", session="s1"
+    )
     assert not failed and "sent question to agent:Rex" in text
 
-    text, failed = call(server, "who")
+    text, failed = call(server, "who", session="s1")
     assert not failed and "@Rex" in text and "Session s1 (hooked" in text
 
     me = link.load_membership(link.base_url(), "s1")[1]
@@ -221,34 +223,54 @@ def test_tools_return_what_the_cli_prints(env):
         headers={"X-Member-Key": rex_key},
     )
     item_id = sent.json()["item_id"]
-    text, failed = call(server, "inbox")
+    text, failed = call(server, "inbox", session="s1")
     assert not failed and f"[ptt] item {item_id} instruction from Rex: run tests" in text
-    text, failed = call(server, "inbox")  # one read, acknowledges nothing
+    text, failed = call(server, "inbox", session="s1")  # one read, acknowledges nothing
     assert item_id in text
 
-    text, failed = call(server, "ack", id=item_id[:8])
+    text, failed = call(server, "ack", id=item_id[:8], session="s1")
     assert not failed and text == f"[ptt] acked work item {item_id}"
     # acked, it's no longer pending: the full id still finishes it (as with the CLI)
-    text, failed = call(server, "done", id=item_id, note="green")
+    text, failed = call(server, "done", id=item_id, note="green", session="s1")
     assert not failed and text.startswith(f"[ptt] work item {item_id} done")
     item = env["client"].get(f"/projects/{pid}/items/{item_id}").json()["item"]
     assert item["state"] == "done"
-    text, _ = call(server, "inbox")
+    text, _ = call(server, "inbox", session="s1")
     assert text == "[ptt] inbox empty"
 
 
-def test_session_comes_from_the_argument_then_the_env_then_the_folder(env, monkeypatch):
+def test_session_comes_from_the_argument_then_the_env_never_the_folder(env, monkeypatch):
+    # Task 25: in Cursor (whose MCP env has only HOME) the folder lookup picked a
+    # Claude session in the same repo, and the Cursor agent posted as that Claude.
     hook_start("a1", env["repo"])
     hook_start("b2", env["repo"])
     server = mcp.Server()
-    assert server.resolve(None) == "b2"  # the most recent hooked session for this folder
+    with pytest.raises(mcp.ptt.Failure, match="pass session=<id>"):
+        server.resolve(None)  # never "the most recent session in this folder"
+    text, failed = call(server, "say", text="hi")
+    assert failed and "can't tell which Agent PTT session you are" in text
+    assert not [p for _, path, p in env["calls"] if path.endswith("/say")]  # posted nothing
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "a1")  # what Claude Code gives MCP servers
     assert server.resolve(None) == "a1"
     assert server.resolve("b2") == "b2"
     link.save_session(link.base_url(), "a1", ended=True)  # /clear ended it: don't use it
-    assert server.resolve(None) == "b2"
+    with pytest.raises(mcp.ptt.Failure):
+        server.resolve(None)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "unknown-here")
-    assert server.resolve(None) == "b2"
+    with pytest.raises(mcp.ptt.Failure):
+        server.resolve(None)
+
+
+def test_a_session_saved_for_another_server_url_is_still_found(env, monkeypatch):
+    # Task 25: Cursor starts MCP servers with only HOME, so AGENT_PTT_URL from the
+    # shell (which the hooks saw) is missing and the default URL is looked up instead.
+    hook_start("s1", env["repo"])
+    saved = link.base_url()
+    monkeypatch.setenv("AGENT_PTT_URL", "http://127.0.0.1:9")
+    session = mcp.ptt.Session("s1")
+    assert session.base == saved and session.pointer
+    with pytest.raises(mcp.ptt.Failure, match="no Agent PTT state"):
+        mcp.ptt.Session("never-joined")
 
 
 def test_errors_are_tool_results_with_the_cli_message(env, monkeypatch):
@@ -297,7 +319,7 @@ def test_hooked_mode_never_joins_by_itself(env, monkeypatch):
     monkeypatch.setenv("AGENT_PTT_MCP_MODE", "hooked")
     monkeypatch.setenv("AGENT_PTT_HANDLE", "Pinned")
     text, failed = call(mcp.Server(), "who")
-    assert failed and "No Agent PTT session found" in text
+    assert failed and "can't tell which Agent PTT session you are" in text
     assert not any(path.endswith("/join") for _, path, _ in env["calls"])
 
 
@@ -377,7 +399,8 @@ def test_auto_mode_with_a_handle_does_not_borrow_a_hooked_session(env, monkeypat
     monkeypatch.setenv("AGENT_PTT_HANDLE", "Cursy")
     assert mcp.Server().resolve(None).startswith("mcp-")
     monkeypatch.delenv("AGENT_PTT_HANDLE")
-    assert mcp.Server().resolve(None) == "s1"
+    with pytest.raises(mcp.ptt.Failure):
+        mcp.Server().resolve(None)  # never s1 by folder
 
 
 # --- packaging -----------------------------------------------------------------------

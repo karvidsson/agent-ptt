@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import shlex
@@ -39,6 +40,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 from pathlib import Path
 
 try:
@@ -48,9 +50,16 @@ except ImportError:  # Windows: no join lock, and the permission hooks still ans
 
 HERE = Path(__file__).resolve().parent
 AGENT = "Cursor"
-MCP_SERVER = "agent-ptt"  # mcp.json server name
-PLUGIN_MCP_SERVER = "plugin-Agent PTT Announcer-agent-ptt"  # plugin-<displayName>-<server>
-SHARED_MCP_SERVERS = (PLUGIN_MCP_SERVER, "plugin-agent-ptt-announcer-agent-ptt")
+# mcp.json server name. Not "agent-ptt": Cursor's Claude-plugin import brings the
+# Claude announcer's server under that name, which shadowed ours (task 25).
+MCP_SERVER = "agent-ptt-cursor"
+PLUGIN_MCP_SERVER = f"plugin-Agent PTT Announcer-{MCP_SERVER}"  # plugin-<displayName>-<server>
+OWN_MCP_SERVERS = (PLUGIN_MCP_SERVER, f"plugin-agent-ptt-announcer-{MCP_SERVER}")
+# The imported Claude announcer's server: the same tools, from the Claude copy.
+SHARED_MCP_SERVERS = (
+    "plugin-agent-ptt-announcer-agent-ptt",
+    "plugin-Agent PTT Announcer-agent-ptt",
+)
 STATE_DIR = Path.home() / ".agent-ptt" / "cursor"
 PERMISSION_EVENTS = ("beforeShellExecution", "beforeMCPExecution")
 
@@ -169,8 +178,43 @@ def join(raw: dict) -> list[dict]:
     return outputs
 
 
+def server_problem() -> str:
+    """Why the Agent PTT server can't be reached from here, or "" when it can."""
+    try:
+        spec = importlib.util.spec_from_file_location("agy_link", HERE / "project_link.py")
+        link = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(link)
+        base = link.base_url()
+    except Exception as exc:  # a broken install: say so
+        return f"the plugin's scripts failed to load ({exc})"
+    try:
+        link.request(base, "GET", "/channels", timeout=4)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return f"{base} refused the API key (HTTP {exc.code}): check AGENT_PTT_API_KEY"
+        return f"{base} answered HTTP {exc.code}"
+    except Exception as exc:
+        return f"{base} is unreachable ({exc})"
+    return ""
+
+
+def join_failed_text() -> str:
+    """The context for a session whose join printed nothing, so the agent and user
+    see why instead of an agent with no handle and no ptt command (task 25)."""
+    problem = server_problem() or "the join printed nothing (no server-side error seen)"
+    return (
+        f"Agent PTT: the plugin is installed but couldn't join: {problem}. Set AGENT_PTT_URL"
+        " (and AGENT_PTT_API_KEY) in ~/.agent-ptt/announcer.env, then restart the agent."
+        " For hook logs, start the agent with AGENT_PTT_CURSOR_DEBUG=1"
+        " (~/.agent-ptt/cursor/debug.jsonl). Tell the user."
+    )
+
+
 def session_start(raw: dict) -> dict:
-    return context_output(contexts(join(raw)))
+    texts = contexts(join(raw))
+    if not texts and os.environ.get("AGENT_PTT_RECEIVE", "1") != "0":
+        texts = [join_failed_text()]
+    return context_output(texts)
 
 
 def before_submit_prompt(raw: dict) -> dict:
@@ -259,26 +303,26 @@ def ptt_command_ok(command: str) -> bool:
 
 
 def own_mcp_call(raw: dict) -> bool:
-    """True for a call to this plugin's own agent-ptt MCP server.
+    """True for a call to this plugin's own agent-ptt MCP server (or the same tools
+    from the Claude announcer that Cursor's Claude-plugin import may bring along).
 
-    Cursor names a plugin's server ``plugin-<displayName>-<server>`` and sends the
-    server's command along: it must run this plugin's ptt_mcp.py.
+    Cursor names a plugin's server ``plugin-<displayName or name>-<server>`` and sends
+    the server's command along: it must run this plugin's ptt_mcp.py, or the Claude
+    announcer's hooks/ptt_mcp.py for the imported server.
     """
     server = str(raw.get("mcp_server_name") or "")
     command = str(raw.get("command") or "")
-    if command:
-        if not server.endswith(MCP_SERVER) or not server.startswith("plugin-"):
+    if server in OWN_MCP_SERVERS:
+        return not command or str(HERE / "ptt_mcp.py") in command
+    if server in SHARED_MCP_SERVERS:
+        if not command:
             return False
-        if str(HERE / "ptt_mcp.py") in command:
-            return True
-        # Cursor's Claude-plugin import can serve the same tools from the Claude
-        # announcer's copy (seen live): its hooks dir holds the same ptt_mcp.py.
-        return server in SHARED_MCP_SERVERS and any(
+        return any(
             part.endswith(("/hooks/ptt_mcp.py", "\\hooks\\ptt_mcp.py"))
             and "agent-ptt-announcer" in part
             for part in command.split()
         )
-    return server in SHARED_MCP_SERVERS
+    return False
 
 
 def permission(raw: dict) -> dict:
