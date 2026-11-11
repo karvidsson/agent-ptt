@@ -8,6 +8,7 @@ Integrations that let coding agents speak through Agent PTT voice channels.
 | [voice/](voice/) | Claude Code | `/agent-ptt-voice:join` — join/resume an organization; `/agent-ptt-voice:say` — legacy voice messages |
 | [codex-announcer/](codex-announcer/) | Codex CLI | Same announcer, packaged as the Codex plugin `agent-ptt-announcer` |
 | [antigravity-announcer/](antigravity-announcer/) | Antigravity (`agy` CLI, App, IDE) | Same announcer as an Antigravity plugin; wakes idle sessions through a background `ptt wait --first` |
+| [cursor-announcer/](cursor-announcer/) | Cursor (`agent` / `cursor-agent` CLI, IDE agent) | Same announcer as a Cursor plugin, with the `agent-ptt` MCP server; wakes idle sessions through a background `ptt wait --first` |
 
 All of them talk to an Agent PTT server over plain REST — on this machine or
 another one (set `AGENT_PTT_URL`, and `AGENT_PTT_API_KEY` when the server has
@@ -19,7 +20,7 @@ beyond `python3`. Nothing in them assumes a checkout of this repo.
 From a local checkout, install everything with:
 
 ```bash
-python3 scripts/install_plugins.py      # --skip-claude / --skip-codex / --skip-antigravity
+python3 scripts/install_plugins.py      # --skip-claude / --skip-codex / --skip-antigravity / --skip-cursor
 ```
 
 It always installs from the repo's **main checkout**, even when run inside a
@@ -65,6 +66,22 @@ agy plugin install https://github.com/karvidsson/agent-ptt/tree/main/plugins/ant
 ```
 
 `agy` installs a copy: run the same command again to update, then restart `agy`.
+
+and the Cursor announcer (any machine · plain terminal; the `agent` CLI
+2026.11.11 needs `--plugin-dir` and two no-op hooks, see
+[cursor-announcer/README.md](cursor-announcer/README.md)):
+
+```bash
+agent --plugin-dir /abs/path/to/agent-ptt/plugins/cursor-announcer
+# account-wide, once the Cursor marketplace is on GitHub (not yet tested):
+agent plugin marketplace add https://github.com/karvidsson/agent-ptt
+```
+
+The repo's `.cursor-plugin/marketplace.json` lists only the Cursor plugin, so
+Cursor never installs the Claude announcer from this repo. On the checkout
+machine, `install_plugins.py` copies the plugin to
+`~/.cursor/plugins/local/agent-ptt-announcer/` (read by the IDE) and adds the
+no-op hooks to `~/.cursor/hooks.json`.
 
 On its next start Codex asks you to review the plugin's hooks ("Hooks need
 review → Trust all"); it asks again after every plugin upgrade, because trust
@@ -120,22 +137,26 @@ command — `python3 <plugin dir>/hooks/ptt.py --session <id>` (Codex:
 | `ptt tell <Handle\|role:<r>\|project> "<text>" [--kind …] [--reply-to <item>] [--fyi]` | send a work item |
 | `ptt ack <id>` / `ptt done <id> [--note …]` | acknowledge / finish a mention or work item |
 | `ptt codex-rules` | print a Codex rules file so `ptt` reaches the server from Codex's sandbox ([setup](codex-announcer/README.md#sandbox-and-network)) |
+| `ptt cursor-rules` | print the Cursor CLI allowlist entry that runs `ptt` and the MCP tools without a prompt ([setup](cursor-announcer/README.md#install)) |
 
 **MCP tools.** Each announcer also ships `ptt_mcp.py`, a stdio MCP server
 named `agent-ptt`, with the tools `say`, `tell`, `who`, `inbox`, `ack` and
 `done`. They return what the matching `ptt` command prints, and none of them
 blocks. The plugin's MCP config loads it: `announcer/.mcp.json`,
 `codex-announcer/.mcp.json` (named in `.codex-plugin/plugin.json`) and
-`antigravity-announcer/mcp_config.json`. Waking stays with `ptt wait`. The same
-server also works on its own in MCP harnesses without hooks, such as Cursor,
-Gemini CLI and Windsurf. See [docs/mcp.md](../docs/mcp.md).
+`antigravity-announcer/mcp_config.json` and `cursor-announcer/mcp.json`.
+Waking stays with `ptt wait`. The same server also works on its own in MCP
+harnesses without hooks, such as Gemini CLI and Windsurf (or Cursor without
+its plugin). See [docs/mcp.md](../docs/mcp.md).
 
 Mentions and work items also arrive at hook boundaries (prompt, tool call,
 stop), and when someone joins or leaves the project the next hook says so once.
 Claude Code is told to keep a Monitor running on `ptt wait` so it wakes while
 idle. Codex has no Monitor: its Stop hook waits up to 240 s for a mention or a
 work item addressed to it (only when someone else is present) and continues the
-turn with it. The fallback after that is the next hook event.
+turn with it. The fallback after that is the next hook event. Antigravity and
+Cursor keep `ptt wait --first` running as a background command; its exit on a
+delivery starts their next turn.
 
 **Quiet wake-ups (0.3.0, Codex watcher 0.4.0).** Only non-FYI mentions and instruction, handoff,
 question and answer items wake an idle session. `--fyi` messages and items
@@ -173,13 +194,15 @@ this.
 
 ## Shared announcer scripts
 
-Every `announcer/hooks/*.py` and its `codex-announcer/*.py` and
-`antigravity-announcer/*.py` twins are **byte-identical by design** (tests
-enforce it, and `validate_plugins.py` checks the `ptt_mcp.py` that each MCP
-config runs). Edit one, copy to the others:
+Every `announcer/hooks/*.py` and its `codex-announcer/*.py`,
+`antigravity-announcer/*.py` and `cursor-announcer/*.py` twins are
+**byte-identical by design** (tests and `validate_plugins.py` enforce it).
+`voice/scripts/session_routing.py` is a copy too. Edit the one in
+`announcer/hooks/`, then copy it to the others:
 
 ```bash
-for f in plugins/announcer/hooks/*.py; do cp "$f" plugins/codex-announcer/; cp "$f" plugins/antigravity-announcer/; done
+for f in plugins/announcer/hooks/*.py; do for d in codex-announcer antigravity-announcer cursor-announcer; do cp "$f" "plugins/$d/"; done; done
+cp plugins/announcer/hooks/session_routing.py plugins/voice/scripts/
 ```
 
 ## Releasing
@@ -187,8 +210,9 @@ for f in plugins/announcer/hooks/*.py; do cp "$f" plugins/codex-announcer/; cp "
 Plugins are released together with one repo tag (see
 `.github/workflows/release.yml`):
 
-1. Bump `version` in every `plugins/*/.claude-plugin/plugin.json` and
-   `plugins/*/.codex-plugin/plugin.json` to `X.Y.Z`
+1. Bump `version` in every `plugins/*/.claude-plugin/plugin.json`,
+   `plugins/*/.codex-plugin/plugin.json`, `plugins/*/.cursor-plugin/plugin.json`
+   and `plugins/antigravity-announcer/plugin.json` to `X.Y.Z`
    (`scripts/validate_plugins.py` fails while they differ).
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. CI runs the gates, verifies the versions match the tag, zips each plugin,

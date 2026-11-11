@@ -120,6 +120,8 @@ def deliver(event: dict) -> None:
     base = routing.setting("AGENT_PTT_URL", "http://localhost:8770").rstrip("/")
     queue_route = codex_watch(base, session_id, agent, name)
     stop_wait = 0.0 if queue_route else stop_wait_seconds(agent)
+    if stop_wait and agent == "Cursor" and link.lock_alive(link.wait_lock_path(base, session_id)):
+        stop_wait = 0.0  # the background `ptt wait --first` is the wake route
     if name != "Stop":
         link.mark_turn(base, session_id, True)  # the Codex watcher doesn't poke a busy turn
     elif event.get("stop_hook_active") and not stop_wait:
@@ -243,6 +245,7 @@ def deliver(event: dict) -> None:
 
 
 MONITOR_RENUDGE = 600.0
+BACKGROUND_WAIT = ("Antigravity", "Cursor")  # wake through a background `ptt wait --first`
 
 
 def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
@@ -252,12 +255,12 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
     a Monitor ran before and has died (an expiry the agent didn't re-arm), remind
     again at most every 10 minutes. Prints the Stop block; True when it did.
 
-    Antigravity wakes when a background `ptt wait --first` exits, which happens on
-    every delivery, so there the reminder comes at a Stop without one running, but
-    only once until a wait has been seen running again: an agent that declines
-    (e.g. the user said not to start one) is never held in a Stop loop.
+    Antigravity and Cursor wake when a background `ptt wait --first` exits, which
+    happens on every delivery, so there the reminder comes at a Stop without one
+    running, but only once until a wait has been seen running again: an agent that
+    declines (e.g. the user said not to start one) is never held in a Stop loop.
     """
-    if agent not in ("Claude", "Antigravity") or routing.setting("AGENT_PTT_WAKE", "") == "0":
+    if agent not in (*BACKGROUND_WAIT, "Claude") or routing.setting("AGENT_PTT_WAKE", "") == "0":
         return False
     if routing.setting("AGENT_PTT_MONITOR_NUDGE", "1") == "0":
         return False
@@ -270,7 +273,7 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
         return False
     now = time.time()
     last = float(pointer.get("monitor_nudged_at") or 0)
-    background = agent == "Antigravity"
+    background = agent in BACKGROUND_WAIT
     if background:
         if last and not pointer.get("monitor_seen"):
             return False  # nudged already and no wait ran since: don't loop
@@ -392,13 +395,16 @@ def stop_wait_seconds(agent: str) -> float:
     """How long a Codex Stop hook may wait for a mention (240 s by default).
 
     Claude Code wakes through the Monitor tool instead, and its Stop hook has a
-    short timeout, so this is always 0 there.
+    short timeout, so this is always 0 there. Cursor wakes through a background
+    `ptt wait --first`; its Stop hook waits only when AGENT_PTT_STOP_WAIT_SECONDS
+    asks for it (and no background wait runs).
     """
-    if agent != "Codex" or routing.setting("AGENT_PTT_WAKE", "") == "0":
+    if agent not in ("Codex", "Cursor") or routing.setting("AGENT_PTT_WAKE", "") == "0":
         return 0.0
     raw = routing.setting("AGENT_PTT_STOP_WAIT_SECONDS", "")
+    default = STOP_WAIT_CODEX if agent == "Codex" else 0.0
     try:
-        seconds = float(raw) if raw.strip() else STOP_WAIT_CODEX
+        seconds = float(raw) if raw.strip() else default
     except ValueError:
         seconds = 0.0
     return max(0.0, min(STOP_WAIT_MAX, seconds))
@@ -559,7 +565,10 @@ def main() -> None:
     if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
         return
     with contextlib.suppress(Exception):
-        deliver(json.load(sys.stdin))
+        event = json.load(sys.stdin)
+        if routing.foreign_cursor_hook(event):
+            return  # Cursor's Claude import: the Cursor plugin delivers instead
+        deliver(event)
 
 
 if __name__ == "__main__":

@@ -54,8 +54,8 @@ MODES = ("auto", "hooked", "standalone")
 
 WAKE_NOTE = (
     "Never blocks: waking stays `ptt wait` running in the background (Claude Code: the"
-    " Monitor tool; Antigravity: a background command). A standalone MCP session has no"
-    " hooks and nothing wakes it: call inbox between steps."
+    " Monitor tool; Antigravity and Cursor: a background command). A standalone MCP session"
+    " has no hooks and nothing wakes it: call inbox between steps."
 )
 FYI_NOTE = (
     "fyi=true only for status updates, acknowledgements and claim releases (they don't wake"

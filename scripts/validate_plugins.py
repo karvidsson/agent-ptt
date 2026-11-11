@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate plugin manifests and the Claude Code and Codex marketplace registries.
+"""Validate plugin manifests and the Claude Code, Codex and Cursor marketplace registries.
 
 Run locally or in CI: python3 scripts/validate_plugins.py
 Exits 1 with a list of problems, 0 with a summary when everything checks out.
@@ -16,6 +16,11 @@ REPO_ROOT = Path(__file__).parent.parent
 PLUGINS_DIR = REPO_ROOT / "plugins"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 CODEX_MARKETPLACE = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
+CURSOR_MARKETPLACE = REPO_ROOT / ".cursor-plugin" / "marketplace.json"
+SHARED_HOOKS = PLUGINS_DIR / "announcer" / "hooks"  # the source of every plugin's shared .py copies
+SHARED_COPIES = ("codex-announcer", "antigravity-announcer", "cursor-announcer")
+CURSOR_HOOK_SCRIPT = re.compile(r"\$\{CURSOR_PLUGIN_ROOT\}/([^\"\s]+\.py)")
+KEBAB = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 # A script a hook command runs: "${PLUGIN_ROOT}/x.py" (Codex) or "${CLAUDE_PLUGIN_ROOT}"/hooks/x.py
 HOOK_SCRIPT = re.compile(r'\$\{(?:CLAUDE_)?PLUGIN_ROOT\}"?/([^"\s]+)')
 
@@ -165,6 +170,8 @@ def validate() -> list[str]:
                             where = hooks_path.relative_to(REPO_ROOT)
                             problems.append(f"{where}: {event} runs missing {script}")
 
+    problems += validate_cursor(claude_versions)
+    problems += validate_shared_copies()
     problems += validate_mcp()
 
     client = REPO_ROOT / "agent_ptt/skills/agent-ptt-organization/scripts/client.py"
@@ -184,16 +191,92 @@ def validate() -> list[str]:
     return problems
 
 
-# Plugin MCP configs: Claude Code's root .mcp.json, Antigravity's mcp_config.json and
-# the file a Codex manifest's "mcpServers" names. Each runs ptt_mcp.py from the plugin.
-MCP_ROOT_VARS = re.compile(r"^\$\{(?:CLAUDE_)?PLUGIN_ROOT\}/")
+def validate_cursor(claude_versions: set) -> list[str]:
+    """Cursor plugins: .cursor-plugin/plugin.json (kebab-case name, versioned with the
+    others), hooks/hooks.json ({"version": 1, "hooks": {event: [{command}]}}) whose
+    scripts exist, rules/*.mdc with frontmatter, and the repo's Cursor marketplace."""
+    problems: list[str] = []
+    names: dict[str, Path] = {}
+    for manifest_path in sorted(PLUGINS_DIR.glob("*/.cursor-plugin/plugin.json")):
+        plugin_dir = manifest_path.parent.parent
+        rel = manifest_path.relative_to(REPO_ROOT)
+        manifest = _load_json(manifest_path, problems)
+        if manifest is None:
+            continue
+        name = manifest.get("name") or ""
+        if not KEBAB.match(name):
+            problems.append(f"{rel}: 'name' must be kebab-case, got {name!r}")
+        names[name] = plugin_dir
+        version = manifest.get("version")
+        if claude_versions and claude_versions != {version}:
+            problems.append(
+                f"{rel}: version {version!r} must match every .claude-plugin version "
+                f"({', '.join(sorted(claude_versions))})"
+            )
+        hooks_path = plugin_dir / "hooks" / "hooks.json"
+        hooks_rel = hooks_path.relative_to(REPO_ROOT)
+        config = _load_json(hooks_path, problems) if hooks_path.exists() else None
+        if config is not None:
+            if config.get("version") != 1 or not isinstance(config.get("hooks"), dict):
+                problems.append(f'{hooks_rel}: needs "version": 1 and a "hooks" object')
+                config = {"hooks": {}}
+            for event, handlers in config["hooks"].items():
+                for handler in handlers if isinstance(handlers, list) else []:
+                    command = str(handler.get("command", ""))
+                    for script in CURSOR_HOOK_SCRIPT.findall(command):
+                        if not (plugin_dir / script).is_file():
+                            problems.append(f"{hooks_rel}: {event} runs missing {script}")
+        for rule in sorted((plugin_dir / "rules").glob("*.mdc")):
+            text = rule.read_text()
+            head = text.split("---\n")[1] if text.startswith("---\n") else ""
+            if "description:" not in head and "alwaysApply:" not in head:
+                problems.append(f"{rule.relative_to(REPO_ROOT)}: missing rule frontmatter")
+    if names:
+        marketplace = _load_json(CURSOR_MARKETPLACE, problems)
+        listed = set()
+        for entry in (marketplace or {}).get("plugins", []):
+            name, source = entry.get("name"), entry.get("source")
+            listed.add(name)
+            path = source if isinstance(source, str) else None
+            if not path or not (REPO_ROOT / path / ".cursor-plugin" / "plugin.json").is_file():
+                problems.append(f"cursor marketplace entry {name!r}: no Cursor plugin at {path}")
+            elif name not in names or (REPO_ROOT / path).resolve() != names[name].resolve():
+                problems.append(f"cursor marketplace entry {name!r}: name differs from {path}")
+        for name in names:
+            if name not in listed:
+                problems.append(f"Cursor plugin {name!r} is not in .cursor-plugin/marketplace.json")
+    return problems
+
+
+def validate_shared_copies() -> list[str]:
+    """The Codex, Antigravity and Cursor plugins carry identical copies of the shared
+    hook scripts in plugins/announcer/hooks/ (sync them with cp after a change)."""
+    problems = []
+    for name in SHARED_COPIES:
+        plugin_dir = PLUGINS_DIR / name
+        if not plugin_dir.is_dir():
+            continue
+        for script in sorted(SHARED_HOOKS.glob("*.py")):
+            copy = plugin_dir / script.name
+            if not copy.is_file() or copy.read_bytes() != script.read_bytes():
+                problems.append(
+                    f"plugins/{name}/{script.name} differs from {script.name} in hooks/"
+                )
+    return problems
+
+
+# Plugin MCP configs: Claude Code's root .mcp.json, Antigravity's mcp_config.json, Cursor's
+# mcp.json and the file a Codex manifest's "mcpServers" names. Each runs ptt_mcp.py.
+MCP_ROOT_VARS = re.compile(r"^\$\{(?:CLAUDE_|CURSOR_)?PLUGIN_ROOT\}/")
 MCP_SERVER = "agent-ptt"
 MCP_SIBLINGS = ("ptt.py", "project_link.py", "session_start.py", "session_routing.py")
 
 
 def _mcp_configs() -> list[Path]:
-    configs = sorted(PLUGINS_DIR.glob("*/.mcp.json")) + sorted(
-        PLUGINS_DIR.glob("*/mcp_config.json")
+    configs = (
+        sorted(PLUGINS_DIR.glob("*/.mcp.json"))
+        + sorted(PLUGINS_DIR.glob("*/mcp_config.json"))
+        + sorted(PLUGINS_DIR.glob("*/mcp.json"))
     )
     for manifest in sorted(PLUGINS_DIR.glob("*/.codex-plugin/plugin.json")):
         try:
@@ -253,10 +336,11 @@ def main() -> int:
     plugin_count = len(list(PLUGINS_DIR.glob("*/.claude-plugin/plugin.json")))
     codex_count = len(list(PLUGINS_DIR.glob("*/.codex-plugin/plugin.json")))
     agy_count = len(list(PLUGINS_DIR.glob("*/plugin.json")))
+    cursor_count = len(list(PLUGINS_DIR.glob("*/.cursor-plugin/plugin.json")))
     skill_count = len(list(PLUGINS_DIR.glob("*/skills/*/SKILL.md")))
     print(
         f"✅ plugins OK: {plugin_count} Claude + {codex_count} Codex + {agy_count} Antigravity"
-        " manifests, "
+        f" + {cursor_count} Cursor manifests, "
         f"{skill_count} skills, marketplaces consistent"
     )
     return 0

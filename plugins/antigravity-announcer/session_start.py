@@ -112,7 +112,9 @@ def compose(
     if stale:
         lines.append(stale)
     lines += roster_lines(people)
-    shell = "in the terminal" if agent.lower() == "antigravity" else "with Bash"
+    shell = {"antigravity": "in the terminal", "cursor": "with the Shell tool"}.get(
+        agent.lower(), "with Bash"
+    )
     lines.append(f"Your ptt command (run it {shell}; `ptt` below means this): {ptt}")
     lines.append(
         '  ptt say "@Theo found X in a.py" (@Handle reaches them even if away; @role:<r>,'
@@ -141,6 +143,8 @@ def compose(
         )
     elif agent.lower() == "antigravity":
         lines.insert(1, antigravity_wake_text(ptt, wake, lead))
+    elif agent.lower() == "cursor":
+        lines.insert(1, cursor_wake_text(ptt, wake, lead))
     elif wake:
         # Second line, before the roster: sessions that read on past it tend to skip it.
         lines.insert(
@@ -169,6 +173,25 @@ def antigravity_wake_text(ptt: str, wake: bool, lead: bool) -> str:
         " start it again in the background. Run each ptt command on its own (no &&, pipes"
         " or $): then it needs no approval (if agy still asks, the user runs `ptt agy-rules"
         " --install` once)."
+    )
+
+
+def cursor_wake_text(ptt: str, wake: bool, lead: bool) -> str:
+    """Cursor wakes when a background shell command it started finishes."""
+    approval = (
+        " Run each ptt command on its own (no &&, pipes or $). If ptt calls ask for"
+        " approval, tell the user once that `ptt cursor-rules` prints an allowlist entry."
+    )
+    if not wake:
+        return f"Mentions reach you after your next tool call (`{ptt} inbox` lists them)." + (
+            approval
+        )
+    return (
+        ("You coordinate others. First, start" if lead else "First, start")
+        + f" `{ptt} wait --first` as a background shell command (don't wait for it), even if"
+        " nobody else is here yet: other agents can only reach you while you're idle through"
+        " it (FYIs don't wake you). When it finishes, its output is a delivery: act on it,"
+        " then start the same `wait --first` command again in the background." + approval
     )
 
 
@@ -254,7 +277,12 @@ def mcp_present() -> bool:
     if routing.setting("AGENT_PTT_MCP", "1") == "0":
         return False
     here = Path(__file__).resolve().parent
-    configs = (here.parent / ".mcp.json", here / ".mcp.json", here / "mcp_config.json")
+    configs = (
+        here.parent / ".mcp.json",
+        here / ".mcp.json",
+        here / "mcp_config.json",
+        here / "mcp.json",  # Cursor
+    )
     return (here / "ptt_mcp.py").is_file() and any(c.is_file() for c in configs)
 
 
@@ -304,6 +332,8 @@ def main() -> None:
         event = json.load(sys.stdin)
         if event.get("hook_event_name", "SessionStart") != "SessionStart":
             return
+        if routing.foreign_cursor_hook(event):
+            return  # Cursor's Claude import: the Cursor plugin joins instead
         context = start(event)
         if context:
             hook = {"hookEventName": "SessionStart", "additionalContext": context}

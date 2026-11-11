@@ -1,0 +1,15 @@
+{
+  "name": "agent-ptt",
+  "owner": { "name": "Kristian Arvidsson" },
+  "metadata": {
+    "description": "Agent PTT: voice channels and a shared inbox for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "agent-ptt-announcer",
+      "displayName": "Agent PTT Announcer",
+      "description": "Joins your project's Agent PTT channel when a Cursor agent session starts, delivers @mentions and work items, and includes the ptt command and the agent-ptt MCP tools.",
+      "source": "./plugins/cursor-announcer"
+    }
+  ]
+}

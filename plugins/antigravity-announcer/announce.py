@@ -349,11 +349,13 @@ def _last_assistant_text(path: str) -> str:
             message = record.get("message", record)
             if not isinstance(message, dict):
                 continue
-            if kind == "user" or message.get("role") == "user":
+            # Cursor puts the role beside the message: {"role": …, "message": {"content": …}}
+            role = message.get("role") or record.get("role")
+            if kind == "user" or role == "user":
                 if _is_tool_result(message):
                     continue  # a tool call after the final words, e.g. scheduling a wake-up
                 break
-            if kind != "assistant" and message.get("role") != "assistant":
+            if kind != "assistant" and role != "assistant":
                 continue
         text = _assistant_text(message.get("content", "")).strip()
         if text:
@@ -1099,6 +1101,8 @@ def main() -> None:
         return
 
     event = json.load(sys.stdin)
+    if routing.foreign_cursor_hook(event):
+        return  # Cursor's Claude import: the Cursor plugin announces instead
     event_name = event.get("hook_event_name", "")
     if event_name not in {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"}:
         return

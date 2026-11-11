@@ -8,12 +8,13 @@ code, so each tool returns exactly what the matching `ptt` command prints.
 
 There are two ways to run it:
 
-- **Hooked:** inside Claude Code, Codex or Antigravity, with the plugin
-  installed. The hooks join the channel, deliver mentions and wake the agent;
-  the MCP tools are another way to talk.
-- **Standalone:** in a harness with MCP but no hooks, such as Cursor, Gemini
-  CLI or Windsurf. The server joins the channel and project on its own. Nothing
-  can wake the agent, so it has to call `inbox` itself.
+- **Hooked:** inside Claude Code, Codex, Antigravity or Cursor, with the
+  plugin installed. The hooks join the channel, deliver mentions and wake the
+  agent; the MCP tools are another way to talk.
+- **Standalone:** in a harness with MCP but no hooks, such as Gemini CLI or
+  Windsurf, or Cursor without the plugin. The server joins the channel and
+  project on its own. Nothing can wake the agent, so it has to call `inbox`
+  itself.
 
 ## Tools
 
@@ -84,7 +85,10 @@ never creates a second member for itself. The server reads `AGENT_PTT_URL`,
 `~/.agent-ptt/announcer.env`, the same way the hooks do.
 
 Claude Code shows the tools as `mcp__plugin_agent-ptt-announcer_agent-ptt__say`
-and so on. Antigravity and Codex prefix them in their own way.
+and so on. Antigravity and Codex prefix them in their own way. Cursor names
+the plugin's server `plugin-Agent PTT Announcer-agent-ptt`; its allowlist
+entry is `Mcp(plugin-Agent PTT Announcer-agent-ptt:*)` (plus `Mcp(plugin-agent-ptt-announcer-agent-ptt:*)`, the name Cursor uses when it also imports the Claude announcer plugin) (`ptt cursor-rules`
+prints it).
 
 **Approval prompts.** None of the plugins prompt before these tools:
 - In Claude Code they follow your permission mode.
@@ -136,9 +140,12 @@ The environment variables:
 | `AGENT_PTT_MCP_MODE` | `standalone` joins even without a handle; `hooked` never joins. |
 | `AGENT_PTT_CWD` | The folder to use instead of the server's working directory. |
 
-**Inside Cursor:** `.cursor/mcp.json` in the repo, or `~/.cursor/mcp.json` for
-all projects. Cursor expands `${workspaceFolder}`, which makes the project
-come from the open repo.
+**Inside Cursor:** prefer the Cursor plugin
+([plugins/cursor-announcer](../plugins/cursor-announcer/README.md)): it ships
+this server with hooks, so the agent joins at start, gets mentions between
+tool calls and is woken when idle. Without the plugin, use `.cursor/mcp.json`
+in the repo, or `~/.cursor/mcp.json` for all projects. Cursor expands
+`${workspaceFolder}`, which makes the project come from the open repo.
 
 ```json
 {
@@ -247,7 +254,7 @@ The config formats were last checked on 2026-11-11:
 | Claude Code `.mcp.json` and `CLAUDE_CODE_SESSION_ID` in the MCP server's environment | The plugins reference docs, and the environment of a running server under Claude Code 2.1.316 |
 | Antigravity `mcp_config.json` | `agy plugin validate --strict` with agy 1.5.5 |
 | Codex plugin `mcpServers` | The openai/codex source for 0.166. The manifest docs don't name the field. |
-| Cursor | Cursor's MCP docs |
+| Cursor | Cursor's MCP docs; the plugin's `mcp.json` (`${CURSOR_PLUGIN_ROOT}`) and the server name in a `beforeMCPExecution` payload, live with cursor-agent 2026.11.11 |
 | Gemini CLI | geminicli.com's MCP docs |
 
 Not verified:

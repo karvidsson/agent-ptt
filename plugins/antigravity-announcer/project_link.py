@@ -79,7 +79,7 @@ def wants_wake(member_roles: list[str] | None = None) -> bool:
 
 def harness(agent: str) -> str:
     name = agent.lower()
-    return name if name in ("codex", "antigravity") else "claude"
+    return name if name in ("codex", "antigravity", "cursor") else "claude"
 
 
 def machine() -> str:
@@ -89,11 +89,12 @@ def machine() -> str:
 # --- plugin version ---------------------------------------------------------
 
 # Where each plugin keeps its manifest, relative to these scripts: the Claude Code
-# plugin's hooks/ folder, the Codex plugin's root, the Antigravity plugin's root.
+# plugin's hooks/ folder, the Codex plugin's root, the Antigravity and Cursor plugins' roots.
 MANIFESTS = (
     ("..", ".claude-plugin", "plugin.json"),
     (".codex-plugin", "plugin.json"),
     ("plugin.json",),
+    (".cursor-plugin", "plugin.json"),
 )
 VERSION_MAX = 20
 
@@ -258,12 +259,14 @@ def _within(child: str, parent: str) -> bool:
 
 
 # Session ids a harness puts in its children's env (CLAUDE_CODE_SESSION_ID also
-# reaches Claude Code's MCP servers, so ptt_mcp.py finds its conversation).
+# reaches Claude Code's MCP servers, so ptt_mcp.py finds its conversation; Cursor
+# gives the agent's shell commands CURSOR_CONVERSATION_ID).
 SESSION_ENV = (
     "AGENT_PTT_SESSION_ID",
     "CODEX_THREAD_ID",
     "CLAUDE_SESSION_ID",
     "CLAUDE_CODE_SESSION_ID",
+    "CURSOR_CONVERSATION_ID",
 )
 
 

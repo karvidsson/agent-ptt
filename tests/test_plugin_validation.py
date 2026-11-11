@@ -200,3 +200,32 @@ def test_mcp_configs_are_checked(tmp_path, monkeypatch):
     assert any('codex/servers.json: a relative script needs "cwd": "."' in p for p in problems)
     assert any("codex/servers.json: MCP script ptt_mcp.py does not exist" in p for p in problems)
     assert any("bad/.mcp.json: no mcpServers.agent-ptt" in p for p in problems)
+
+
+def test_detects_cursor_plugin_problems(tmp_path, monkeypatch):
+    plugin = tmp_path / "plugins" / "cur"
+    (plugin / ".cursor-plugin").mkdir(parents=True)
+    (plugin / ".cursor-plugin" / "plugin.json").write_text('{"name": "Not Kebab"}')
+    (plugin / "hooks").mkdir()
+    hook = {"command": 'python3 "${CURSOR_PLUGIN_ROOT}/gone.py" stop'}
+    (plugin / "hooks" / "hooks.json").write_text(
+        json.dumps({"version": 1, "hooks": {"stop": [hook]}})
+    )
+    (plugin / "rules").mkdir()
+    (plugin / "rules" / "x.mdc").write_text("no frontmatter\n")
+    for name in ("codex-announcer", "cursor-announcer"):
+        (tmp_path / "plugins" / name).mkdir()  # shared copies missing
+    monkeypatch.setattr(validate_plugins, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(validate_plugins, "PLUGINS_DIR", tmp_path / "plugins")
+    monkeypatch.setattr(
+        validate_plugins, "CURSOR_MARKETPLACE", tmp_path / ".cursor-plugin" / "marketplace.json"
+    )
+
+    problems = validate_plugins.validate_cursor({"1.0.0"})
+    assert any("must be kebab-case" in p for p in problems)
+    assert any("version None must match" in p for p in problems)
+    assert any("stop runs missing gone.py" in p for p in problems)
+    assert any("missing rule frontmatter" in p for p in problems)
+    assert any("missing file: .cursor-plugin/marketplace.json" in p for p in problems)
+    copies = validate_plugins.validate_shared_copies()
+    assert any(p.startswith("plugins/cursor-announcer/ptt.py differs") for p in copies)

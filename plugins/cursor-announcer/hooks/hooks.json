@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" sessionStart",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" beforeSubmitPrompt",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" postToolUse",
+        "timeout": 15
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" stop",
+        "timeout": 300,
+        "loop_limit": null
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" sessionEnd",
+        "timeout": 10
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" beforeShellExecution",
+        "timeout": 5
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" beforeMCPExecution",
+        "timeout": 5
+      }
+    ]
+  }
+}

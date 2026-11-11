@@ -17,6 +17,9 @@ def load(name):
     return module
 
 
+routing = load("session_routing")
+
+
 def main():
     script = Path(sys.argv[1]).resolve()
     if script.parent != Path(__file__).resolve().parent or script.name not in {
@@ -27,6 +30,8 @@ def main():
     event = json.load(sys.stdin)
     if event.get("agent_id"):
         return
+    if routing.foreign_cursor_hook(event):
+        return  # Cursor's Claude import: the Cursor plugin runs these instead
     workspace = load("workspace_client")
     workspace.routing.bind_event(event)
     if not workspace.enabled():
