@@ -1,11 +1,18 @@
 """Changing a participant's voice from the web UI (PUT .../participants/{pid}/voice)."""
 
 import time
+from datetime import UTC, datetime, timedelta
 
 from agent_ptt import channel as ch
+from agent_ptt import handles
 from agent_ptt.auth import API_KEY_ENV
 from agent_ptt.db import SessionLocal
-from agent_ptt.models import ParticipantKeyDB, PinnedVoiceDB, SessionIdentityDB
+from agent_ptt.models import (
+    HandleClaimDB,
+    ParticipantKeyDB,
+    PinnedVoiceDB,
+    SessionIdentityDB,
+)
 
 
 def _wait_for(predicate, timeout=2.0):
@@ -168,7 +175,13 @@ def test_session_join_keeps_the_new_voice_and_reuses_the_participant(client):
         identity = db.get(SessionIdentityDB, ("sess-1", "Claude"))
         assert identity.voice_id == f"user-{handle.lower()}"
 
-    # A new session pinning the same handle (AGENT_PTT_HANDLE) inherits it too.
+    # A new session pinning the same handle (AGENT_PTT_HANDLE) inherits it too,
+    # once the old session has been quiet for 10 minutes (same harness and machine).
+    with SessionLocal() as db:
+        claim = db.get(HandleClaimDB, handle.casefold())
+        claim.last_seen = datetime.now(UTC) - timedelta(minutes=15)
+        db.commit()
+    handles.reset_runtime_state()
     pinned = client.post(
         f"/channels/{_channel(client, 'other')}/join",
         json={"handle": handle, "session_id": "sess-2", "agent": "Claude", "pin_handle": True},

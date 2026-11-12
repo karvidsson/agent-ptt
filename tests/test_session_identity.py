@@ -4,8 +4,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from agent_ptt import channel as ch
+from agent_ptt import handles
 from agent_ptt.db import SessionLocal
-from agent_ptt.models import ParticipantKeyDB, SessionIdentityDB, VoiceProfile
+from agent_ptt.models import HandleClaimDB, SessionIdentityDB, VoiceProfile
 from agent_ptt.session_identity import NAMES, get_session_identity
 from agent_ptt.voices import delete_voice_profile, save_voice_profile
 
@@ -75,7 +76,7 @@ def test_session_join_reuses_participant_and_follows_channel_changes(client, db_
     assert first["voice_id"] in {"builder", "ruler"}
 
 
-# --- Names are reclaimed once their session is in no channel ----------------
+# --- The handle registry decides which names are free ------------------------
 
 
 def fill_dormant(db, count=40):
@@ -95,26 +96,6 @@ def occupy(db, handles):
     for handle in handles:
         ch.join_channel(channel.channel_id, handle, "alba", db=db)
     return channel
-
-
-def test_dormant_names_are_reclaimed_before_numbered_ones(db_session):
-    seed(db_session)
-    fill_dormant(db_session)
-    fresh = get_session_identity("new", "Codex", db_session)
-    assert fresh.handle in NAMES
-    held = db_session.scalars(select(SessionIdentityDB.handle)).all()
-    assert len(held) == len(set(held)) == len(NAMES)
-
-
-def test_least_recently_seen_dormant_name_is_reclaimed(db_session):
-    seed(db_session)
-    fill_dormant(db_session)
-    old = datetime(2026, 1, 1, tzinfo=UTC)
-    for index, name in enumerate(NAMES):
-        when = old if name == "Ivy" else old + timedelta(days=1 + index)
-        db_session.add(ParticipantKeyDB(handle=name, voice_id="alba", created_at=when))
-    db_session.commit()
-    assert get_session_identity("new", "Codex", db_session).handle == "Ivy"
 
 
 def test_all_plain_names_busy_gives_a_numbered_name(db_session):
@@ -143,27 +124,6 @@ def test_deleted_channel_does_not_keep_names_busy(db_session):
     assert get_session_identity("new", "Codex", db_session).handle in NAMES
 
 
-def test_session_keeps_its_name_unless_reclaimed(db_session):
-    seed(db_session)
-    fill_dormant(db_session, len(NAMES) - 1)
-    mine = get_session_identity("mine", "Codex", db_session)
-    assert mine.handle == NAMES[-1]
-    # Still dormant and nobody needed the name: same name and voice.
-    again = get_session_identity("mine", "Codex", db_session)
-    assert (again.handle, again.voice_id) == (NAMES[-1], mine.voice_id)
-
-    # Every other plain name is busy, so the next session takes "mine"'s name.
-    occupy(db_session, NAMES[:-1])
-    thief = get_session_identity("thief", "Codex", db_session)
-    assert thief.handle == NAMES[-1]
-    assert db_session.get(SessionIdentityDB, ("mine", "Codex")) is None
-    # The reclaimed session simply gets a fresh identity (the thief is talking now).
-    occupy(db_session, [thief.handle])
-    back = get_session_identity("mine", "Codex", db_session)
-    assert back.handle.endswith("2")
-    assert back.voice_id in {"builder", "ruler"}
-
-
 def test_voices_are_balanced_over_sessions_in_channels(db_session):
     seed(db_session)
     fill_dormant(db_session)  # 40 remembered sessions use "builder", none in a channel
@@ -178,21 +138,89 @@ def test_voices_are_balanced_over_sessions_in_channels(db_session):
     assert get_session_identity("new", "Codex", db_session).voice_id == "builder"
 
 
-def test_join_leave_frees_the_name_for_a_new_session(client, db_session):
+def hold(db, names, *, age=timedelta(0), prefix="old"):
+    """Claims on ``names`` by other sessions, last seen ``age`` ago."""
+    when = datetime.now(UTC) - age
+    for index, name in enumerate(names):
+        db.add(
+            SessionIdentityDB(
+                session_id=f"{prefix}-{index}", agent="Codex", handle=name, voice_id="builder"
+            )
+        )
+        claim = handles.take(
+            db,
+            name,
+            handles.Owner(
+                handles.session_owner("Codex", f"{prefix}-{index}"),
+                harness="Codex",
+                session_id=f"{prefix}-{index}",
+            ),
+        )
+        claim.last_seen = when
+    db.commit()
+
+
+def test_expired_names_are_reused_before_numbered_ones(db_session):
     seed(db_session)
-    fill_dormant(db_session, len(NAMES) - 1)
-    occupy(db_session, NAMES[:-1])
+    hold(db_session, NAMES, age=timedelta(hours=25))
+    fresh = get_session_identity("new", "Codex", db_session)
+    assert fresh.handle in NAMES
+    held = db_session.scalars(select(SessionIdentityDB.handle)).all()
+    assert len(held) == len(set(held)) == len(NAMES)
+
+
+def test_name_that_expired_longest_ago_is_reused(db_session):
+    seed(db_session)
+    hold(db_session, NAMES, age=timedelta(hours=25))
+    claim = db_session.get(HandleClaimDB, "ivy")
+    claim.last_seen = datetime.now(UTC) - timedelta(days=9)
+    db_session.commit()
+    assert get_session_identity("new", "Codex", db_session).handle == "Ivy"
+
+
+def test_never_claimed_names_beat_expired_ones(db_session):
+    seed(db_session)
+    hold(db_session, NAMES[:-1], age=timedelta(hours=25))
+    assert get_session_identity("new", "Codex", db_session).handle == NAMES[-1]
+
+
+def test_live_claims_push_new_sessions_to_the_next_tier(db_session):
+    seed(db_session)
+    hold(db_session, NAMES, age=timedelta(hours=23))
+    fresh = get_session_identity("new", "Codex", db_session)
+    assert fresh.handle.endswith("2") and fresh.handle.removesuffix("2") in NAMES
+    hold(db_session, [f"{n}2" for n in NAMES if f"{n}2" != fresh.handle], prefix="two")
+    third = get_session_identity("newer", "Codex", db_session)
+    assert third.handle.endswith("3") and third.handle.removesuffix("3") in NAMES
+
+
+def test_session_keeps_its_name_out_of_every_channel(db_session):
+    seed(db_session)
+    hold(db_session, NAMES[:-1])
+    mine = get_session_identity("mine", "Codex", db_session)
+    assert mine.handle == NAMES[-1]
+    # In no channel, but its claim is live: nobody else gets the name.
+    other = get_session_identity("other", "Codex", db_session)
+    assert other.handle.endswith("2")
+    again = get_session_identity("mine", "Codex", db_session)
+    assert (again.handle, again.voice_id) == (NAMES[-1], mine.voice_id)
+
+
+def test_leaving_a_channel_does_not_free_the_name(client, db_session):
+    seed(db_session)
+    hold(db_session, NAMES[:-1])
     cid = client.post("/channels", json={"name": "room"}).json()["channel_id"]
     payload = {"handle": "Claude · project", "agent": "Claude"}
     first = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "a"}).json()
     assert first["handle"] == NAMES[-1]
-    # While "a" is in the channel, a new session gets a numbered name.
-    busy = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "b"}).json()
-    assert busy["handle"].endswith("2")
-
+    assert first["handle_claim"] == {
+        "handle": NAMES[-1],
+        "pinned": False,
+        "expires_after_hours": 24,
+    }
     left = client.post(f"/channels/{cid}/leave", json={"key_id": first["key_id"]})
     assert left.status_code == 200
-    third = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "c"}).json()
-    assert third["handle"] == NAMES[-1]
-    roster = client.get(f"/channels/{cid}").json()["participants"]
-    assert sorted(p["handle"] for p in roster.values()) == sorted([busy["handle"], NAMES[-1]])
+    later = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "c"}).json()
+    assert later["handle"].endswith("2")
+    back = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "a"}).json()
+    assert back["handle"] == NAMES[-1]

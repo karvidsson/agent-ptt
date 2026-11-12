@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from agent_ptt import handles
 from agent_ptt.models import (
     ArchivedChannelDB,
     Channel,
@@ -225,6 +226,7 @@ def mark_seen(participant: ParticipantKey) -> None:
     """
     now = datetime.now(UTC)
     participant.last_seen = now
+    handles.touch(participant.handle)  # Keeps the server-wide name claimed.
     if participant.state == "offline" or (participant.state == "away" and participant.idle_away):
         participant.state = "active"
         participant.away_reason = None

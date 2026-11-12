@@ -95,16 +95,21 @@ def test_resume_handle_keeps_member_and_its_inbox(client):
     )
     assert sent.status_code == 201
 
-    # A new session (another machine), same pinned handle, no stored key.
-    again = pjoin(client, "ember", resume_handle=True, machine="mbp", doing="triage")
+    # Another machine can't take the name (server-wide handle registry).
+    pjoin(client, "ember", expect=409, resume_handle=True, machine="mbp", harness="claude")
+    # A new session on the same machine, same pinned handle, no stored key.
+    again = pjoin(
+        client, "ember", resume_handle=True, machine="krille", harness="claude", doing="triage"
+    )
     assert again["resumed"] is True
     assert again["member"]["member_id"] == ember["member"]["member_id"]
     assert again["member_key"] == ember["member_key"]
     assert again["member"]["roles"] == ["lead"]
-    assert again["member"]["machine"] == "mbp" and again["member"]["doing"] == "triage"
+    assert again["member"]["machine"] == "krille" and again["member"]["doing"] == "triage"
     assert [i["title"] for i in inbox(client, again)] == ["Look at the login bug"]
 
-    fresh = pjoin(client, "Ember")  # Without resume_handle: a new member, as before.
+    # Without resume_handle: a new member, as before.
+    fresh = pjoin(client, "Ember", machine="krille", harness="claude")
     assert fresh["resumed"] is False
     assert fresh["member"]["member_id"] != ember["member"]["member_id"]
     nobody = pjoin(client, "Nobody", resume_handle=True)
@@ -246,7 +251,7 @@ def test_live_receiver_uses_channel_inbox_not_project(client):
     cid = lead["project"]["channel_id"]
     poppy = cjoin(client, cid, "Poppy")
     agent = hooked(client, cid, "sess-live")
-    pjoin(client, agent["handle"])  # Also a project member.
+    pjoin(client, agent["handle"], harness="claude")  # Also a project member (old plugin).
     token = pj.mention_text(agent["handle"])
     msg = say(client, cid, poppy, f"{token} ping")
     assert msg["queued_items"] == []

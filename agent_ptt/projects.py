@@ -32,6 +32,7 @@ from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
+from agent_ptt import handles
 from agent_ptt.models import (
     WORK_ITEM_BODY_MAX,
     WORK_ITEM_TITLE_MAX,
@@ -270,6 +271,49 @@ def _set_doing(member: ProjectMemberDB, doing: str | None, now: datetime) -> Non
     member.doing_at = now if text else None
 
 
+def _member_handle(db: Session, req: ProjectJoinRequest, rejoining: ProjectMemberDB | None) -> str:
+    """The member's handle, from the server-wide registry (handles.py).
+
+    With ``session_id`` it is the session's name (``handle`` is only a wish for
+    a session that has none yet); a rejoining member whose name was claimed
+    without a session (old plugin, migration) hands that name to the session.
+    Without ``session_id`` the requested handle must be free or already held
+    by this agent, else 409 ``handle_taken``.
+    """
+    from agent_ptt.session_identity import adopt_handle, get_session_identity
+
+    if req.session_id:
+        agent = req.agent or "cli"
+        identity = get_session_identity(
+            req.session_id, agent, db, machine=req.machine, preferred_handle=req.handle
+        )
+        if rejoining is not None and handles.ci(rejoining.handle) != handles.ci(identity.handle):
+            identity = adopt_handle(req.session_id, agent, rejoining.handle, db) or identity
+        return identity.handle
+
+    # A rejoin that omits harness or machine keeps the stored ones.
+    harness = req.harness or (rejoining.harness if rejoining else None)
+    machine = req.machine or (rejoining.machine if rejoining else None)
+    owner = handles.Owner(handles.host_owner(harness, machine), harness=harness, machine=machine)
+
+    def same_agent(claim) -> bool:
+        # An older plugin: its session (same harness, same or unknown machine)
+        # holds the name it now sends on project join. Session-less holders
+        # (web UI, plain CLI) match unless harness or machine differ.
+        if not claim.session_id:
+            return handles.sessionless_match(claim, harness, machine)
+        return handles.same(claim.harness, harness) and (
+            not claim.machine or handles.same(claim.machine, machine)
+        )
+
+    try:
+        handles.claim_raw(db, req.handle, owner, compatible=same_agent)
+    except handles.HandleTaken as taken:
+        body = taken.body()
+        raise ProjectError(409, body.pop("detail"), body) from None
+    return req.handle.strip()
+
+
 def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
     """Find or create the project, then create or update the member.
 
@@ -308,16 +352,17 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
 
     if rejoining is not None and rejoining.project_id != project.project_id:
         raise ProjectError(403, "member_key belongs to another project")
+    handle = _member_handle(db, req, rejoining)
     resumed = False
     if rejoining is None and req.resume_handle and not req.member_key:
-        rejoining = _member_by_handle(db, project.project_id, req.handle)
+        rejoining = _member_by_handle(db, project.project_id, handle)
         resumed = rejoining is not None
 
     channel_created = _ensure_channel(db, project)
     now = now_utc()
     if rejoining is not None:
         member = rejoining
-        member.handle = req.handle
+        member.handle = handle
         if req.roles is not None:
             member.roles = list(req.roles)
         if req.mode is not None:
@@ -335,7 +380,7 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
         member = ProjectMemberDB(
             project_id=project.project_id,
             member_key=secrets.token_urlsafe(32),
-            handle=req.handle,
+            handle=handle,
             roles=list(req.roles or []),
             mode=req.mode or "monitor",
             harness=req.harness,
@@ -364,6 +409,7 @@ def project_members(db: Session, project_id: str) -> list[ProjectMemberDB]:
 
 def touch_member(member: ProjectMemberDB) -> None:
     member.last_seen = now_utc()
+    handles.touch(member.handle)  # Keeps the server-wide name claimed.
 
 
 def update_member(db: Session, member: ProjectMemberDB, patch: MemberPatch) -> Effects:
@@ -381,6 +427,7 @@ def update_member(db: Session, member: ProjectMemberDB, patch: MemberPatch) -> E
         db.flush()
         _deliver_open_items_to(db, member, effects)
     member.last_seen = now
+    handles.touch(member.handle)
     db.commit()
     return effects
 

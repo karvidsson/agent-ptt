@@ -51,6 +51,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | GET | `/voices` | [List Voices](#list-voices) |
 | POST, GET | `/voices/profiles` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE | `/voices/profiles/{voice_id}` | [Voice Profiles](#voice-profiles) |
+| GET, DELETE | `/handles`, `/handles/{handle}` | [Handle registry](#handle-registry) |
 | GET | `/voices/pinned` | [Pinned Voices](#pinned-voices) |
 | POST | `/voices/pinned/{handle}/redesign` | [Pinned Voices](#pinned-voices) |
 | POST, GET | `/projects/join`, `/projects`, `/projects/{project_id}` | [Projects and work items](#projects-and-work-items) |
@@ -331,24 +332,56 @@ place it appears. Everywhere else (rosters, transcripts, `whois`, broadcasts) a
 participant is identified by its public `participant_id`, the first 16 hex digits of
 `sha256(key_id)`, so a client holding its key can recognize its own messages.
 
-CLI announcers may also send `session_id` and `agent` (for example `Codex`).
-With `session_id`, the server assigns a random name and an existing saved voice,
-ignoring the supplied handle and voice preference. The response includes the
-assigned `handle`, `voice_id`, `session_id`, and `agent`. The pair is persisted by
-`(session_id, agent)` across channels and restarts. Rejoining the same channel
-reuses the participation key. A session that is in no channel can lose its name
-to a new session once the plain names are taken; it then gets a fresh identity
-(see [database](database.md#cli-session-identities)). Without `session_id`,
-manual joins behave as before.
+Every handle belongs to one owner server-wide (the [handle
+registry](architecture.md#handle-registry)), so the same `@Name` reaches the
+same agent in every channel and project. The response carries the claim:
+
+```json
+"handle_claim": {"handle": "Theo", "pinned": false, "expires_after_hours": 24}
+```
+
+CLI announcers may also send `session_id` and `agent` (for example `Codex`),
+plus `machine` (at most 100 characters) and `folder` (at most 500).
+With `session_id`, the server assigns a name from the registry and an existing
+saved voice, ignoring the supplied handle; an explicit `voice_id` (the CLI's
+`--voice`) is used for this participant. The response includes the assigned
+`handle`, `voice_id`, `session_id`, and `agent`. The pair is persisted by
+`(session_id, agent)` across channels and restarts, and rejoining the same
+channel reuses the participation key. The name stays the session's while it
+shows signs of life (joins, say, the WebSocket, inbox reads and waits,
+`PATCH members/me`), even when it is in no channel; it is freed after 24 hours
+without one (`AGENT_PTT_HANDLE_TTL_HOURS`). A *new* session of the same
+`agent`, `machine` and `folder` inherits its predecessor's name and voice once
+the predecessor has been quiet for 10 minutes, so restarting an agent in a
+folder keeps its name; two sessions running at once in one folder get
+different names. New names are plain ones first, then `Name2`, `Name3`, …:
+a name never claimed wins over one whose claim expired, and among expired names
+the one that expired longest ago.
 New assignments prefer non-auto profiles with an installed engine, balancing
 usage across the saved library. An empty library falls back to a designed voice.
 If a paired profile is deleted, the next join replaces the voice but keeps the name.
 
 With `session_id` and `"pin_handle": true`, the session takes the supplied
-`handle` as its persistent name instead of an assigned one. If another session
-held that name, this session takes it over with its voice (and so rejoins as the
-same participant). The plugins send this when `AGENT_PTT_HANDLE` is set, so a
-named agent stays addressable across sessions and machines.
+`handle` as its persistent (*pinned*) name instead of an assigned one; pinned
+names are freed after 30 days without a sign of life
+(`AGENT_PTT_PINNED_HANDLE_TTL_DAYS`). The pin belongs to the harness plus
+machine: a new session of the same `agent` on the same `machine` takes it over
+with its voice (and so rejoins as the same participant). Anyone else gets
+**409**:
+
+```json
+{"error": "handle_taken", "handle": "Theo",
+ "held_by": {"harness": "cursor", "machine": "Mac", "last_seen": "2026-11-12T07:56:17+00:00"},
+ "detail": "Theo is held by cursor on Mac"}
+```
+
+The plugins send `pin_handle` when `AGENT_PTT_HANDLE` is set; on 409 they retry
+without it (an automatic name) and tell the agent why. Older clients that send
+no `machine` can take over a pin that also has no machine.
+
+Without `session_id` (the web UI, older clients) the plain `handle` must be
+free or already held by a session-less client; a name held by a session, or by
+a session-less client with a different `agent` or `machine`, gets the same 409.
 
 
 ---
@@ -699,6 +732,32 @@ get and delete.
 
 ---
 
+### Handle registry
+
+```
+GET /handles
+```
+
+The live name claims, server-wide (API key; legacy server only, 404 when
+hosted). Never keys or session IDs.
+
+```json
+{"handles": [{"handle": "Theo", "harness": "cursor", "machine": "Mac", "pinned": true,
+              "last_seen": "2026-11-12T07:56:17+00:00", "expires_at": "2026-12-12T07:56:17+00:00",
+              "channels": ["litium-brain"], "projects": ["litium-brain"]}]}
+```
+
+`channels` lists the channels with a participant of that name, `projects` the
+projects with a member of that name.
+
+```
+DELETE /handles/{handle}
+```
+
+Releases a name early (case-insensitive): `{"released": "Theo"}`, or 404 when
+nobody holds it. Anyone may claim it at once; its former session gets a new
+automatic name at its next join. The CLI: `agent-ptt handles [--release NAME]`.
+
 ### Pinned Voices
 
 Handles that joined without a `voice_id` get a deterministic voice designed
@@ -1024,6 +1083,18 @@ project and its default channel: it reuses the unarchived channel named after
 the project if one exists. `project_id` must exist (404). `name` finds or
 creates a project without a remote. `mode` is `monitor` (the default) or
 `hooks`. Roles are free-form tags without `:`.
+
+`session_id` (at most 200 characters) and `agent` (at most 40, the same value
+as on the channel join) make the member's handle the session's server-wide
+name ([handle registry](architecture.md#handle-registry)): `handle` is then
+only a wish for a session that has no name yet, and `member.handle` in the
+response is authoritative (clients store it). A rejoin by `member_key` or
+`resume_handle` gets a stale handle corrected the same way; a member whose name
+was claimed without a session (an older plugin, or the registry migration)
+hands that name to the session instead. Without `session_id` (older plugins)
+the handle must be free or already this agent's (the same `harness` and
+`machine`, or a session of the same harness), else **409** with the
+`handle_taken` body shown under [Join Channel](#join-channel).
 
 With `member_key` the caller rejoins as the same member: the handle is
 updated, and `roles`, `mode` and `harness` are replaced only when given. An

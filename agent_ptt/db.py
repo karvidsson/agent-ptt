@@ -107,6 +107,12 @@ def init_db() -> None:
         assign_missing_voices(db)
         db.commit()
 
+    # Server-wide handle registry: built once from identities and members.
+    from agent_ptt.handle_migration import migrate
+
+    with SessionLocal() as db:
+        migrate(db)
+
 
 def get_db():
     """FastAPI dependency — yields a request-scoped DB session."""

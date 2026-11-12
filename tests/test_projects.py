@@ -497,7 +497,13 @@ def test_agent_addressed_items(client):
     }
 
     send(client, finn, expect=422, kind="instruction", to="agent:nobody", body="?")
-    join(client, "Rex")  # a second "Rex" makes the handle ambiguous
+    # Another agent can't take "Rex" (the registry); the same one may join twice,
+    # and its second "Rex" member makes the handle ambiguous.
+    taken = client.post(
+        "/projects/join", json={"remote": REMOTE, "handle": "Rex", "harness": "claude"}
+    )
+    assert taken.status_code == 409 and taken.json()["error"] == "handle_taken"
+    join(client, "Rex", harness="codex")
     send(client, finn, expect=422, kind="instruction", to="agent:Rex", body="?")
     by_id = send(
         client, finn, kind="instruction", to=f"agent:{rex['member']['member_id']}", body="ok"

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import json as json_mod
+import os
+import platform
 from types import SimpleNamespace
 
 import pytest
@@ -398,7 +400,15 @@ def test_say_rejoins_once_when_key_was_dropped(session, fake_ws, monkeypatch):
         (f"{cli.DEFAULT_BASE_URL}/channels/{CHANNEL}/heartbeat", {"key_id": KEY}),
         (
             f"{cli.DEFAULT_BASE_URL}/channels/{CHANNEL}/join",
-            {"handle": "Claude", "voice_id": "marius"},
+            {
+                "handle": "Claude",
+                "voice_id": "marius",
+                "session_id": json.loads(session.read_text())["session_id"],
+                "agent": "cli",
+                "pin_handle": True,
+                "machine": platform.node().strip()[:100] or None,
+                "folder": os.getcwd()[:500],
+            },
         ),
     ]
     assert [(uri.endswith("key=key-new"), msg["text"]) for uri, msg in fake_ws.sent] == [

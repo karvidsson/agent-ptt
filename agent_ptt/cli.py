@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import typer
@@ -261,14 +264,47 @@ def channel_history(
 # ---------------------------------------------------------------------------
 
 
+def cli_session_id() -> str:
+    """This CLI's stable session ID (``session_id`` in session.json), made once.
+
+    The server keys the CLI's server-wide name to it, so ``join --handle``
+    and ``project join`` speak as one owner (see docs/architecture.md).
+    """
+    session = _load_session()
+    session_id = session.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        session_id = str(uuid.uuid4())
+        session["session_id"] = session_id
+        _save_session(session)
+    return session_id
+
+
 def _post_join(base: str, channel_id: str, handle: str, voice: str | None) -> httpx.Response:
+    """Join as this CLI session, pinning ``handle`` as its name."""
+    body = {
+        "handle": handle,
+        "voice_id": voice,
+        "session_id": cli_session_id(),
+        "agent": "cli",
+        "pin_handle": True,
+        "machine": platform.node().strip()[:100] or None,
+        "folder": os.getcwd()[:500],
+    }
     # Generous timeout: joining may include database work
     return httpx.post(
-        f"{base}/channels/{channel_id}/join",
-        headers=_auth_headers(),
-        json={"handle": handle, "voice_id": voice},
-        timeout=120.0,
+        f"{base}/channels/{channel_id}/join", headers=_auth_headers(), json=body, timeout=120.0
     )
+
+
+def _join_error(resp: httpx.Response) -> str:
+    """The server's reason, e.g. "Theo is held by cursor on Mac" for a 409."""
+    try:
+        data = resp.json()
+    except ValueError:
+        return resp.text
+    if isinstance(data, dict) and data.get("error") == "handle_taken":
+        return f"{data.get('detail')}. Pick another --handle."
+    return resp.text
 
 
 def _remember_join(channel_id: str, handle: str, voice: str | None, data: dict) -> None:
@@ -324,7 +360,8 @@ def join(
             )
         rprint(f"   Key: [cyan]{data['key_id']}[/cyan]")
     else:
-        rprint(f"[bold red]❌ Error:[/bold red] {resp.text}")
+        rprint(f"[bold red]❌ Error:[/bold red] {escape(_join_error(resp))}")
+        raise typer.Exit(1)
 
 
 @app.command("leave")
@@ -683,6 +720,51 @@ def listen(
 # ---------------------------------------------------------------------------
 # Voices
 # ---------------------------------------------------------------------------
+
+
+@app.command("handles")
+def handles_command(
+    release: str = typer.Option(
+        None, "--release", metavar="NAME", help="Release this name now (admin; needs the API key)"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print the raw result as JSON"),
+):
+    """List the server-wide names and who holds them, or release one."""
+    base = _get_base_url()
+    if release:
+        resp = httpx.delete(
+            f"{base}/handles/{quote(release, safe='')}", headers=_auth_headers(), timeout=30.0
+        )
+        if resp.status_code == 200:
+            rprint(f"[bold green]✅ Released {escape(resp.json().get('released', release))}[/]")
+            return
+        rprint(f"[bold red]❌ Error:[/bold red] {escape(resp.text)}")
+        raise typer.Exit(1)
+    resp = httpx.get(f"{base}/handles", headers=_auth_headers(), timeout=30.0)
+    if resp.status_code != 200:
+        rprint(f"[bold red]❌ Error:[/bold red] {escape(resp.text)}")
+        raise typer.Exit(1)
+    rows = resp.json().get("handles", [])
+    if as_json:
+        print(json.dumps(resp.json(), indent=2))
+        return
+    if not rows:
+        rprint("[dim]No names are held[/dim]")
+        return
+    table = Table(title="Server-wide names")
+    for column in ("Handle", "Harness", "Machine", "Last seen", "Expires", "Channels", "Projects"):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            row["handle"] + (" 📌" if row.get("pinned") else ""),
+            row.get("harness") or "",
+            row.get("machine") or "",
+            (row.get("last_seen") or "")[:16].replace("T", " "),
+            (row.get("expires_at") or "")[:16].replace("T", " "),
+            ", ".join(row.get("channels") or []),
+            ", ".join(row.get("projects") or []),
+        )
+    console.print(table)
 
 
 @app.command("voices")
