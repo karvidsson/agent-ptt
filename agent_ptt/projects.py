@@ -412,6 +412,32 @@ def touch_member(member: ProjectMemberDB) -> None:
     handles.touch(member.handle)  # Keeps the server-wide name claimed.
 
 
+# The announce summarizer's one-shot prompt (plugins' SUMMARIZER_PROMPT_PREFIX). A
+# member whose ``doing`` starts so is a ``claude -p`` child that joined by mistake
+# (an old parent plugin didn't set AGENT_PTT_HOOKS=0), never a real agent.
+SUMMARIZER_DOING_PREFIX = "You turn a developer's request to their coding agent"
+
+
+def is_summarizer_doing(text: str | None) -> bool:
+    return bool(text) and text.lstrip().startswith(SUMMARIZER_DOING_PREFIX)
+
+
+def remove_phantom(db: Session, member: ProjectMemberDB) -> None:
+    """Drop a summarizer child: its member row, its participants in the project
+    channel and its handle claim, so the name isn't held for a day."""
+    project = db.get(ProjectDB, member.project_id)
+    channel = ch.get_channel(project.channel_id) if project and project.channel_id else None
+    handle = member.handle
+    if channel is not None:
+        for key_id, participant in list(channel.participants.items()):
+            if participant.handle.casefold() == handle.casefold():
+                ch.revoke_participant(channel.channel_id, key_id, db)
+    db.delete(member)
+    db.commit()
+    handles.release_handle(db, handle)
+    logger.warning("Removed summarizer child %r from project %s", handle, member.project_id)
+
+
 def update_member(db: Session, member: ProjectMemberDB, patch: MemberPatch) -> Effects:
     """``PATCH members/me``: presence and settings; new roles get their open items."""
     now = now_utc()

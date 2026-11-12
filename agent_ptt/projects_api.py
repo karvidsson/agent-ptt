@@ -106,6 +106,11 @@ async def join_project(req: ProjectJoinRequest, db: Session = Depends(get_db)):
 
     The only response that carries ``member_key``.
     """
+    if pj.is_summarizer_doing(req.doing):
+        return JSONResponse(
+            {"detail": "a one-shot summarizer child is not a member", "error": "headless_child"},
+            status_code=422,
+        )
     try:
         result = pj.join_project(db, req)
     except pj.ProjectError as exc:
@@ -169,6 +174,15 @@ async def update_me(
     """
     try:
         member = _authenticate(db, project_id, x_member_key)
+        if pj.is_summarizer_doing(req.doing):
+            pj.remove_phantom(db, member)
+            return JSONResponse(
+                {
+                    "detail": "a one-shot summarizer child is not a member",
+                    "error": "headless_child",
+                },
+                status_code=410,
+            )
         effects = pj.update_member(db, member, req)
     except pj.ProjectError as exc:
         return _error(exc)

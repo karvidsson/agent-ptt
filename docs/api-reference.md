@@ -1123,6 +1123,12 @@ Any subset of `doing`, `machine`, `mode` and `roles`; `doing: ""` clears it
 (and `doing_at`). New roles get the still-open items addressed to them. Counts
 as seen. Returns your roster entry.
 
+A `doing` that starts with the announcer's summarizer prompt ("You turn a
+developer's request to their coding agent…") marks a one-shot `claude -p`
+child that joined by mistake: the server removes that member, its seats in the
+project channel and its name claim, and answers **410** `{"error":
+"headless_child"}`. `POST /projects/join` with such a `doing` gets **422**.
+
 ### Project detail
 
 `GET /projects/{p}` returns the project fields plus:

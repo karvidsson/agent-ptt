@@ -470,7 +470,7 @@ def main() -> None:
     if len(sys.argv) >= 3 and sys.argv[1] == "--responder":
         responder(sys.argv[2])
         return
-    if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0":
+    if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0" or routing.headless_child():
         return
     event = json.load(sys.stdin)
     if routing.foreign_cursor_hook(event):

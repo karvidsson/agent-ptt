@@ -692,3 +692,45 @@ def test_member_plugin_version_round_trips(client):
         "/projects/join", json={"remote": REMOTE, "handle": "X", "plugin_version": "1" * 21}
     )
     assert too_long.status_code == 422
+
+
+SUMMARIZER_DOING = "You turn a developer's request to their coding agent into what the agent says"
+
+
+def test_summarizer_child_member_is_removed_on_its_doing(client):
+    """Task 32: a `claude -p` summarizer child that joined anyway is dropped (member,
+    channel participant and name) as soon as it reports the summarizer prompt."""
+    real = join(client, "Real")
+    phantom = join(client, "Finn")
+    cid = phantom["project"]["channel_id"]
+    seat = client.post(f"/channels/{cid}/join", json={"handle": "Finn"})
+    assert seat.status_code == 200, seat.text
+    response = client.patch(
+        f"/projects/{pid(phantom)}/members/me",
+        json={"doing": SUMMARIZER_DOING},
+        headers=hdr(phantom),
+    )
+    assert response.status_code == 410
+    assert response.json()["error"] == "headless_child"
+    members = client.get(f"/projects/{pid(real)}").json()["members"]
+    assert [m["handle"] for m in members] == ["Real"]
+    participants = client.get(f"/channels/{cid}").json()["participants"]
+    handles = [
+        p["handle"]
+        for p in (participants.values() if isinstance(participants, dict) else participants)
+    ]
+    assert "Finn" not in handles
+    assert all(h["handle"] != "Finn" for h in client.get("/handles").json()["handles"])
+    # A real doing still works for everyone else.
+    ok = client.patch(
+        f"/projects/{pid(real)}/members/me", json={"doing": "fix the paper"}, headers=hdr(real)
+    )
+    assert ok.status_code == 200
+
+
+def test_summarizer_child_cannot_join_with_its_doing(client):
+    response = client.post(
+        "/projects/join", json={"remote": REMOTE, "handle": "Wren", "doing": SUMMARIZER_DOING}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"] == "headless_child"

@@ -569,7 +569,7 @@ class Project:
 
 
 def main() -> None:
-    if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
+    if routing.hooks_disabled():  # opted out, or a one-shot child (claude -p)
         return
     with contextlib.suppress(Exception):
         event = json.load(sys.stdin)

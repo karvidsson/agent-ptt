@@ -94,6 +94,14 @@ def isolate_speaker_env():
 
 
 @pytest.fixture(autouse=True)
+def not_a_headless_child(monkeypatch):
+    """Plugin hooks stay quiet under `claude -p` (CLAUDE_CODE_ENTRYPOINT=sdk-*): don't let
+    the shell running pytest decide that."""
+    monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
+    monkeypatch.delenv("AGENT_PTT_HEADLESS_HOOKS", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def clean_state():
     """Reset in-memory registries and persisted rows between tests.
 

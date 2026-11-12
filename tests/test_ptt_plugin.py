@@ -197,6 +197,45 @@ def test_summarizer_child_runs_no_collaboration_hook(env, capsys, monkeypatch):
     assert env["calls"] == []
 
 
+@pytest.mark.parametrize("entrypoint", ["sdk-cli", "sdk-py"])
+def test_headless_child_runs_no_collaboration_hook_even_without_the_guard(
+    env, capsys, monkeypatch, entrypoint
+):
+    """An old parent plugin spawns `claude -p` without AGENT_PTT_HOOKS=0 (task 32): Claude
+    marks the run CLAUDE_CODE_ENTRYPOINT=sdk-*, and our hooks stay quiet anyway."""
+    monkeypatch.delenv("AGENT_PTT_HOOKS", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", entrypoint)
+    event = {"hook_event_name": "SessionStart", "session_id": "s1", "cwd": "/work/proj"}
+    for module in (session_start, doing, receive):
+        saved, sys.stdin = sys.stdin, io.StringIO(json.dumps(event))
+        try:
+            module.main()
+        finally:
+            sys.stdin = saved
+    assert capsys.readouterr().out == ""
+    assert env["calls"] == []
+
+
+def test_headless_hooks_opt_in(monkeypatch):
+    monkeypatch.delenv("AGENT_PTT_HOOKS", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+    assert doing.routing.hooks_disabled()
+    monkeypatch.setenv("AGENT_PTT_HEADLESS_HOOKS", "1")
+    assert not doing.routing.hooks_disabled()
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    monkeypatch.delenv("AGENT_PTT_HEADLESS_HOOKS")
+    assert not doing.routing.hooks_disabled()
+
+
+def test_doing_ignores_the_summarizer_prompt(monkeypatch):
+    calls = []
+    monkeypatch.setattr(doing.link, "request", lambda *a, **k: calls.append(a) or {})
+    prompt = doing.routing.SUMMARIZER_PROMPT_PREFIX + " into what the agent says…"
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": prompt}
+    assert doing.update(event) is False
+    assert calls == []
+
+
 def test_roster_orders_present_first_and_skips_me():
     members = [
         {"member_id": "a", "handle": "Away", "presence": "away"},
