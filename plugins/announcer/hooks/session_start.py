@@ -104,10 +104,14 @@ def compose(
     codex_route: str = "",
     version: str = "",
     mcp: bool = False,
+    refused: dict | None = None,
 ) -> str:
     ptt = link.script_command("ptt.py", "--session", session_id)
     where = f"project {project['project_name']}" if project else f"channel {channel_name}"
     lines = [f"Agent PTT: you are {link.mention_text(handle)} in {where} ({link.base_url()})."]
+    taken = link.refusal_line(refused, handle)
+    if taken:
+        lines.append(taken)
     stale = link.stale_plugin_line(version, people)
     if stale:
         lines.append(stale)
@@ -220,7 +224,7 @@ def join_session(
     "version"}``; ``project`` is None on an older server without projects.
     """
     channel_name = routing.channel_name(session_id, agent, base, routing.project_name(cwd))
-    connection = link.connect_channel(base, channel_name, agent, session_id)
+    connection = link.connect_channel(base, channel_name, agent, session_id, cwd)
     handle = connection.pop("handle", None) or agent
     connection["mention_policy"] = _workspace().receive_policy(connection.get("mention_policy"))
     link.update_channel_state(link.channel_state_path(base, agent, session_id), **connection)
@@ -237,9 +241,12 @@ def join_session(
     identity = identity or link.project_identity(cwd)
     path = link.membership_path(base, identity, session_id, pinned)
     record = link._read(path)
+    # A pinned name held elsewhere (409 on the channel join): ask for the automatic one.
+    # Servers with session support take the name from the session's claim anyway.
+    refused = link.load_session(base, session_id).get("handle_refused")
     join = {
         **identity,
-        "handle": pinned or handle,
+        "handle": handle if refused else pinned or handle,
         "harness": harness or link.harness(agent),
         "machine": link.machine(),
         "mode": mode,
@@ -251,7 +258,7 @@ def join_session(
     record["join"] = join
     project = None
     try:
-        link.join_project(base, record)
+        link.join_project(base, record, session_id, agent)
         link.save_membership(path, record)
         pointer["membership"] = path.name
         project = record
@@ -260,9 +267,12 @@ def join_session(
     people = link.fetch_people(base, record, connection["channel_id"])
     pointer["roster"] = link.snapshot(people)
     pointer.update(turn="idle", turn_at=time.time(), ended=False)
+    final = record.get("handle") or handle
+    pointer["handle"] = final  # the latest join's name: a server-side rename shows up here
     link.save_session(base, session_id, **pointer)
     return {
-        "handle": record.get("handle") or handle,
+        "handle": final,
+        "refused": refused,
         "project": project,
         "channel_name": channel_name,
         "channel_id": connection["channel_id"],
@@ -322,6 +332,7 @@ def start(event: dict) -> str | None:
         codex_route=route,
         version=joined["version"],
         mcp=mcp_present(),
+        refused=joined.get("refused"),
     )
 
 

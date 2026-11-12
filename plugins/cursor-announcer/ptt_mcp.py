@@ -225,6 +225,9 @@ class Server:
             )
             self.joined.add(session_id)
             log(f"joined as {joined['handle']} ({session_id})")
+            taken = link.refusal_line(joined.get("refused"), joined["handle"])
+            if taken:
+                log(taken)
         return session_id
 
     def resolve(self, requested: str | None) -> str:

@@ -388,7 +388,12 @@ def test_announce_creates_missing_channel(monkeypatch, tmp_path):
             assert payload == {"name": "proj", "reuse_existing": True}
             return {"channel_id": "chan-1"}
         if path.endswith("/join"):
-            assert payload == {"handle": "Claude · proj", "session_id": "s1", "agent": "Claude"}
+            assert payload == {
+                "handle": "Claude · proj",
+                "session_id": "s1",
+                "agent": "Claude",
+                "machine": announce._machine(),
+            }
             return {"key_id": "key-1", "session_id": "s1"}
         if path.endswith("/say"):
             return {"message_id": "m1"}
@@ -404,6 +409,56 @@ def test_announce_creates_missing_channel(monkeypatch, tmp_path):
         ("POST", "/channels/chan-1/join"),
         ("POST", "/channels/chan-1/say"),
     ]
+
+
+def test_announce_join_sends_folder_and_retries_a_taken_pin(monkeypatch, tmp_path):
+    """0.6.0: the join carries machine + folder; a 409 handle_taken drops the pin once."""
+    monkeypatch.setattr(announce, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setenv("AGENT_PTT_HANDLE", "Theo")
+    joins = []
+    taken = {
+        "error": "handle_taken",
+        "handle": "Theo",
+        "held_by": {"harness": "cursor", "machine": "Mac", "last_seen": "2026-11-12T08:00:00Z"},
+        "detail": "Theo is held by cursor on Mac",
+    }
+
+    def fake_request(method, path, payload=None, timeout=None):
+        if method == "GET" and path == "/channels":
+            return [{"name": "proj", "channel_id": "chan-1"}]
+        if path.endswith("/join"):
+            joins.append(dict(payload))
+            if payload.get("pin_handle"):
+                body = io.BytesIO(json.dumps(taken).encode())
+                raise urllib.error.HTTPError(path, 409, "Conflict", {}, body)
+            return {"key_id": "key-1", "session_id": "s1", "handle": "Ava"}
+        if path.endswith("/say"):
+            return {"message_id": "m1"}
+        raise AssertionError(f"unexpected request {method} {path}")
+
+    monkeypatch.setattr(announce, "_request", fake_request)
+    announce.announce("s1", "Claude · proj", "hello", "proj", folder="/work/proj")
+    assert [j.get("pin_handle") for j in joins] == [True, None]
+    assert joins[0]["handle"] == "Theo" and joins[1]["handle"] == "Claude · proj"
+    assert all(j["folder"] == "/work/proj" and j["machine"] == announce._machine() for j in joins)
+
+
+def test_announce_join_never_loops_on_a_409(monkeypatch, tmp_path):
+    monkeypatch.setattr(announce, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setenv("AGENT_PTT_HANDLE", "Theo")
+    joins = []
+
+    def fake_request(method, path, payload=None, timeout=None):
+        if method == "GET":
+            return [{"name": "proj", "channel_id": "chan-1"}]
+        joins.append(payload)
+        body = io.BytesIO(json.dumps({"error": "handle_taken", "handle": "Theo"}).encode())
+        raise urllib.error.HTTPError(path, 409, "Conflict", {}, body)
+
+    monkeypatch.setattr(announce, "_request", fake_request)
+    with pytest.raises(urllib.error.HTTPError):
+        announce.announce("s1", "Claude · proj", "hello", "proj")
+    assert len(joins) == 2  # one retry, then the hook's suppress() swallows it
 
 
 def test_announce_recreates_channel_deleted_mid_session(monkeypatch, tmp_path):

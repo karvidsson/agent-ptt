@@ -29,6 +29,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import re
 import socket
 import subprocess
@@ -809,15 +810,42 @@ def _find_or_create_channel(channel_name: str) -> str:
     return created["channel_id"]
 
 
-def _join(channel_id: str, handle: str, session_id: str) -> str:
-    payload = {"handle": handle}
+def _machine() -> str:
+    return (platform.node() or "").split(".")[0][:100]  # same as project_link.machine()
+
+
+def _handle_taken(exc: urllib.error.HTTPError) -> bool:
+    """A 409 ``handle_taken``: the pinned name is held by another harness or machine."""
+    if exc.code != 409:
+        return False
+    try:
+        body = json.loads(exc.read() or b"{}")
+    except (OSError, ValueError):
+        return False
+    if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+        body = body["detail"]
+    return isinstance(body, dict) and body.get("error") == "handle_taken"
+
+
+def _join(channel_id: str, handle: str, session_id: str, folder: str = "") -> str:
+    payload = {"handle": handle, "machine": _machine()}
+    if folder:
+        payload["folder"] = folder[:500]
     if session_id and session_id != "unknown":
         payload.update(session_id=session_id, agent=AGENT_NAME)
         pinned = _setting("AGENT_PTT_HANDLE", "").strip()[:80]
         if pinned:
             # Servers without pin_handle ignore it and keep the session's random name.
             payload.update(handle=pinned, pin_handle=True)
-    joined = _request("POST", f"/channels/{channel_id}/join", payload)
+    try:
+        joined = _request("POST", f"/channels/{channel_id}/join", payload)
+    except urllib.error.HTTPError as e:
+        if not payload.get("pin_handle") or not _handle_taken(e):
+            raise
+        # The pinned name is held elsewhere: retry once for an automatic name
+        # (SessionStart tells the agent why).
+        payload = {k: v for k, v in payload.items() if k != "pin_handle"}
+        joined = _request("POST", f"/channels/{channel_id}/join", {**payload, "handle": handle})
     if payload.get("session_id") and joined.get("session_id") != session_id:
         raise ValueError("Restart Agent PTT to enable session identities")
     return joined["key_id"]
@@ -837,7 +865,12 @@ def _say(channel_id: str, key_id: str, text: str, context: dict | None) -> None:
 
 
 def announce(
-    session_id: str, handle: str, text: str, channel_name: str, context: dict | None = None
+    session_id: str,
+    handle: str,
+    text: str,
+    channel_name: str,
+    context: dict | None = None,
+    folder: str = "",
 ) -> None:
     channel_id = _find_or_create_channel(channel_name)
 
@@ -849,7 +882,7 @@ def announce(
     key_id = cached.get("key_id") if cached.get("channel_id") == channel_id else None
 
     if key_id is None:
-        key_id = _join(channel_id, handle, session_id)
+        key_id = _join(channel_id, handle, session_id, folder)
         state[cache_key] = {"channel_id": channel_id, "key_id": key_id}
         _save_state(state)
 
@@ -860,7 +893,7 @@ def announce(
             raise
         # Stale key or deleted channel — find (or recreate) the channel and rejoin once
         channel_id = _find_or_create_channel(channel_name)
-        key_id = _join(channel_id, handle, session_id)
+        key_id = _join(channel_id, handle, session_id, folder)
         state[cache_key] = {"channel_id": channel_id, "key_id": key_id}
         _save_state(state)
         _say(channel_id, key_id, text, context)
@@ -1093,7 +1126,8 @@ def announce_from(event: dict, text: str) -> None:
     if isinstance(progress, dict) and (progress.get("files") or progress.get("tools")):
         progress["files"], progress["tools"] = [], {}  # consumed by this line
         _save_state(state)
-    announce(session_id or "unknown", handle, text, channel_name, context)
+    folder = event.get("cwd") if isinstance(event.get("cwd"), str) else ""
+    announce(session_id or "unknown", handle, text, channel_name, context, folder)
 
 
 def main() -> None:

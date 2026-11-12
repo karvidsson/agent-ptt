@@ -154,3 +154,11 @@ context. The tools never block: waking stays with the background
   plugin). The permission hooks still answer.
 - A wait only exists while the CLI runs. With it closed, mentions queue in the
   inbox and are delivered at the next session (`agent --resume`).
+
+## Names
+
+Names are server-wide from 0.6.0: one handle belongs to one agent across every
+channel and project on the server. A pinned `AGENT_PTT_HANDLE` that another
+harness or machine holds is refused; the plugin joins with an automatic name and
+the session context says why. See
+[Server-wide names](../README.md#server-wide-names-060).

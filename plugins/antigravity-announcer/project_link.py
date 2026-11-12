@@ -12,6 +12,7 @@ the session ID, without the hook's cwd.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -37,6 +38,7 @@ HERE = Path(__file__).resolve().parent
 PROJECTS_DIR = Path.home() / ".agent-ptt" / "projects"
 INBOX_DIR = Path.home() / ".agent-ptt" / "inboxes"  # receive.py's channel state
 HTTP_TIMEOUT = 5.0
+FOLDER_MAX = 500
 DOING_MAX = 200
 ORCHESTRATOR_ROLES = ("lead", "orchestrator")
 WAKE_BATCH_SECONDS = 4.0
@@ -350,13 +352,16 @@ def update_channel_state(path: Path, **fields) -> None:
 # --- joining --------------------------------------------------------------
 
 
-def channel_join_payload(agent: str, session_id: str, handle: str) -> dict:
+def channel_join_payload(agent: str, session_id: str, handle: str, folder: str = "") -> dict:
     payload = {
         "handle": handle,
         "session_id": session_id,
         "agent": agent,
         "receive_mentions": True,
+        "machine": machine(),  # with folder: a restarted session here keeps its name
     }
+    if folder:
+        payload["folder"] = folder[:FOLDER_MAX]
     pinned = pinned_handle()
     if pinned:
         # Asks the server to use this handle instead of the session's random name.
@@ -365,14 +370,89 @@ def channel_join_payload(agent: str, session_id: str, handle: str) -> dict:
     return payload
 
 
-def connect_channel(base: str, name: str, agent: str, session_id: str) -> dict:
+def handle_taken(exc: urllib.error.HTTPError) -> dict | None:
+    """The body of a 409 ``handle_taken`` (``{"handle", "held_by", "detail"}``), else None."""
+    if getattr(exc, "code", None) != 409:
+        return None
+    try:
+        body = json.loads(exc.read() or b"{}")
+    except (OSError, ValueError, AttributeError):
+        body = {}
+    if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+        body = body["detail"]  # FastAPI's HTTPException wraps it
+    if not isinstance(body, dict) or body.get("error") != "handle_taken":
+        return None
+    held_by = body.get("held_by") if isinstance(body.get("held_by"), dict) else {}
+    return {
+        "handle": one_line(str(body.get("handle") or ""), 80),
+        "held_by": {
+            k: one_line(str(held_by[k]), 100) for k in ("harness", "machine") if held_by.get(k)
+        },
+        "detail": one_line(str(body.get("detail") or ""), 200),
+    }
+
+
+def remember_join(base: str, session_id: str, refused: dict | None, handle: str) -> None:
+    """Keep the latest join's handle and the pinned-name refusal (or clear it) on the
+    session pointer, for SessionStart, ``ptt who`` and the MCP who output."""
+    if not session_id:
+        return
+    pointer = load_session(base, session_id)
+    fields = {}
+    if handle and pointer and pointer.get("handle") != handle:
+        fields["handle"] = handle
+    if refused:
+        fields["handle_refused"] = {**refused, "instead": handle, "at": time.time()}
+    elif pointer.get("handle_refused"):
+        fields["handle_refused"] = None
+    if fields:
+        save_session(base, session_id, **fields)
+
+
+def refusal_line(refused: dict | None, handle: str) -> str | None:
+    """ "Your pinned name Theo is held by cursor on Mac; you are @Theo2 instead."""
+    if not refused or not refused.get("handle"):
+        return None
+    held_by = refused.get("held_by") or {}
+    where = " on ".join(x for x in (held_by.get("harness"), held_by.get("machine")) if x)
+    return (
+        f"Your pinned name {refused['handle']} is held by {where or 'another agent'};"
+        f" you are {mention_text(handle or refused.get('instead') or '?')} instead."
+    )
+
+
+def session_folder(base: str, session_id: str) -> str:
+    """The session's folder: its pointer's cwd, else this process's."""
+    return load_session(base, session_id).get("cwd") or os.getcwd()
+
+
+def join_channel(
+    base: str, cid: str, agent: str, session_id: str, folder: str = "", send=None
+) -> dict:
+    """``POST /channels/{cid}/join`` for this session. A pinned name held by another
+    agent (409 ``handle_taken``) retries once without the pin, so the server gives an
+    automatic name; the refusal is kept on the pointer. ``send`` defaults to request."""
+    send = send or (lambda payload: request(base, "POST", f"/channels/{cid}/join", payload))
+    payload = channel_join_payload(agent, session_id, agent, folder)
+    refused = None
+    try:
+        participant = send(payload)
+    except urllib.error.HTTPError as exc:
+        refused = handle_taken(exc)
+        if refused is None or not payload.get("pin_handle"):
+            raise
+        retry = {k: v for k, v in payload.items() if k != "pin_handle"}
+        participant = send({**retry, "handle": agent})
+    with contextlib.suppress(OSError, ValueError, TypeError):
+        remember_join(base, session_id, refused, (participant or {}).get("handle") or "")
+    return participant
+
+
+def connect_channel(base: str, name: str, agent: str, session_id: str, folder: str = "") -> dict:
     channel = request(base, "POST", "/channels", {"name": name, "reuse_existing": True})
     cid = channel["channel_id"]
-    participant = request(
-        base,
-        "POST",
-        f"/channels/{cid}/join",
-        channel_join_payload(agent, session_id, agent),
+    participant = join_channel(
+        base, cid, agent, session_id, folder or session_folder(base, session_id)
     )
     return {
         "channel_id": cid,
@@ -410,9 +490,42 @@ def wake_batch_seconds() -> float:
     return max(0.0, min(30.0, seconds))
 
 
-def join_project(base: str, record: dict) -> dict:
-    """Join or rejoin with ``record["join"]``; updates the record in place."""
+def join_project(
+    base: str, record: dict, session_id: str | None = None, agent: str | None = None
+) -> dict:
+    """Join or rejoin with ``record["join"]``; updates the record in place.
+
+    Sends this session's ``session_id`` and ``agent`` (as on the channel join), so the
+    server takes the handle from the session's claim: ``member.handle`` in the response
+    is authoritative and replaces the cached one. A 409 (a server without session
+    support, or a name held elsewhere) raises ``ProjectRefused``: carry on without it.
+    """
     payload = dict(record["join"])
+    if session_id:
+        payload["session_id"] = session_id
+    if agent:
+        payload["agent"] = agent
+    try:
+        return _join_project(base, record, payload)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 409:
+            raise
+        refused = handle_taken(exc) or {}
+        detail = refused.get("detail") or "the server refused the project join (409)"
+        log(f"project join refused: {detail}; continuing without the project")
+        raise ProjectRefused(detail) from None
+
+
+class ProjectRefused(Exception):
+    """``POST /projects/join`` answered 409; the session works without the project."""
+
+
+def log(text: str) -> None:
+    with contextlib.suppress(OSError, ValueError):
+        print(f"[agent-ptt] {text}", file=sys.stderr, flush=True)
+
+
+def _join_project(base: str, record: dict, payload: dict) -> dict:
     response = None
     if record.get("member_key"):
         try:
@@ -424,8 +537,8 @@ def join_project(base: str, record: dict) -> dict:
                 raise
             response = None
     if response is None:
-        if payload.get("handle") and pinned_handle():
-            payload["resume_handle"] = True
+        if payload.get("handle") and payload["handle"] == pinned_handle():
+            payload["resume_handle"] = True  # not for the fallback name after a 409
         response = request(base, "POST", "/projects/join", payload)
     project, member = response.get("project") or {}, response.get("member") or {}
     if record.get("member_id") != member.get("member_id"):

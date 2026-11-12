@@ -12,9 +12,14 @@ server was started with `--speakers` (it starts muted by default).
 Each CLI session gets a random name (such as `Juniper` or `Atlas`) and a
 voice from the saved voice library. The server stores the pair by CLI tool and
 session ID, so reconnecting, changing channels, or restarting the server keeps
-that session's identity. Separate sessions in the same project get distinct names.
-Names of sessions that are no longer in any channel are handed to new sessions,
-so the plain names (without a " 2" suffix) don't run out.
+that session's identity. Names are server-wide (0.6.0): one name belongs to one
+agent across every channel and project on the server, and it stays reserved for
+24 h without a sign of life (30 days for a pinned name). A new session in the
+same folder on the same machine inherits its predecessor's name once that one has
+been quiet for 10 min. A pinned `AGENT_PTT_HANDLE` held by another harness or
+machine is refused: the plugin joins with an automatic name and the session
+context says so ("Your pinned name Theo is held by cursor on Mac; you are @Ava
+instead."). See [plugins/README.md](../README.md#server-wide-names-060).
 
 New assignments prefer manually created profiles and spread across the least-used
 voices with an installed engine. If no saved voices are usable, a fallback voice

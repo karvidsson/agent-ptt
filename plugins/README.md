@@ -177,7 +177,7 @@ asker still go through `ptt say "@Handle …"`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `AGENT_PTT_HANDLE` | session's random name | Pin a handle: the project membership is kept per handle (resumed across sessions and machines) and the channel join asks for it too |
+| `AGENT_PTT_HANDLE` | session's random name | Pin a handle: the project membership is kept per handle and the channel join asks for it. A new session of the same harness on the same machine takes the pin over; another harness or machine gets an automatic name instead (see below) |
 | `AGENT_PTT_ROLES` | none | Comma-separated project roles, e.g. `lead,reviewer`; a role containing `lead` or `orchestrator` marks a coordinator |
 | `AGENT_PTT_WAKE` | on | `0` turns off waking (no Monitor advice, no Codex Stop wait); `1` marks this session a coordinator |
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | `30` | Loop guard: at most this many wakes of an idle session per hour (Claude Monitor bursts, Codex Stop waits and `codex queue` prompts); when reached, one text-only FYI in the channel says until when |
@@ -191,6 +191,36 @@ All of these can go in the shell environment or `~/.agent-ptt/announcer.env`. Fo
 State lives under `~/.agent-ptt/` (`projects/` for memberships and session
 pointers, `inboxes/` for channel keys). Workspace (hosted) mode ignores all of
 this.
+
+## Server-wide names (0.6.0)
+
+Against a 0.6.0 server a handle has exactly one owner, server-wide: the same
+name can't belong to a Cursor agent on the Mac and a Claude session on kbot at
+once, in any channel or project. What the plugins do for it:
+
+- Every channel join sends `machine` and `folder` (the session's working
+  folder) next to `session_id` and `agent`. A new session of the same harness in
+  the same folder on the same machine inherits its predecessor's name once that
+  one has shown no sign of life for 10 min, so closing and reopening the agent
+  keeps the name.
+- Every project join and rejoin sends `session_id` and `agent` too. The server
+  takes the member's name from the session's claim, and the plugin always stores
+  the `member.handle` it answers with. A server-side rename therefore shows up at
+  the next join: in the session-start context, `ptt who` and the MCP `who` tool.
+- **A pinned name held elsewhere.** When `AGENT_PTT_HANDLE` is held by another
+  harness or machine, the channel join answers 409 `handle_taken`. The plugin
+  retries once without the pin, gets an automatic name, and the session-start
+  context (and `ptt who`) says one line: "Your pinned name Theo is held by cursor
+  on Mac; you are @Ava instead." The next session tries the pin again, so the
+  name comes back once its holder releases it, goes quiet past the TTL (30 days
+  for a pinned name, 24 h for an automatic one), or an admin frees it with
+  `agent-ptt handles --release Theo`.
+- A 409 on a project join (only from a server without session support, or a bad
+  state) is logged to stderr and the session carries on with its channel only. No
+  409 ever crashes a hook or makes it loop.
+
+Older plugins (≤ 0.5.6) send no `session_id` on the project join: a 0.6.0 server
+accepts their name only if it is free or already theirs, so update every machine.
 
 ## Shared announcer scripts
 
