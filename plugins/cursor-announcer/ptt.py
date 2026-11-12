@@ -94,6 +94,9 @@ class Session:
             state = self.reconnect(state)
         return state
 
+    def pointer_now(self) -> dict:
+        return link.load_session(self.base, self.session_id) or self.pointer
+
     def ended(self) -> bool:
         """True once SessionEnd marked the pointer (a resumed session clears it)."""
         return bool(link.load_session(self.base, self.session_id).get("ended"))
@@ -127,10 +130,33 @@ class Session:
             if not name:
                 raise Failure("This session has no channel yet; send a prompt first.")
             fresh = link.connect_channel(self.base, name, self.agent, self.session_id)
-            fresh.pop("handle", None)
+            self.refresh_handle(fresh.pop("handle", None))
             fresh.pop("mention_policy", None)
             link.update_channel_state(self.channel_path, **fresh)
             return link._read(self.channel_path)
+
+    def refresh_handle(self, handle: str | None) -> None:
+        """Adopt the name the latest join gave (a server-side rename shows up at once)."""
+        if not handle:
+            return
+        if not self.member.get("handle") or not self.has_project():
+            link.save_session(self.base, self.session_id, handle=handle)
+            if self.member:
+                self.member["handle"] = handle
+            return
+        # In a project the member's handle comes from the same server-side claim; a
+        # differing channel name means a rename, so rejoin to pick up member.handle.
+        if handle.casefold() != self.member["handle"].casefold() and self.member.get("join"):
+            with contextlib.suppress(Exception):
+                self._rejoin()
+
+    def me(self) -> str:
+        """This session's current handle (project member, else the last channel join)."""
+        return (
+            self.member.get("handle")
+            or link.load_session(self.base, self.session_id).get("handle")
+            or self.agent
+        )
 
     def channel_call(self, method: str, path: str, payload=None, timeout=link.HTTP_TIMEOUT):
         """A channel request with the participation key; re-registers once on 403/404."""
@@ -177,9 +203,17 @@ class Session:
 
     def rejoin(self) -> None:
         with self.lock:
-            link.join_project(self.base, self.member)
-            if self.member_path:
-                link.save_membership(self.member_path, self.member)
+            self._rejoin()
+
+    def _rejoin(self) -> None:
+        try:
+            link.join_project(self.base, self.member, self.session_id, self.agent)
+        except link.ProjectRefused as exc:
+            raise Failure(f"project join refused: {exc}") from None
+        if self.member_path:
+            link.save_membership(self.member_path, self.member)
+        if self.member.get("handle"):
+            link.save_session(self.base, self.session_id, handle=self.member["handle"])
 
 
 # --- commands ---------------------------------------------------------------
@@ -229,9 +263,13 @@ def cmd_who(session: Session, args) -> None:
     people = link.fetch_people(
         session.base, session.member or {}, session.channel().get("channel_id")
     )
-    me = session.member.get("handle") or "this session"
-    where = session.member.get("project_name") or session.channel().get("name")
+    state = session.channel()
+    me = session.me()
+    where = session.member.get("project_name") or state.get("name")
     print(f"You are {link.mention_text(me)} in {where}.")
+    taken = link.refusal_line(session.pointer_now().get("handle_refused"), me)
+    if taken:
+        print(taken)
     if not people:
         print("Nobody else is here yet.")
     version = link.plugin_version()
@@ -685,7 +723,7 @@ def cmd_wait(session: Session, args) -> None:
         if hasattr(signal, name):
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(getattr(signal, name), _exit_on_signal)
-    me = session.member.get("handle") or session.agent
+    me = session.me()
     # stderr: a Monitor turns each stdout line into a turn; this one carries nothing to act on.
     version = link.plugin_version()
     note = f" (plugin {version})" if version else ""
@@ -716,7 +754,7 @@ def cap_notice(session: Session, until: float, now: float | None = None) -> None
     if now - float(link.load_session(base, sid).get("cap_noticed_at") or 0) < 3600:
         return
     link.save_session(base, sid, cap_noticed_at=now)
-    me = session.member.get("handle") or session.agent
+    me = session.me()
     when = time.strftime("%H:%M", time.localtime(until))
     text = (
         f"{me} reached its wake cap ({link.wake_cap()} per hour): new mentions wait"
@@ -872,7 +910,7 @@ class CodexWatch:
         cap_notice(self.session, until, self.clock())
 
     def notice_stuck(self) -> None:
-        me = self.session.member.get("handle") or self.session.agent
+        me = self.session.me()
         text = (
             f"{me} isn't picking up wake-ups (its Codex window is paused after Esc, or"
             " closed): new mentions wait for its next prompt."

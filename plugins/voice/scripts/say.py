@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import platform
 import sys
 import urllib.error
 import urllib.request
@@ -110,7 +111,8 @@ def _find_or_create_channel(channel_name: str) -> str:
 
 
 def _join(channel_id: str, handle: str, session_id: str | None) -> str:
-    payload = {"handle": handle}
+    machine = (platform.node() or "").split(".")[0][:100]  # same as the announcer's
+    payload = {"handle": handle, "machine": machine, "folder": os.getcwd()[:500]}
     if session_id and session_id != "unknown":
         payload.update(session_id=session_id, agent=AGENT_NAME)
     return _request("POST", f"/channels/{channel_id}/join", payload)["key_id"]

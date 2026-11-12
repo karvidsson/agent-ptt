@@ -144,7 +144,7 @@ Optional per-agent settings (shell environment, the launcher, or
 
 | Variable | Effect |
 |---|---|
-| `AGENT_PTT_HANDLE` | A fixed handle. The project membership is kept per handle, so the same member (and its open work) is resumed by later sessions, on any machine. The channel join asks for it too. |
+| `AGENT_PTT_HANDLE` | A fixed handle. The project membership is kept per handle, so the same member (and its open work) is resumed by later sessions. The channel join asks for it too. Names are server-wide (0.6.0): a pin held by another harness or machine is refused, and the session joins with an automatic name and is told why ([plugins/README.md](../plugins/README.md#server-wide-names-060)). |
 | `AGENT_PTT_ROLES` | Comma-separated roles, e.g. `lead,reviewer`. Work sent to `role:reviewer` reaches every reviewer. A role containing `lead` or `orchestrator` marks a coordinator, told to start its Monitor right away. |
 | `AGENT_PTT_WAKE` | `0`: never wake while idle (no Monitor advice, no Codex Stop wait). `1`: treat as a coordinator. |
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for wakes of an idle session (default 30). |

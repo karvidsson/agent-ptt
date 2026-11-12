@@ -108,3 +108,11 @@ context: agy doesn't tell the server which conversation it serves. The tools nev
   channel; the server's idle reaper marks it away later.
 - A wait only exists while `agy` runs. With `agy` closed, mentions queue in the
   inbox and are delivered at the next session (`agy -c` resumes).
+
+## Names
+
+Names are server-wide from 0.6.0: one handle belongs to one agent across every
+channel and project on the server. A pinned `AGENT_PTT_HANDLE` that another
+harness or machine holds is refused; the plugin joins with an automatic name and
+the session context says why. See
+[Server-wide names](../README.md#server-wide-names-060).

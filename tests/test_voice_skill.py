@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -74,6 +75,7 @@ def test_say_reuses_cached_key(monkeypatch, tmp_path):
         if path == "/channels":
             return [{"name": "test-room", "channel_id": "chan-1"}]
         if path.endswith("/join"):
+            assert payload["machine"] and payload["folder"] == os.getcwd()  # 0.6.0
             return {"key_id": "key-1"}
         if path.endswith("/say"):
             return {"message_id": "m1"}

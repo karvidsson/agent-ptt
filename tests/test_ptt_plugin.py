@@ -1441,3 +1441,193 @@ def test_wait_lines_carry_the_whole_message():
     item = {"item_id": "i-1", "kind": "handoff", "from": {"handle": "Arlo"}, "title": "short"}
     item["body"] = "short\n" + "details " * 50
     assert ptt.link.item_line(item).rstrip().endswith("details")
+
+
+# --- 0.6.0: server-wide handle registry ---------------------------------------------
+
+TAKEN = {
+    "error": "handle_taken",
+    "handle": "Theo",
+    "held_by": {"harness": "cursor", "machine": "Mac", "last_seen": "2026-11-12T08:00:00Z"},
+    "detail": "Theo is held by cursor on Mac",
+}
+
+
+def wrap_requests(monkeypatch, hook):
+    """Route every script's request through ``hook(inner, base, method, path, payload, kw)``."""
+    for link in LINKS:
+        inner = link.request
+
+        def request(base, method, path, payload=None, _inner=inner, **kw):
+            return hook(_inner, base, method, path, payload, kw)
+
+        monkeypatch.setattr(link, "request", request)
+
+
+def conflict(path: str, body: dict | None = None):
+    data = io.BytesIO(json.dumps(body if body is not None else TAKEN).encode())
+    return urllib.error.HTTPError(path, 409, "Conflict", {}, data)
+
+
+def channel_joins(env):
+    return [
+        p for m, path, p in env["calls"] if path.startswith("/channels/") and path.endswith("/join")
+    ]
+
+
+def project_joins(env):
+    return [p for m, path, p in env["calls"] if path == "/projects/join"]
+
+
+def test_channel_join_sends_machine_and_folder(env, capsys):
+    start(cwd="/work/proj", capsys=capsys)
+    link = session_start.link
+    (join,) = channel_joins(env)
+    assert join["machine"] == link.machine() and join["folder"] == "/work/proj"
+    assert join["session_id"] == "s1" and join["agent"] == "Claude"
+    # ptt's reconnect uses the folder the session started in, not its own cwd
+    link.channel_state_path(link.base_url(), "Claude", "s1").unlink()
+    assert ptt.main(["--session", "s1", "say", "hi", "--quiet"]) == 0
+    assert channel_joins(env)[-1]["folder"] == "/work/proj"
+
+
+def test_project_join_sends_session_and_agent_on_join_and_rejoin(env, capsys):
+    start(capsys=capsys)
+    start(capsys=capsys)  # the second start rejoins with the stored member_key
+    first, again = project_joins(env)
+    assert "member_key" not in first and again["member_key"]
+    for payload in (first, again):
+        assert payload["session_id"] == "s1" and payload["agent"] == "Claude"
+    assert (
+        "session_id"
+        not in session_start.link.load_membership(session_start.link.base_url(), "s1")[1]["join"]
+    )  # sent per call, never cached for another session to reuse
+
+
+def test_a_taken_pinned_name_retries_once_and_says_why(env, capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_HANDLE", "Theo")
+    held = {"on": True}
+
+    def hook(inner, base, method, path, payload, kw):
+        channel_join = path.endswith("/join") and path.startswith("/channels/")
+        if channel_join and (payload or {}).get("pin_handle") and held["on"]:
+            env["calls"].append((method, path, payload))
+            raise conflict(path)
+        return inner(base, method, path, payload, **kw)
+
+    wrap_requests(monkeypatch, hook)
+    context = start(capsys=capsys)
+    pinned, retry = channel_joins(env)
+    assert pinned["pin_handle"] is True and pinned["handle"] == "Theo"
+    assert "pin_handle" not in retry and retry["handle"] == "Claude"
+    assert {k: v for k, v in retry.items() if k not in ("handle",)} == {
+        k: v for k, v in pinned.items() if k not in ("handle", "pin_handle")
+    }
+    link = session_start.link
+    pointer = link.load_session(link.base_url(), "s1")
+    me = pointer["handle"]
+    assert me and me != "Theo"
+    assert pointer["handle_refused"]["handle"] == "Theo"
+    assert pointer["handle_refused"]["held_by"] == {"harness": "cursor", "machine": "Mac"}
+    line = f"Your pinned name Theo is held by cursor on Mac; you are @{me} instead."
+    assert line in context
+    assert ptt.main(["--session", "s1", "who"]) == 0
+    assert line in capsys.readouterr().out
+    held["on"] = False  # the name was released: the next start clears the refusal
+    context = start(capsys=capsys)
+    assert "Your pinned name" not in context
+    assert not link.load_session(link.base_url(), "s1").get("handle_refused")
+
+
+def test_a_409_on_every_channel_join_never_loops(env, monkeypatch):
+    monkeypatch.setenv("AGENT_PTT_HANDLE", "Theo")
+
+    def hook(inner, base, method, path, payload, kw):
+        if path.endswith("/join") and path.startswith("/channels/"):
+            env["calls"].append((method, path, payload))
+            raise conflict(path)
+        return inner(base, method, path, payload, **kw)
+
+    wrap_requests(monkeypatch, hook)
+    run_hook({"hook_event_name": "SessionStart", "session_id": "s1", "cwd": "/work/proj"})
+    assert len(channel_joins(env)) == 2  # the pinned join and one retry; the hook exits 0
+
+
+def test_other_409s_are_not_retried(env, monkeypatch):
+    calls = []
+
+    def send(payload):
+        calls.append(payload)
+        raise conflict("/channels/c/join", {"detail": "something else"})
+
+    monkeypatch.setenv("AGENT_PTT_HANDLE", "Theo")
+    with pytest.raises(urllib.error.HTTPError):
+        session_start.link.join_channel("http://x", "c", "Claude", "s1", "/w", send=send)
+    assert len(calls) == 1
+
+
+def test_handle_taken_reads_fastapi_wrapped_bodies():
+    link = session_start.link
+    assert link.handle_taken(conflict("/x", {"detail": TAKEN}))["handle"] == "Theo"
+    assert link.handle_taken(conflict("/x", {"detail": "nope"})) is None
+    assert link.refusal_line({"handle": "Theo", "held_by": {}}, "Ava") == (
+        "Your pinned name Theo is held by another agent; you are @Ava instead."
+    )
+
+
+def test_a_project_409_continues_without_the_project(env, capsys, monkeypatch):
+    def hook(inner, base, method, path, payload, kw):
+        if path == "/projects/join":
+            raise conflict(path)
+        return inner(base, method, path, payload, **kw)
+
+    wrap_requests(monkeypatch, hook)
+    run_hook({"hook_event_name": "SessionStart", "session_id": "s1", "cwd": "/work/proj"})
+    out, err = capsys.readouterr()
+    assert "in channel proj" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "project join refused: Theo is held by cursor on Mac" in err
+
+
+def test_handle_refreshes_from_the_latest_project_join(env, capsys, monkeypatch):
+    """A server-side rename (the migration) shows up at the next join."""
+    start(capsys=capsys)
+    link = session_start.link
+    renamed = {"on": False}
+
+    def hook(inner, base, method, path, payload, kw):
+        response = inner(base, method, path, payload, **kw)
+        if path == "/projects/join" and renamed["on"]:
+            response["member"]["handle"] = "Theo2"
+        return response
+
+    wrap_requests(monkeypatch, hook)
+    renamed["on"] = True
+    context = start(capsys=capsys)
+    assert "you are @Theo2" in context
+    assert link.load_session(link.base_url(), "s1")["handle"] == "Theo2"
+    assert ptt.main(["--session", "s1", "who"]) == 0
+    assert "You are @Theo2" in capsys.readouterr().out
+
+
+def test_ptt_reconnect_adopts_a_renamed_channel_handle(env, capsys, monkeypatch):
+    """Without a project, the channel join's handle is the session's name."""
+
+    def no_projects(inner, base, method, path, payload, kw):
+        if path == "/projects/join":
+            raise urllib.error.HTTPError(path, 404, "Not Found", {}, io.BytesIO(b"{}"))
+        response = inner(base, method, path, payload, **kw)
+        if path.startswith("/channels/") and path.endswith("/join") and renamed["on"]:
+            response["handle"] = "Ivy2"
+        return response
+
+    renamed = {"on": False}
+    wrap_requests(monkeypatch, no_projects)
+    start(capsys=capsys)
+    link = session_start.link
+    renamed["on"] = True
+    link.channel_state_path(link.base_url(), "Claude", "s1").unlink()
+    assert ptt.main(["--session", "s1", "say", "hi", "--quiet"]) == 0
+    assert link.load_session(link.base_url(), "s1")["handle"] == "Ivy2"
+    capsys.readouterr()
+    assert ptt.main(["--session", "s1", "who"]) == 0
+    assert "You are @Ivy2" in capsys.readouterr().out

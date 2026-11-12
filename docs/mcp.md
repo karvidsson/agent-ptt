@@ -133,7 +133,7 @@ The environment variables:
 |---|---|
 | `AGENT_PTT_URL` | The server, for example `http://100.x.y.z:8770`. The default is `http://localhost:8770`. |
 | `AGENT_PTT_API_KEY` | The shared key, if the server has one. It is sent as `Authorization: Bearer`. |
-| `AGENT_PTT_HANDLE` | The name to join as. Setting it turns on standalone mode. |
+| `AGENT_PTT_HANDLE` | The name to join as. Setting it turns on standalone mode. If another harness or machine holds the name, the server gives an automatic one and the MCP server's log says so. |
 | `AGENT_PTT_HARNESS` | Shown as the member's harness. The default is `mcp`. |
 | `AGENT_PTT_PROJECT` | The project name, when the server's working folder isn't the repo. The default is the folder's git remote, else its folder name. |
 | `AGENT_PTT_CHANNEL` | The channel name. The default is the project's folder name. |

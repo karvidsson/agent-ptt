@@ -79,11 +79,16 @@ def save(path: Path, state: dict) -> None:
     os.replace(out.name, path)
 
 
-def connect(base: str, name: str, session_id: str, agent: str) -> dict:
+def connect(base: str, name: str, session_id: str, agent: str, folder: str = "") -> dict:
     channel = request(base, "POST", "/channels", {"name": name, "reuse_existing": True})
     cid = channel["channel_id"]
-    participant = request(
-        base, "POST", f"/channels/{cid}/join", link.channel_join_payload(agent, session_id, agent)
+    participant = link.join_channel(
+        base,
+        cid,
+        agent,
+        session_id,
+        folder or link.session_folder(base, session_id),
+        send=lambda payload: request(base, "POST", f"/channels/{cid}/join", payload),
     )
     if not participant.get("mention_id"):
         raise ValueError("Server does not support mention inboxes")
@@ -91,6 +96,7 @@ def connect(base: str, name: str, session_id: str, agent: str) -> dict:
         "channel_id": cid,
         "key_id": participant["key_id"],
         "name": name,
+        "handle": participant.get("handle"),
         "mention_policy": participant.get("mention_policy"),
         **link.wait_support(participant.get("mention_policy")),
     }
@@ -155,7 +161,8 @@ def deliver(event: dict) -> None:
         state["last_poll"] = now
         save(path, state)  # Throttle failures too.
         if state.get("name") != channel_name or not state.get("key_id"):
-            connection = connect(base, channel_name, session_id, agent)
+            cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else ""
+            connection = connect(base, channel_name, session_id, agent, cwd)
             connection["mention_policy"] = workspace.receive_policy(
                 connection.get("mention_policy")
             )
