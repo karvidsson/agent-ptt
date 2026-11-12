@@ -22,7 +22,7 @@ os.environ["COLUMNS"] = "200"
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_ptt import audio, channel, mentions, server
+from agent_ptt import audio, channel, handles, mentions, server
 from agent_ptt.db import SessionLocal, init_db
 from agent_ptt.models import Base, VoiceProfile
 from agent_ptt.server import app
@@ -104,6 +104,7 @@ def clean_state():
     channel._channels.clear()
     channel._message_queues.clear()
     mentions.reset_runtime_state()
+    handles.reset_runtime_state()
     server._ws_clients.clear()
     server._live_agent_sockets.clear()
     for task in server._tts_tasks.values():

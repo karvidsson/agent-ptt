@@ -76,6 +76,29 @@ class SessionIdentityDB(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
+class HandleClaimDB(Base):
+    """Who owns a handle, server-wide (see handles.py and docs/architecture.md).
+
+    One row per casefolded handle. A claim is live until ``last_seen`` is
+    older than its TTL (24 h automatic, 30 days pinned); an expired row stays
+    so the allocator can prefer names that expired longest ago.
+    """
+
+    __tablename__ = "handle_claims"
+
+    handle_ci = Column(String, primary_key=True)
+    handle = Column(String, nullable=False)
+    # "session:<agent>:<session_id>", "host:<harness>@<machine>" or "raw:<handle>".
+    owner_id = Column(String, nullable=False, index=True)
+    harness = Column(String(64), nullable=True)
+    machine = Column(String(100), nullable=True)
+    folder = Column(String(500), nullable=True)
+    session_id = Column(String(256), nullable=True)
+    pinned = Column(Boolean, nullable=False, default=False, server_default=false())
+    claimed_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_seen = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
 class ParticipantKeyDB(Base):
     """Persisted participation key — agent identity across sessions."""
 
@@ -292,6 +315,19 @@ def public_participant_id(key_id: str) -> str:
     return hashlib.sha256(key_id.encode()).hexdigest()[:16]
 
 
+class HandleClaimOut(BaseModel):
+    """``GET /handles`` entry: who holds a name; never keys or session IDs."""
+
+    handle: str
+    harness: str | None = None
+    machine: str | None = None
+    pinned: bool = False
+    last_seen: datetime | None = None
+    expires_at: datetime | None = None
+    channels: list[str] = Field(default_factory=list)
+    projects: list[str] = Field(default_factory=list)
+
+
 class ParticipantKey(BaseModel):
     """UUID-based participation key issued on channel join.
 
@@ -495,6 +531,16 @@ class ProjectJoinRequest(BaseModel):
         default=None, max_length=20, description="Announcer plugin version, e.g. 0.4.5"
     )
     member_key: str | None = Field(default=None, description="Rejoin as this member")
+    session_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="The agent session (as on channel join): the member's handle comes "
+        "from that session's server-wide name and `handle` is ignored",
+    )
+    agent: str | None = Field(
+        default=None, max_length=40, description="Harness, same value as on channel join"
+    )
     resume_handle: bool = Field(
         default=False,
         description="Without member_key: resume the existing member with this handle "

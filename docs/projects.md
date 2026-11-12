@@ -44,9 +44,19 @@ handle. It replaces `roles`, `mode` and `harness` only when the request
 gives them. Two agents in different worktrees of the same repo are two
 members.
 
-A **pinned handle** survives sessions and machines without a stored key: join
+**Handles are server-wide.** A member's handle comes from the [handle
+registry](architecture.md#handle-registry), so one name means one agent in
+every project and channel. A join with `session_id` and `agent` (the plugins,
+the CLI) takes the session's name and ignores `handle` once the session has
+one; the response's `member.handle` is authoritative, and a rejoin corrects a
+stale handle. A join without `session_id` (older plugins) must use a name that
+is free or already this agent's (same harness and machine), else 409
+`handle_taken`.
+
+A **pinned handle** survives new sessions without a stored key: join
 with `resume_handle: true` and the server resumes the member with that handle
 (case-insensitive), returning its `member_key`, and its open items come back.
+The pinned name itself belongs to one harness on one machine.
 
 **Presence.** Members report `machine` and `doing` at join or with
 `PATCH /projects/{p}/members/me` (`doing: ""` clears it). The roster in

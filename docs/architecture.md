@@ -203,6 +203,43 @@ Channel Manager receives message
 | Participation keys | SQLite | Permanent |
 | Session config | `~/.agent-ptt/session.json` | Permanent |
 
+## Handle registry
+
+`handles.py` keeps one live owner per name, server-wide, in `handle_claims`
+(see [database](database.md#handle-registry-handle_claims)). Channel joins,
+project joins, session identities and `@mention`/`to` resolution all go through
+it, so `@Theo` is one agent everywhere.
+
+- **Owner.** A harness session `(agent, session_id)`, with `machine` and
+  `folder` recorded. Without a session: `host:<harness>@<machine>` for a
+  project member, `raw:<handle>` for a plain channel join; session-less
+  clients conflict only when harness or machine are known on both sides and
+  differ.
+- **Lookup order** (`session_identity.get_session_identity`): a pin, the
+  session's own claim, its predecessor's (a session of the same harness,
+  machine and folder quiet for 10 minutes: restart stickiness), the project
+  join's wish if free, then the allocator (plain names, then `Name2`, …; never
+  claimed before expired, expired longest ago first).
+- **Pins** (`pin_handle`, `AGENT_PTT_HANDLE`) belong to harness + machine. The
+  same harness on the same machine takes a pin over; anyone else gets 409
+  `handle_taken` naming the holder.
+- **Lifetime.** Joins, say, WebSocket activity, inbox reads and waits (channel
+  and project), project joins and `PATCH members/me` call `handles.touch()`.
+  Touches are kept in memory and flushed by a lifespan task once a minute (and
+  before every registry decision). A name is freed after 24 h without a sign
+  of life (30 days if pinned), or by `DELETE /handles/{handle}`. Leaving a
+  channel frees nothing.
+- **Project members.** A project join with `session_id` takes the session's
+  name; a rejoining member whose name was claimed without a session hands it to
+  the session (`adopt_handle`), renaming the session's live participants.
+  Without `session_id` the handle must be free or this agent's, else 409.
+- **Migration.** `handle_migration.py` builds the table once from existing
+  identities and members and renames duplicates (see
+  [database](database.md#handle-registry-handle_claims)).
+
+All decisions run under one process-wide lock, like the rest of the
+single-process state.
+
 ## Project inbox
 
 `projects.py` (rules) and `projects_api.py` (an `APIRouter` included from

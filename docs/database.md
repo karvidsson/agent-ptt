@@ -28,6 +28,7 @@ Every table, by module. All of them are created by `init_db()`; the
 | `voice_profiles` | `models.py` | Voice configurations (ID, name, engine, settings) | ✅ |
 | `pinned_voices` | `models.py` | Handle → auto-designed voice, so a handle always sounds the same | ✅ |
 | `session_identities` | `models.py` | CLI announcer session `(session_id, agent)` → random handle + voice | ✅ |
+| `handle_claims` | `models.py` | Server-wide name registry: casefolded handle → its one owner, pin flag, last sign of life | ✅ |
 | `archived_channels` | `models.py` | IDs of closed channels and when they were archived | ✅ |
 | `revoked_participants` | `models.py` | Kicked keys that must not rejoin automatically | ✅ |
 | `mention_receivers` | `models.py` | Participation key → stable mention recipient ID | ✅ |
@@ -177,21 +178,46 @@ The Alembic config is in `alembic.ini` and `migrations/env.py`.
 ## CLI session identities
 
 `session_identities` stores the composite key `(session_id, agent)`, a unique
-random `handle`, its saved `voice_id`, and `created_at`. This pairing is separate
+`handle`, its saved `voice_id`, and `created_at`. This pairing is separate
 from channel participation keys and survives channel changes and server restarts.
-The table is created by `init_db()` alongside the existing tables.
+The table is created by `init_db()` alongside the existing tables. Which
+session may use which name is decided by `handle_claims`, below; leaving a
+channel no longer frees a name. New voices balance first over sessions
+currently in a channel, then over all stored sessions.
 
-Names come from a pool of 40 (`NAMES` in `session_identity.py`) and are reused.
-A handle is *busy* while a `participant_keys` row with that handle sits in an
-existing channel (`channel_id` set; leaving, idle reaping and kicks clear it),
-including plain-handle participants who joined without a session. A new session
-takes the first tier (plain names, then `2`, `3`, … appended with no space, so `@Pearl2` needs no quotes) that has a name that
-isn't busy, preferring a name no session holds; otherwise it reclaims the name
-of a *dormant* session (one in no channel), deleting that session's row: the one
-whose handle was least recently issued a participation key, falling back to the
-row's `created_at`. A session keeps its name and voice while its row exists; a
-reclaimed session gets a fresh identity on its next join. New voices balance
-first over sessions currently in a channel, then over all stored sessions.
+## Handle registry (`handle_claims`)
+
+One row per name, server-wide (see [architecture](architecture.md#handle-registry)):
+
+| Column | Meaning |
+|--------|---------|
+| `handle_ci` | Primary key: the casefolded handle, so `Theo` and `theo` are one name |
+| `handle` | The name as written |
+| `owner_id` | `session:<agent>:<session_id>`, `host:<harness>@<machine>` (a project member without a session) or `raw:<handle>` (a channel join with neither) |
+| `harness`, `machine`, `folder`, `session_id` | Who holds it; `machine` + `folder` drive restart stickiness |
+| `pinned` | Taken with `pin_handle` (`AGENT_PTT_HANDLE`): 30-day TTL instead of 24 h |
+| `claimed_at`, `last_seen` | When the owner took it, and its last sign of life |
+
+A claim is live until `last_seen` is older than its TTL
+(`AGENT_PTT_HANDLE_TTL_HOURS`, default 24; `AGENT_PTT_PINNED_HANDLE_TTL_DAYS`,
+default 30). Expired rows stay, so the allocator can prefer the name that
+expired longest ago; `DELETE /handles/{handle}` deletes the row (and the
+session identity holding it). Signs of life are buffered in memory and written
+at most once a minute per claim.
+
+Names come from a pool of 100 (`NAMES` in `session_identity.py`), then suffix
+tiers with no space (`Pearl2`, `Pearl3`, …, so `@Pearl2` needs no quotes).
+
+**Migration.** The table is new (`create_all`, no Alembic revision). While it
+is empty, `init_db()` builds it once (`handle_migration.py`): a claim per
+session identity, then project members seen in the last 24 h, linked to a
+session through its mention receiver in the member's project channel or
+grouped by harness + machine. Where a name has several owners, the most
+recently seen keeps it (with an explicit exception: the Cursor agent on the
+Mac keeps "Theo"), and every other owner seen in the last 24 h gets the next
+free name: its member rows, session identity and channel participants are
+renamed, a notice is posted in the affected channels, and the rename is
+logged. Members not seen for 24 h are left alone; nothing is dropped.
 
 ## Mention inbox tables
 

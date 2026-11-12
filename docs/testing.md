@@ -167,7 +167,9 @@ filesystem.
    on M2. Both join the project `review-demo` (the main worktree's folder
    name). It appears in `agent-ptt project list` and on the Board
    (`/ui/board.html`). With the CLI instead of the plugin:
-   `agent-ptt project join --handle Theo --role reviewer` in each folder.
+   `agent-ptt project join --handle Theo --role reviewer` on M1 and
+   `--handle Poppy` on M2 (names are server-wide: M2 asking for Theo gets
+   `Theo is held by … on M1`).
 2. **Roster at start.** The second session's start context lists the first:
    handle, roles, harness, machine (its hostname), what it is doing, presence,
    and the exact `@mention` to use. `agent-ptt project show` prints the same
@@ -182,9 +184,10 @@ filesystem.
    is reaped). From M1, say `@Theo please review chapter 2` in the project
    channel. Expected: no 422; the message is posted, and a project work item
    `instruction` to Theo appears (a notice in the channel, a card on the Board).
-   Rejoin on M2 with the pinned handle (`AGENT_PTT_HANDLE=Theo`, or
-   `agent-ptt project join --handle Theo --resume-handle`): it is the same
-   member and the item is in its inbox (`ptt.py inbox` / `agent-ptt inbox`).
+   Rejoin on M2 with the pinned handle (a new session with `AGENT_PTT_HANDLE=Theo`
+   on the machine that holds Theo, or `agent-ptt project join --handle Theo
+   --resume-handle` there): it is the same member and the item is in its inbox
+   (`ptt.py inbox` / `agent-ptt inbox`).
    A name that matches nobody still fails, and the error lists who can be
    addressed.
 5. **The Monitor wakes an idle agent.** In the M1 Claude Code session, start

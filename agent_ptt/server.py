@@ -29,7 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
-from agent_ptt import mentions, projects, workspace
+from agent_ptt import handles, mentions, projects, workspace
 from agent_ptt.audio import get_mixer, remove_mixer, speaker_mode_message
 from agent_ptt.auth import (
     WS_CLOSE_UNAUTHORIZED,
@@ -40,6 +40,7 @@ from agent_ptt.auth import (
 from agent_ptt.db import SessionLocal, get_db, init_db
 from agent_ptt.mention_policy import mention_policy
 from agent_ptt.models import (
+    HandleClaimOut,
     HeartbeatRequest,
     Message,
     MessageContext,
@@ -52,7 +53,7 @@ from agent_ptt.models import (
     public_participant_id,
 )
 from agent_ptt.projects_api import router as projects_router
-from agent_ptt.session_identity import get_session_identity
+from agent_ptt.session_identity import HandleTaken, get_session_identity
 from agent_ptt.tts import get_backend, synthesize_speech
 from agent_ptt.voicedesign import (
     get_or_create_pinned_voice,
@@ -227,6 +228,18 @@ async def _idle_reaper(grace: float) -> None:
             logger.error(f"Idle reaper error: {exc}")
 
 
+async def _flush_handle_touches() -> None:
+    """Write buffered handle signs of life (handles.touch) every minute."""
+    while True:
+        await asyncio.sleep(handles.FLUSH_SECONDS)
+        try:
+            await asyncio.to_thread(handles.flush_now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"Handle touch flush error: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -261,15 +274,20 @@ async def lifespan(app: FastAPI):
             reaper = asyncio.create_task(_idle_reaper(grace))
     # Claim leases on project work items (projects.py) expire in the background too.
     leases = None if hosted() else asyncio.create_task(projects.lease_expiry_loop())
+    # Signs of life keep handle claims alive; they reach the DB once a minute.
+    touches = None if hosted() else asyncio.create_task(_flush_handle_touches())
     yield
     # Cleanup
-    for task in (reaper, leases):
+    for task in (reaper, leases, touches):
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
     for channel_id in list(_tts_tasks.keys()):
         _stop_tts_worker(channel_id)
+    if not hosted():
+        with contextlib.suppress(Exception):
+            handles.flush_now()
     logger.info("🎙️  Agent PTT server stopped")
 
 
@@ -289,6 +307,10 @@ app = FastAPI(
             "`key_id`, then `say`. A plain-text walkthrough is served at `/llms.txt`.",
         },
         {"name": "Voices", "description": "Voice catalog and saved voice profiles."},
+        {
+            "name": "Handles",
+            "description": "The server-wide name registry: one live owner per handle.",
+        },
         {
             "name": "Organization workspace",
             "description": "Hosted multi-tenant mode (`AGENT_PTT_HOSTED=1`) only; "
@@ -343,6 +365,11 @@ Full API schema: {base}/openapi.json (Swagger: {base}/docs).
      -> {{"key_id": ..., "participant_id": ...}}
    key_id is your secret participation key; don't share or log it.
    participant_id is your public ID, shown in rosters and as messages' sender_id.
+   Names are server-wide (one agent per name in every channel and project; a
+   pinned name belongs to one harness on one machine). A name someone else
+   holds is refused with 409 {{"error": "handle_taken", "held_by": ...}}: pick
+   another, or drop "pin_handle" to get an automatic name. GET {base}/handles
+   lists who holds which name.
 3. Speak:
      POST {base}/channels/<channel_id>/say  {{"key_id": "<key_id>", "text": "Hello."}}
 4. Read the transcript:
@@ -411,8 +438,10 @@ this (`agent-ptt project join`, `inbox`, `send`, `claim`, `done`, …).
 Every item and state change posts a text-only notice in the project's channel.
 Report what you are working on (shown in the roster and on the Board):
      PATCH {base}/projects/<project_id>/members/me  {{"doing": "reviewing auth"}}
-Keep one handle across sessions and machines: join with "resume_handle": true
-(and "machine": "<hostname>") to resume the member with that handle and its inbox.
+Keep one handle across sessions: join with "resume_handle": true (and
+"machine": "<hostname>") to resume the member with that handle and its inbox.
+Send "session_id" and "agent" (as on the channel join) and the member's handle
+is your session's server-wide name; the response's member.handle is the one to use.
 
 ## Who is here, and how to reach them
 
@@ -528,7 +557,17 @@ class JoinChannelRequest(BaseModel):
     pin_handle: bool = Field(
         default=False,
         description="With session_id: this session takes `handle` as its persistent name "
-        "(taking it over from an earlier session that held it) instead of an assigned one",
+        "instead of an assigned one. The pin belongs to harness + machine: the same "
+        "harness on the same machine takes it over, anyone else gets 409 handle_taken",
+    )
+    machine: str | None = Field(
+        default=None, max_length=100, description="Host the agent runs on (restart stickiness)"
+    )
+    folder: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Working folder of the session: a new session of the same harness, "
+        "machine and folder inherits a quiet predecessor's name",
     )
 
 
@@ -824,15 +863,23 @@ async def join_channel(
     handle = req.handle
     voice_id = req.voice_id
     designed = None
+    claim = None
     if req.session_id:
-        identity = await asyncio.to_thread(
-            get_session_identity,
-            req.session_id,
-            req.agent,
-            db,
-            req.handle.strip() if req.pin_handle else None,
-        )
-        handle, voice_id = identity.handle, identity.voice_id
+        try:
+            identity = await asyncio.to_thread(
+                get_session_identity,
+                req.session_id,
+                req.agent,
+                db,
+                req.handle.strip() if req.pin_handle else None,
+                req.machine,
+                req.folder,
+            )
+        except HandleTaken as taken:
+            return JSONResponse(taken.body(), status_code=409)
+        # An explicit voice_id (the CLI's --voice) is this participant's voice.
+        handle, voice_id = identity.handle, req.voice_id or identity.voice_id
+        claim = handles.get_claim(db, handle)
         # Retries and concurrent hooks should share one participant in this channel.
         channel = ch.get_channel(channel_id)
         if channel:
@@ -846,13 +893,36 @@ async def join_channel(
                         "key_id": participant.key_id,
                         "session_id": req.session_id,
                         "agent": req.agent,
+                        "handle_claim": handles.claim_info(claim),
                         **({"mention_policy": mention_policy()} if req.receive_mentions else {}),
                     }
-    elif voice_id is None:
-        engine = "pocket-tts"
-        # Keep synchronous profile persistence off the event loop
-        designed = await asyncio.to_thread(get_or_create_pinned_voice, req.handle, db, engine)
-        voice_id = designed.voice_id
+    else:
+        # No session: the plain name must be free or already this client's.
+        if req.handle.strip():
+            owner = (
+                handles.Owner(
+                    handles.host_owner(req.agent, req.machine),
+                    harness=req.agent,
+                    machine=req.machine,
+                )
+                if req.machine
+                else handles.Owner(handles.raw_owner(req.handle), harness=req.agent)
+            )
+            try:
+                claim = handles.claim_raw(
+                    db,
+                    req.handle,
+                    owner,
+                    compatible=lambda held: handles.sessionless_match(held, req.agent, req.machine),
+                )
+            except HandleTaken as taken:
+                return JSONResponse(taken.body(), status_code=409)
+            db.commit()
+        if voice_id is None:
+            engine = "pocket-tts"
+            # Keep synchronous profile persistence off the event loop
+            designed = await asyncio.to_thread(get_or_create_pinned_voice, req.handle, db, engine)
+            voice_id = designed.voice_id
 
     key = ch.join_channel(channel_id, handle, voice_id, db=db)
     if key is None:
@@ -868,6 +938,7 @@ async def join_channel(
         result["mention_policy"] = mention_policy()
     if req.session_id:
         result.update(session_id=req.session_id, agent=req.agent)
+    result["handle_claim"] = handles.claim_info(claim)
     if designed is not None:
         result["designed_voice"] = designed.model_dump()
     return result
@@ -1074,6 +1145,37 @@ async def ack_inbox(
         raise HTTPException(404, str(exc)) from exc
     await _broadcast_to_channel(channel_id, {"type": "delivery", "message_ids": req.message_ids})
     return {"status": "delivered"}
+
+
+@api.get("/handles", tags=["Handles"])
+async def list_handles(db: Session = Depends(get_db)):
+    """Live server-wide name claims: who holds each handle, and until when.
+
+    Never keys or session IDs. A claim expires after 24 h without a sign of
+    life (30 days if pinned); see docs/architecture.md, "Handle registry".
+    """
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    rows = await asyncio.to_thread(_list_handles, db)
+    return {"handles": [HandleClaimOut(**row).model_dump(mode="json") for row in rows]}
+
+
+def _list_handles(db: Session) -> list[dict]:
+    with handles.lock:
+        return handles.list_claims(db)
+
+
+@api.delete("/handles/{handle}", tags=["Handles"])
+async def release_handle(handle: str, db: Session = Depends(get_db)):
+    """Release a name early: anyone may claim it at once, and its former
+    holder gets a new automatic name at its next join."""
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    claim = await asyncio.to_thread(handles.release_handle, db, handle)
+    if claim is None:
+        return JSONResponse({"error": f"No claim on {handle!r}"}, status_code=404)
+    logger.info(f"🏷️  Handle {claim.handle} released")
+    return {"released": claim.handle}
 
 
 @api.get("/voices", tags=["Voices"])

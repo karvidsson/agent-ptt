@@ -165,6 +165,19 @@ a new plugin session. `agent-ptt voice redesign <handle>` still replaces a user
 pin with a fresh hash pin, and a join with an explicit `--voice` uses that voice
 for that join without touching the pin.
 
+### Pinned names keep their voice
+
+A *pinned name* (`AGENT_PTT_HANDLE` in the plugins, `pin_handle` on a channel
+join, the CLI's `join --handle`) is a different thing from a voice pin: it is a
+claim in the server-wide [handle registry](architecture.md#handle-registry),
+owned by the harness plus machine. A new session of the same harness on the
+same machine takes the name over together with the previous session's voice,
+so a named agent sounds the same after a restart. Another harness or machine
+asking for the name gets 409 `handle_taken` (the plugins fall back to an
+automatic name). A pinned name is freed after 30 days without use, an
+automatic one after 24 hours; restart stickiness (same harness, machine and
+folder) also carries the voice over.
+
 ## Adding Custom TTS Engines
 
 Subclass `TTSBackend` and register it:

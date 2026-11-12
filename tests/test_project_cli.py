@@ -193,6 +193,11 @@ def joined(env):
 # ---------------------------------------------------------------------------
 
 
+def _cli_session(env) -> str:
+    """The stable CLI session ID the join created in session.json."""
+    return json.loads((env.home / "session.json").read_text())["session_id"]
+
+
 def test_join_uses_git_remote_and_stores_member(env, monkeypatch):
     repo = _repo(env.work / "repo", remote="git@github.com:Owner/Repo.git")
     monkeypatch.chdir(repo)
@@ -208,6 +213,8 @@ def test_join_uses_git_remote_and_stores_member(env, monkeypatch):
         "roles": ["reviewer", "dev"],
         "harness": "claude",
         "machine": "testbox",
+        "session_id": _cli_session(env),
+        "agent": "cli",
     }
     assert "repo" in result.output and MEMBER in result.output and CHANNEL in result.output
     state = _members(env)
@@ -240,6 +247,8 @@ def test_join_outside_git_uses_folder_name_and_detects_codex(env, monkeypatch):
         "mode": "hooks",
         "harness": "codex",
         "machine": "testbox",
+        "session_id": _cli_session(env),
+        "agent": "cli",
     }
 
 
@@ -250,6 +259,8 @@ def test_join_by_project_id_or_name_argument(env):
         "project_id": PROJECT,
         "harness": "script",
         "machine": "testbox",
+        "session_id": _cli_session(env),
+        "agent": "cli",
     }
     run("project", "join", "agent-ptt", "--handle", "Rex")
     body = env.last("POST", "/projects/join")["json"]

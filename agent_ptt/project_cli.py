@@ -401,6 +401,10 @@ def project_join(
         payload["doing"] = doing.strip()[:200]
     if resume_handle:
         payload["resume_handle"] = True
+    # The member's name is this CLI session's server-wide name (handles.py);
+    # --handle is used when the session has none yet.
+    payload["session_id"] = _cli().cli_session_id()
+    payload["agent"] = "cli"
 
     member_key = os.environ.get("AGENT_PTT_MEMBER_KEY", "").strip() or stored.get("member_key")
     resp = None
