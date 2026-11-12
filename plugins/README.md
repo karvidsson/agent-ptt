@@ -186,6 +186,7 @@ asker still go through `ptt say "@Handle …"`.
 | `AGENT_PTT_CODEX_QUEUE` | on | `0` never starts the Codex watcher (`ptt.py codex-watch`, which wakes an idle Codex with `codex queue`) |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | `4` | After the first waking entry, how long `ptt wait` and the Codex Stop wait collect more before delivering once; `0` disables, max 30 |
 | `AGENT_PTT_HOOKS` | on | `0` makes the collaboration hooks (join, roster, doing, inbox, Stop wait) do nothing; the announcer sets it on its own one-shot `claude -p` / `codex exec` summarizer so that helper never joins as a phantom participant |
+| `AGENT_PTT_HEADLESS_HOOKS` | off | The collaboration hooks also stay quiet in any headless Claude run (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`), even when an older parent plugin forgot `AGENT_PTT_HOOKS=0`. `1` lets a deliberate headless agent join |
 
 All of these can go in the shell environment or `~/.agent-ptt/announcer.env`. For Codex in daemon mode (plain `codex`, the default), hooks run under Codex's shared background app-server, not your shell, so shell exports don't reach them: use `announcer.env`.
 State lives under `~/.agent-ptt/` (`projects/` for memberships and session

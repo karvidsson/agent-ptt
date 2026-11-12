@@ -1131,7 +1131,7 @@ def announce_from(event: dict, text: str) -> None:
 
 
 def main() -> None:
-    if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0":
+    if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0" or routing.headless_child():
         return
 
     event = json.load(sys.stdin)

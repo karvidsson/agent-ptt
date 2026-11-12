@@ -16,7 +16,6 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -337,7 +336,7 @@ def start(event: dict) -> str | None:
 
 
 def main() -> None:
-    if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
+    if routing.hooks_disabled():  # opted out, or a one-shot child (claude -p)
         return
     with contextlib.suppress(Exception):
         event = json.load(sys.stdin)

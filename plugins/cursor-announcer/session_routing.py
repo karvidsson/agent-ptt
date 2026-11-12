@@ -76,6 +76,27 @@ def setting(name: str, default: str) -> str:
     return default
 
 
+# The announce summarizer's one-shot prompt (announce.py START_INSTRUCTION) starts so.
+SUMMARIZER_PROMPT_PREFIX = "You turn a developer's request to their coding agent"
+
+
+def headless_child() -> bool:
+    """A one-shot or SDK run (``claude -p``, the Agent SDK): not an agent at a prompt.
+
+    Claude Code marks them ``CLAUDE_CODE_ENTRYPOINT=sdk-*``; an interactive session
+    is ``cli``. ``AGENT_PTT_HEADLESS_HOOKS=1`` lets a deliberate headless agent join.
+    """
+    if os.environ.get("AGENT_PTT_HEADLESS_HOOKS", "0") == "1":
+        return False
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
+
+
+def hooks_disabled() -> bool:
+    """No join, roster, doing or inbox: opted out (``AGENT_PTT_HOOKS=0``, which the
+    summarizer sets for its child) or a headless child whose parent didn't say so."""
+    return os.environ.get("AGENT_PTT_HOOKS", "1") == "0" or headless_child()
+
+
 def foreign_cursor_hook(event: dict | None = None) -> bool:
     """True when Cursor runs this script through its import of Claude Code hooks or
     plugins, not through the Cursor plugin's cursor_hook.py: the caller exits quietly.

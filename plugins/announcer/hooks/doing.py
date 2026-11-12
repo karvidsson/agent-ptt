@@ -12,7 +12,6 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -46,6 +45,8 @@ def update(event: dict) -> bool:
     routing.bind_event(event)
     if workspace.enabled():
         return False
+    if (event.get("prompt") or "").lstrip().startswith(routing.SUMMARIZER_PROMPT_PREFIX):
+        return False  # the announce summarizer's child, whatever its env says
     text = doing_text(event.get("prompt") or "")
     session_id, _ = routing.session_context(event)
     if not text or not session_id or session_id == "unknown":
@@ -69,7 +70,7 @@ def update(event: dict) -> bool:
 
 
 def main() -> None:
-    if os.environ.get("AGENT_PTT_HOOKS", "1") == "0":
+    if routing.hooks_disabled():  # opted out, or a one-shot child (claude -p)
         return
     with contextlib.suppress(Exception):
         event = json.load(sys.stdin)
