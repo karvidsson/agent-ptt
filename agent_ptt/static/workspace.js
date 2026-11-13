@@ -29,6 +29,9 @@ function sameRoom(ctx){return current(ctx)&&ctx.generation===state.generation;}
 function orgPath(ctx,suffix=''){if(!ctx.id)throw new Error('Choose an organization first.');return '/organizations/'+encodeURIComponent(ctx.id)+suffix;}
 function isAdmin(){return state.org&&['owner','admin'].includes(state.org.role);}
 function nick(name){return 'nick-'+([...name].reduce((n,c)=>n+c.charCodeAt(0),0)%7);}
+const Dates=globalThis.AgentPttDates;
+// Day dividers: re-placed and relabelled after every render, and again just after midnight.
+function syncDayDividers(){Dates.syncDividers($('messages'),{timeOf:node=>node.dataset?.time??null});}
 function date(value){return value?new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)?value:value+'Z').toLocaleString():'Not recorded';}
 function stopSpeech(){state.listening=false;state.muted=false;state.speech?.setMuted(true);state.speech?.cancel();renderSpeech();}
 function disconnect(){state.generation++;if(state.socket)state.socket.close();state.socket=null;stopSpeech();}
@@ -142,13 +145,14 @@ function renderMessages(messages,{speak=false}={}){
     state.cursor=Math.max(state.cursor,message.id);
     if(state.seen.has(message.id)){const row=[...box.children].find(child=>Number(child.dataset.id)===message.id);if(row)renderReceipt(row,message);continue;}
     state.seen.add(message.id);box.querySelector('.empty')?.remove();
-    const row=el('article',undefined,'message'),time=el('time',new Date(message.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));time.dateTime=message.created_at;
+    const row=el('article',undefined,'message'),time=el('time',(Dates.parseTimestamp(message.created_at)||new Date(message.created_at)).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));time.dateTime=message.created_at;
     const name=el('strong',message.sender_name,'sender '+nick(message.sender_name));name.title=message.sender_name+(message.sender_kind==='agent'?' · Agent':'');
     const body=el('p');if(message.reply_to)body.append(el('small','Reply to message #'+message.reply_to,'reply'));body.append(document.createTextNode(message.text));
     row.append(time,name,body);row.dataset.id=message.id;row.dataset.text=message.text;row.dataset.sender=message.sender_name;row.dataset.time=message.created_at;
     renderReceipt(row,message);const next=[...box.children].find(child=>Number(child.dataset.id)>message.id);box.insertBefore(row,next||null);
     if(speak&&state.listening&&!state.muted)state.speech?.enqueue({orgId:state.org.id,channelId:state.room.id,id:message.id,senderId:message.sender_id,text:message.text});
   }
+  syncDayDividers();
   if(atBottom)box.scrollTop=box.scrollHeight;
 }
 function renderReceipt(row,message){
@@ -443,4 +447,5 @@ $('listen').onclick=async()=>{
   catch{if(sameRoom(ctx)){$('speech-status').textContent='Audio is not available yet · text remains live';$('listen').disabled=false;}}
 };
 $('mute').onclick=()=>{state.muted=!state.muted;state.speech?.setMuted(state.muted);renderSpeech();};
+Dates.onMidnight(syncDayDividers);
 setAuthMode(true);renderRosterToggle();boot();

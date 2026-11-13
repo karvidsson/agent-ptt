@@ -10,6 +10,7 @@ uv run ruff check .                      # lint
 uv run ruff format --check .             # format check (CI); drop --check to reformat
 python3 scripts/validate_plugins.py      # plugin manifests and the marketplace registry
 node --test tests/workspace-ui.test.mjs tests/workspace-speech.test.mjs   # browser-side workspace JS
+node --test tests/datedivider.test.mjs   # transcript day dividers (both web UIs)
 node --test tests/board.test.mjs         # Board (work items kanban) logic
 ```
 

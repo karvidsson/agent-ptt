@@ -190,6 +190,10 @@ button after the text. Clicking it fetches
 worktree, tools, task and trace id under the line; clicking again collapses it.
 Nothing is fetched until you ask.
 
+The transcript is split by local day: a divider ("Today", "Yesterday",
+"Wed 12 Nov", with the year for other years) opens each day, and the
+exported log has a matching `--- Wed 12 Nov 2026 ---` line.
+
 The static assets live in `agent_ptt/static/` and are mounted last so they
 never shadow the API or WebSocket routes.
 

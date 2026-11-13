@@ -138,6 +138,12 @@ so a quiet browser tab isn't reaped as idle.
 
 `/ui/#<channel_id>` opens that channel directly.
 
+Both the channel log and the hosted workspace transcript (`workspace.js`) split
+messages by the viewer's local day with dividers from `datedivider.js`, a shared
+no-build helper (served at `/ui/datedivider.js` and `/workspace/assets/datedivider.js`)
+that reads offset-less SQLite timestamps as UTC and relabels "Today"/"Yesterday"
+on every append and just after local midnight.
+
 **Board** (`board.html` + `board.js` + `board.css`, served at `/ui/board.html`,
 linked from the channels header) is a read-only kanban of project work items
 (see [the collaboration plan](plans/2026-11-09-agent-collaboration.md)). Cards

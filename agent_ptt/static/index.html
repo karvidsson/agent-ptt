@@ -187,6 +187,13 @@
     padding: 3px 24px; border-left: 2px solid transparent;
   }
   .row + .row { margin-top: 6px; }
+  /* Day divider: thin centred rule with a small muted label (datedivider.js). */
+  .day-divider {
+    display: flex; align-items: center; gap: 12px; padding: 0 24px; margin: 14px 0 8px;
+    color: var(--muted); font-size: 11px; letter-spacing: .04em; white-space: nowrap;
+  }
+  .day-divider::before, .day-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border-2); }
+  .day-divider + .row { margin-top: 0; }
   .row .ts { color: var(--dim); font-size: 12px; padding-top: 1px; }
   .row .nick { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .body { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -535,6 +542,7 @@ ___( o)&gt;
     </div>
   </div>
 
+<script src="datedivider.js"></script>
 <script>
 (() => {
   "use strict";
@@ -630,6 +638,11 @@ ___( o)&gt;
   };
 
   // ---- small helpers --------------------------------------------------------
+  const Dates = window.AgentPttDates;
+  // Re-place and relabel the transcript's day dividers (cheap; runs on every append).
+  function syncDayDividers() {
+    Dates.syncDividers($("messages"), { timeOf: (node) => node.dataset?.ts ?? null });
+  }
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -638,7 +651,7 @@ ___( o)&gt;
     try {
       const opts = { hour: "2-digit", minute: "2-digit", hour12: false };
       if (withSeconds) opts.second = "2-digit";
-      return new Date(ts).toLocaleTimeString([], opts);
+      return (Dates.parseTimestamp(ts) || new Date(ts)).toLocaleTimeString([], opts);
     } catch { return ""; }
   }
   function hashOf(s) {
@@ -1018,6 +1031,7 @@ ___( o)&gt;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     box.querySelector(".empty")?.remove();
     box.appendChild(el);
+    syncDayDividers();
     if (stick) box.scrollTop = box.scrollHeight;
   }
 
@@ -1031,6 +1045,7 @@ ___( o)&gt;
     const present = presentHandles().has(m.handle);
     const el = document.createElement("div");
     el.id = `message-${m.message_id}`;
+    el.dataset.ts = m.timestamp;
     el.className = "row" + (mine ? " self" : "") + (!mine && mentionsMe(m.text) ? " hl" : "") +
       (kind === "notice" ? " note" : kind === "action" ? " action" : "");
     const ts = `<span class="ts">${fmtTime(m.timestamp)}</span>`;
@@ -1118,6 +1133,7 @@ ___( o)&gt;
   function renderCommandRow(name, html, isError = false) {
     const el = document.createElement("div");
     el.className = "row " + (isError ? "err" : "cmd");
+    el.dataset.ts = new Date().toISOString();
     el.innerHTML = `<span class="ts">${fmtTime(Date.now())}</span><span class="nick">/${esc(name)}</span><span class="body">${html}</span>`;
     appendRow(el);
   }
@@ -1133,8 +1149,10 @@ ___( o)&gt;
   }
 
   function renderSystem(text, part = false) {
-    state.log.push({ system: true, text, timestamp: new Date().toISOString() });
+    const timestamp = new Date().toISOString();
+    state.log.push({ system: true, text, timestamp });
     const el = document.createElement("div");
+    el.dataset.ts = timestamp;
     el.className = "row sys" + (part ? " part" : "");
     el.innerHTML = `<span class="ts">${fmtTime(Date.now())}</span><span class="nick">${part ? "&lt;--" : "***"}</span><span class="body">${esc(text)}</span>`;
     appendRow(el);
@@ -1879,13 +1897,23 @@ ___( o)&gt;
   }
 
   // ---- Export & copy --------------------------------------------------------
-  function exportLog() {
-    if (!state.channelId) return;
-    const lines = state.log.map((m) => m.system
+  function exportLine(m) {
+    return m.system
       ? `[${fmtTime(m.timestamp)}] *** ${m.text}`
       : m.kind === "action" ? `[${fmtTime(m.timestamp)}] * ${m.handle} ${m.text}`
       : m.kind === "notice" ? `[${fmtTime(m.timestamp)}] -${m.handle}- ${m.text}`
-      : `[${fmtTime(m.timestamp)}] <${m.handle}> ${m.text}`);
+      : `[${fmtTime(m.timestamp)}] <${m.handle}> ${m.text}`;
+  }
+  function exportLog() {
+    if (!state.channelId) return;
+    // A "--- Wed 12 Nov 2026 ---" line opens each local day, IRC-log style.
+    const lines = [];
+    let previous = null;
+    for (const m of state.log) {
+      if (Dates.needsDivider(previous, m.timestamp)) lines.push(`--- ${Dates.dayLabel(m.timestamp, new Date(), { relative: false, year: true })} ---`);
+      if (Dates.dayKey(m.timestamp)) previous = m.timestamp;
+      lines.push(exportLine(m));
+    }
     const blob = new Blob([`# #${slug(state.channelName)} (${state.channelId})\n` + lines.join("\n") + "\n"], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1986,6 +2014,7 @@ ___( o)&gt;
     setInterval(loadChannels, 3000);
     setInterval(renderStatusbar, 15000);
     setInterval(heartbeat, 60000);
+    Dates.onMidnight(syncDayDividers);
     setInterval(() => { if (state.log.length) showFortune(); }, 45000);
   }
   init();
