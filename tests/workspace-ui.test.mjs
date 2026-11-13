@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+const dates=fs.readFileSync(new URL('../agent_ptt/static/datedivider.js',import.meta.url),'utf8');
 const source=fs.readFileSync(new URL('../agent_ptt/static/workspace.js',import.meta.url),'utf8').replace('setAuthMode(true);renderRosterToggle();boot();','');
 class Node {
   constructor(tag='div'){this.tag=tag;this.children=[];this.dataset={};this.value='';this.textContent='';this.hidden=false;this.disabled=false;this.open=false;this.scrollHeight=0;this.scrollTop=0;this.clientHeight=100;this.className='';this.classList={toggle(){},add(){},remove(){}};}
@@ -20,7 +21,7 @@ function harness(){
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Node());return nodes.get(id);};
   class Option extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}}
   const ctx=vm.createContext({document:{body:new Node('body'),getElementById:get,createElement:tag=>new Node(tag),createTextNode:text=>new Node('text'),querySelectorAll:()=>[]},location:{hash:'',pathname:'/workspace/',protocol:'http:',host:'localhost'},history:{replaceState(){}},window:{addEventListener(name,handler){events[name]=handler;}},getComputedStyle:()=>({display:'flex'}),URL,URLSearchParams,Option,crypto:{randomUUID:()=> 'retry-id'},setTimeout:()=>1,clearTimeout(){},console,WebSocket:class{close(){}},fetch:(path,options)=>new Promise(resolve=>{requests.push({path,options});waiters.push(data=>resolve({ok:true,status:200,json:async()=>data}));})});
-  const run=code=>vm.runInContext(code,ctx);run(source);run(`state.me={name:'Test',organizations:[{id:'a',name:'Alpha',role:'owner'},{id:'b',name:'Beta',role:'member'}]}`);
+  const run=code=>vm.runInContext(code,ctx);run(dates);run(source);run(`state.me={name:'Test',organizations:[{id:'a',name:'Alpha',role:'owner'},{id:'b',name:'Beta',role:'member'}]}`);
   return {run,nodes,get,requests,waiters,events};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -234,4 +235,22 @@ test('successful removal disappears immediately and stale roster cannot restore 
  await old;
  assert.equal(h.get('roster-list').children.length,0);
  assert.equal(h.run("state.agents[0].channel_ids.join(',')"),'project');
+});
+test('transcript gets day dividers from created_at, including a live append on a new day',()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[0];state.room={id:'x',name:'X'}`);
+ const box=h.get('messages');const view=()=>box.children.map(n=>n.dataset.day!==undefined?'--'+n.textContent:n.dataset.id);
+ const today=new Date(),at=(days,hour)=>new Date(today.getFullYear(),today.getMonth(),today.getDate()-days,hour).toISOString();
+ h.run(`renderMessages(${JSON.stringify([{id:1,sender_name:'A',text:'a',created_at:at(1,10)},{id:2,sender_name:'B',text:'b',created_at:at(1,11)},{id:3,sender_name:'A',text:'c',created_at:at(0,1)}])})`);
+ assert.deepEqual(view(),['--Yesterday',1,2,'--Today',3]);
+ h.run(`renderMessages(${JSON.stringify([{id:4,sender_name:'B',text:'d',created_at:at(0,2)}])},{speak:true})`);
+ assert.deepEqual(view(),['--Yesterday',1,2,'--Today',3,4]);
+ assert.equal(box.querySelectorAll('.message').length,4,'export still sees only messages');
+ h.run(`renderMessages(${JSON.stringify([{id:3,sender_name:'A',text:'c',created_at:at(0,1),deliveries:[]}])})`);
+ assert.equal(box.children.length,6,'a repeated message adds no divider');
+});
+test('offset-less created_at is UTC when placing the workspace day divider',()=>{
+ const h=harness();h.run(`state.org=state.me.organizations[0];state.room={id:'x',name:'X'}`);
+ const naive=new Date(Date.now()-3*86400000).toISOString().slice(0,19);
+ h.run(`renderMessages(${JSON.stringify([{id:1,sender_name:'A',text:'a',created_at:naive}])})`);
+ const box=h.get('messages');assert.equal(box.children[0].dataset.day,h.run(`Dates.dayKey(${JSON.stringify(naive+'Z')})`));
 });

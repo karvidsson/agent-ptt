@@ -34,5 +34,8 @@ jobs:
       - name: Board UI tests (node)
         run: node --test tests/board.test.mjs
 
+      - name: Date divider tests (node)
+        run: node --test tests/datedivider.test.mjs
+
       - name: Validate plugins
         run: python3 scripts/validate_plugins.py
