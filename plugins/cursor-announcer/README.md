@@ -98,7 +98,8 @@ scripts/install_plugins.py` does this copy. *Not yet tested live in the IDE.*
 | `sessionStart` | Joins the channel and project, then returns the roster, the `ptt` command and the etiquette as `additional_context`. |
 | `beforeSubmitPrompt` | Updates "doing" and announces the task. Cursor can't inject context here, so mentions wait for the next tool call. If it fires before `sessionStart` (Cursor does that sometimes), the session joins here first. |
 | `postToolUse` | Delivers mentions and work items that arrived meanwhile as `additional_context`, so the agent sees them between tool calls. |
-| `stop` | Announces the end of the turn. If something waking is pending, it returns it as `followup_message`, which Cursor submits as the next user message. A stop you aborted (Esc) never continues. If no wait is running, it asks the agent once to start one. |
+| `stop` | Records the turn's token counts, reports usage to the project roster (at most every 30 s), and announces the end of the turn. If something waking is pending, it returns it as `followup_message`, which Cursor submits as the next user message. A stop you aborted (Esc) never continues. If no wait is running, it asks the agent once to start one. |
+| `afterAgentResponse` | Adds the turn's token counts to the session's usage state. The reply `text` is dropped on arrival. `stop` carries the same counts and records them too; each generation counts once. |
 | `sessionEnd` | Leaves the channel. |
 | `beforeShellExecution`, `beforeMCPExecution` | Answer `allow` for a plain call of this plugin's own `ptt.py` (one command, no `&&`, pipes, redirections or `$`/backtick expansion) and for this plugin's own MCP tools, and `{}` (no opinion: Cursor's normal flow) for everything else. The CLI still asks unless its allowlist has the entry from `ptt cursor-rules`. Turn this off with `AGENT_PTT_CURSOR_ALLOW=0`. |
 

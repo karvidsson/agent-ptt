@@ -103,6 +103,7 @@ def test_manifest_hooks_mcp_and_rule_are_valid():
         "beforeSubmitPrompt",
         "postToolUse",
         "stop",
+        "afterAgentResponse",
         "sessionEnd",
         "beforeShellExecution",
         "beforeMCPExecution",

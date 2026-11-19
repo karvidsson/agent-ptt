@@ -12,9 +12,12 @@ them with ``AGENT_PTT_AGENT=Cursor``, and translates what they print back:
   so nothing is delivered (mentions come after the next tool call). Cursor may
   fire it before ``sessionStart``; the session then joins here first.
 - ``postToolUse``        → status, receive; mentions become ``additional_context``.
-- ``stop``               → announce, status, receive. A ``block`` from receive becomes
+- ``stop``               → token counts (the payload carries them too), then announce
+  (which reports usage), status, receive. A ``block`` from receive becomes
   ``followup_message`` (Cursor submits it as the next user message). A stop the
   user aborted never continues.
+- ``afterAgentResponse`` → the turn's token counts into usage.py's session state (the
+  reply ``text`` is dropped on arrival, before anything else sees the payload).
 - ``sessionEnd``         → announce (leaves the channel).
 - ``beforeShellExecution`` / ``beforeMCPExecution`` → ``allow`` for a plain call of
   this plugin's own ``ptt.py`` and for this plugin's own agent-ptt MCP tools; ``{}``
@@ -240,6 +243,7 @@ def stop(raw: dict) -> dict:
         return {}  # Esc means stop: never hold or re-enter the turn
     # loop_count > 0: this turn is itself a follow-up; receive.py's loop guard applies.
     looped = bool(raw.get("loop_count"))
+    record_usage(raw)
     event = shared_event("Stop", raw, stop_hook_active=looped)
     dispatch("announce.py", event)
     dispatch("status.py", event)
@@ -249,6 +253,20 @@ def stop(raw: dict) -> dict:
         if o.get("decision") == "block" and o.get("reason")
     ]
     return {"followup_message": "\n\n".join(reasons)} if reasons else {}
+
+
+def record_usage(raw: dict) -> None:
+    """Add a payload's token counts to the conversation's usage state (usage.py)."""
+    with contextlib.suppress(Exception):
+        spec = importlib.util.spec_from_file_location("cursor_usage", HERE / "usage.py")
+        usage = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(usage)
+        usage.record_cursor(raw)
+
+
+def after_agent_response(raw: dict) -> dict:
+    record_usage(raw)
+    return {}
 
 
 def session_end(raw: dict) -> dict:
@@ -349,6 +367,7 @@ HANDLERS = {
     "beforeSubmitPrompt": before_submit_prompt,
     "postToolUse": post_tool_use,
     "stop": stop,
+    "afterAgentResponse": after_agent_response,
     "sessionEnd": session_end,
     "beforeShellExecution": permission,
     "beforeMCPExecution": permission,
@@ -363,6 +382,8 @@ def main() -> None:
         error = ""
         try:
             raw = json.load(sys.stdin)
+            if isinstance(raw, dict):
+                raw.pop("text", None)  # afterAgentResponse's reply: never kept or logged
             name = name or raw.get("hook_event_name", "")
             handler = HANDLERS.get(name)
             if handler is permission:

@@ -83,7 +83,8 @@ context when you want to be explicit; Claude Code gives the server its session i
 |----------|---------|-------------|
 | `AGENT_PTT_URL` | `http://localhost:8770` | Agent PTT server |
 | `AGENT_PTT_CHANNEL` | Project name | Process-local channel override; ignored in the shared config file |
-| `AGENT_PTT_ANNOUNCE` | `1` | Set `0` to disable announcements |
+| `AGENT_PTT_ANNOUNCE` | `1` | Set `0` to disable announcements (token usage is still reported) |
+| `AGENT_PTT_USAGE` | `1` | Set `0` to stop reporting token usage to the project roster |
 | `AGENT_PTT_SUMMARIZER` | `auto` | `auto` (Ollama, then the agent CLI), `ollama`, `agent`, or `off` |
 | `AGENT_PTT_OLLAMA_MODEL` | `gemma2` | Local model for spoken summaries |
 | `AGENT_PTT_OLLAMA_URL` | `http://localhost:11434` | Ollama server |
@@ -153,6 +154,17 @@ otherwise, so nothing reveals the machine layout across an organization.
 Files and tool counts are consumed by the line that carries them. A server
 that rejects the context (older version, or over the 4 KB budget) still
 gets the spoken line without it.
+
+## Token usage
+
+On each `Stop` (async, after the turn) the plugin reads the session's token
+counts from its transcript and subagent transcripts, and at most every 30 s sends
+them to the project roster with `PATCH /projects/{p}/members/me`. It costs no
+model tokens, adds nothing to the context and sends only counts, model names
+and the session id. For the 5h/7d plan windows, opt in to the statusLine wrapper
+(`statusline.py` in this plugin) with `python3 scripts/install_plugins.py --statusline`.
+It chains the statusLine you already had; `--statusline-restore` undoes it. Details:
+[plugins/README.md](../README.md#token-usage-062).
 
 ## Ask for status in the channel
 

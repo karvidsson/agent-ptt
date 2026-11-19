@@ -1130,8 +1130,45 @@ def announce_from(event: dict, text: str) -> None:
     announce(session_id or "unknown", handle, text, channel_name, context, folder)
 
 
+def report_usage(event: dict, final: bool = False) -> None:
+    """Token counts for the project roster (usage.py): local reads and one PATCH at most.
+
+    Runs in the forked Stop child, so it never delays the host. Silent on failure.
+    """
+    with contextlib.suppress(Exception):
+        spec = importlib.util.spec_from_file_location("usage", Path(__file__).with_name("usage.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.report(event, final=final)
+
+
+def report_final_usage(event: dict) -> None:
+    """SessionEnd: send the last counts from a detached ``usage.py --final`` process.
+
+    The leave requests need the hook's whole time budget (Codex kills SessionEnd hooks
+    at 3 s), so the report runs in its own session, which outlives the hook.
+    AGENT_PTT_FORK=0 (tests) reports inline instead.
+    """
+    if os.environ.get("AGENT_PTT_FORK", "1") == "0":
+        report_usage(event, final=True)
+        return
+    with contextlib.suppress(Exception):
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).with_name("usage.py")), "--final"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        process.stdin.write(json.dumps(event).encode())
+        process.stdin.close()
+
+
 def main() -> None:
-    if os.environ.get("AGENT_PTT_ANNOUNCE", "1") == "0" or routing.headless_child():
+    if routing.headless_child():
+        return
+    announcing = os.environ.get("AGENT_PTT_ANNOUNCE", "1") != "0"
+    if not announcing and routing.setting("AGENT_PTT_USAGE", "1") == "0":
         return
 
     event = json.load(sys.stdin)
@@ -1143,15 +1180,25 @@ def main() -> None:
     if _is_subagent(event):
         return  # the session already said "hand off a subtask: …" when it started the worker
     if event_name == "SessionEnd":
-        # Synchronous on purpose: the host may kill a forked child at exit, and the
-        # requests are bounded by LEAVE_BUDGET. Nothing is spoken.
-        session_end(event)
+        report_final_usage(event)
+        if announcing:
+            # Synchronous on purpose: the host may kill a forked child at exit, and the
+            # requests are bounded by LEAVE_BUDGET. Nothing is spoken.
+            session_end(event)
+        return
+    if not announcing:  # AGENT_PTT_ANNOUNCE=0 silences speech, not the token counts
+        if event_name == "Stop":
+            _detach()
+            report_usage(event)
         return
     if event_name == "UserPromptSubmit":
         _resume_session(event)  # a resumed session (same ID) may speak and join again
 
     # Summaries can take seconds; never make the host wait for them
     _detach()
+
+    if event_name == "Stop":
+        report_usage(event)  # before the summary: it is quick and needs no model
 
     if event_name == "UserPromptSubmit":
         prompt = event.get("prompt", "")

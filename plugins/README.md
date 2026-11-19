@@ -21,6 +21,8 @@ From a local checkout, install everything with:
 
 ```bash
 python3 scripts/install_plugins.py      # --skip-claude / --skip-codex / --skip-antigravity / --skip-cursor
+python3 scripts/install_plugins.py --statusline           # opt-in: Claude plan usage (5h/7d)
+python3 scripts/install_plugins.py --statusline-restore   # undo it
 ```
 
 It always installs from the repo's **main checkout**, even when run inside a
@@ -239,6 +241,53 @@ once, in any channel or project. What the plugins do for it:
 Older plugins (≤ 0.5.6) send no `session_id` on the project join: a 0.6.0 server
 accepts their name only if it is free or already theirs, so update every machine.
 
+## Token usage (0.6.2)
+
+Each session in a project reports its token counts to the roster, so the web UI
+can show a ticker per agent and the subscription windows per machine. Reporting
+costs the agent no model tokens and injects nothing into its context: hook
+scripts read local files and send one `PATCH /projects/{p}/members/me` with a
+`usage` object (wire format: [api-reference](../docs/api-reference.md)).
+
+- **When.** In the async `Stop` hook (announce.py's forked child, also for Codex,
+  whose hooks are synchronous) and at `SessionEnd`, from a detached
+  `usage.py --final` process so the channel leave keeps the hook's time budget. Never in
+  a synchronous hook. At most one PATCH per 30 s per session, and only when the
+  numbers changed; SessionEnd sends a pending change at once. Failures are silent;
+  the counts are cumulative per session, so the next report repairs a lost one.
+- **Claude Code.** `message.usage` from the transcript (`transcript_path`), read
+  incrementally from a saved byte offset and deduplicated by `message.id` (Claude Code
+  writes one response as several identical lines). The session's subagents
+  (`<session>/subagents/agent-*.jsonl`) are rolled into it. A file that shrank is
+  read again from the start. `reasoning` is the thinking-token breakdown of `output`.
+- **Codex.** The rollout's `token_count` events: `total_token_usage` is the session
+  total (each increase goes to the model of the latest `turn_context`), with
+  `input` sent without the cached part. The event's `rate_limits`, `plan_type` and
+  `credits` are sent as `limits` (source `codex-rollout`).
+- **Cursor.** The plugin registers `afterAgentResponse`, and cursor-agent's `stop`
+  payload carries the same per-turn counts (probed with 2026.11.19), so each
+  generation is counted once from whichever arrives. The reply `text` in
+  `afterAgentResponse` is dropped before anything else reads the payload, debug
+  log included. Cursor sends no plan data and names the model `default` in Auto mode.
+- **Antigravity (agy)** reports nothing: its usage is only in undocumented protobuf.
+- **Claude plan usage (opt-in).** Claude Code exposes the 5h/7d windows only to a
+  `statusLine` command. `install_plugins.py --statusline` points your statusLine
+  (in `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR`) at
+  `plugins/announcer/statusline.py` in the main checkout. It saves your previous
+  statusLine in `~/.agent-ptt/statusline-previous.json` and keeps its options. The
+  wrapper writes `rate_limits` and each session's `cost` to `~/.agent-ptt/cc-ratelimits.json`,
+  then runs the previous command with the same input and prints what it prints
+  (or `Opus 5.5 · folder · 7d 15%` when you had none). The usage report includes
+  the windows while that file is under 30 minutes old (source `claude-statusline`).
+  `--statusline-restore` puts the old statusLine back. Without either flag your
+  settings are never touched.
+- **Privacy.** Only token counts, model names, the harness session id and limit
+  percentages leave the machine. No message text is read into a report, and no
+  account email or id is sent. Reader state (offsets, the last 64 response ids per file,
+  per-model sums) lives in `~/.agent-ptt/usage/`.
+- **Off switch.** `AGENT_PTT_USAGE=0` (env or `announcer.env`). `AGENT_PTT_ANNOUNCE=0`
+  silences speech but keeps reporting. Workspace (hosted) mode reports nothing.
+
 ## Shared announcer scripts
 
 Every `announcer/hooks/*.py` and its `codex-announcer/*.py`,
@@ -251,6 +300,10 @@ Every `announcer/hooks/*.py` and its `codex-announcer/*.py`,
 for f in plugins/announcer/hooks/*.py; do for d in codex-announcer antigravity-announcer cursor-announcer; do cp "$f" "plugins/$d/"; done; done
 cp plugins/announcer/hooks/session_routing.py plugins/voice/scripts/
 ```
+
+`plugins/announcer/statusline.py` is not one of them: it lives outside `hooks/`, only
+the Claude Code plugin has it, and `install_plugins.py --statusline` runs it from the
+main checkout.
 
 ## Releasing
 
