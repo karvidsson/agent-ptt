@@ -35,6 +35,7 @@ Every table, by module. All of them are created by `init_db()`; the
 | `message_deliveries` | `models.py` | One inbox receipt per `(message, recipient)` | ✅ |
 | `projects`, `project_members` | `models.py` | Collaboration projects (by normalized git remote) and their members, with roles and secret member keys | ✅ |
 | `work_items`, `work_item_deliveries`, `work_item_events` | `models.py` | The project inbox: work items, per-member deliveries (the inbox cursor) and the change log | ✅ |
+| `member_usage`, `member_usage_snapshots`, `account_limits` | `models.py` | Token usage per member, session, model and day; the last cumulative report per session; subscription windows per (machine, harness) | ✅ |
 | `workspace_users`, `workspace_organizations`, `workspace_members`, `workspace_credentials` | `workspace_models.py` | Hosted accounts, tenants, roles and hashed session/agent credentials | ✅ |
 | `workspace_agents`, `workspace_invitations` | `workspace_models.py` | Registered agents per organization; one-use invitation links (with onboarding `agent_limit`, `channel_id`, `claimed_by`) | ✅ |
 | `workspace_rooms`, `workspace_messages`, `workspace_audit` | `workspace_models.py` | Tenant channels, text chat and administrative audit log | ✅ |
@@ -311,6 +312,65 @@ Hosted mode never uses them.
 Channel notices about items are ordinary `messages` rows with `kind = notice`
 and `sender_key = project-member:<member_id>` (or `project-server`). That tag
 is public and not a key.
+
+## Token usage tables
+
+Three additive tables hold the token counts members report on `PATCH
+/projects/{p}/members/me` (see [Token usage](api-reference.md#token-usage) and
+`agent_ptt/usage.py`). Legacy tables: `create_all` in `init_db()` makes them,
+no Alembic revision. Only numbers, model names, session ids and window
+percentages are stored, never message text or an account id.
+
+### `member_usage`
+
+One row per `(member_id, session_id, model, day)` (unique), holding the tokens
+added that day. `day` is the server's local date. Rows older than 30 days are
+folded, at most once a day on the next write, into one row per member, model
+and day with `session_id = ""`, so daily totals are kept forever.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK, autoincrement) | Row id |
+| `project_id` | TEXT | Project; `(project_id, day)` is indexed. Kept when the member is removed |
+| `member_id` | TEXT (indexed) | Member |
+| `session_id` | VARCHAR(200) | Harness session, `""` for folded rows |
+| `harness` | VARCHAR(40) (nullable) | `claude`, `codex`, `cursor`, … |
+| `model` | VARCHAR(100) | Model name as the harness reports it |
+| `day` | VARCHAR(10) | `YYYY-MM-DD`, server local time |
+| `input`, `cache_read`, `cache_write`, `output`, `reasoning` | INTEGER | Tokens added that day (`reasoning` is part of `output`) |
+| `updated_at` | DATETIME | Last change |
+
+### `member_usage_snapshots`
+
+The last cumulative counts per `(member_id, session_id, model)` (unique). A new
+report's delta is measured against it, which makes reports idempotent; a
+lower total resets the base. Kept after folding (one small row per session and
+model), so a session resumed months later is not counted twice.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK, autoincrement) | Row id |
+| `member_id` | TEXT (indexed) | Member |
+| `session_id` | VARCHAR(200) | Harness session |
+| `model` | VARCHAR(100) | Model |
+| `input`, `cache_read`, `cache_write`, `output`, `reasoning` | INTEGER | Last reported cumulative counts |
+| `updated_at` | DATETIME | When it was reported; the latest one is the member's current session |
+
+### `account_limits`
+
+One row per `(machine, harness)` (unique): agents on the same machine and
+login share a subscription window, so it is stored once.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK, autoincrement) | Row id |
+| `machine` | VARCHAR(100) | The reporting member's `machine` (`""` when unknown) |
+| `harness` | VARCHAR(40) | Harness |
+| `source` | VARCHAR(40) (nullable) | Where it was read, e.g. `claude-statusline`, `codex-rollout` |
+| `plan` | VARCHAR(40) (nullable) | Plan name when the harness gives one (Codex `plan_type`) |
+| `windows` | JSON | `[{name, used_pct, resets_at, window_minutes}]` |
+| `reported_at` | DATETIME | When the harness read it; an older report never overwrites a newer one |
+| `reported_by` | TEXT (nullable) | `member_id` of the reporter |
 
 ## Channel moderation
 

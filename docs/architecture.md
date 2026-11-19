@@ -264,6 +264,13 @@ lease. A lifespan task next to the idle reaper reopens expired leases every
 30 s, and every read also checks for them. All of it is single-process state,
 like the channels. See [projects.md](projects.md).
 
+`usage.py` keeps members' token usage: `PATCH members/me` with `usage` stores
+the last cumulative snapshot per (member, session, model) and adds the growth
+to that day's `member_usage` row (server local day); old per-session rows are
+folded into daily rows once a day on write. `pricing.py` is the editable
+list-price table behind the optional `?estimate=1`. The web pages format it
+with `static/usage.js`.
+
 ## Explicit mention delivery
 
 `mentions.py` resolves exact mentions or selected stable recipient IDs when a

@@ -351,6 +351,7 @@
     state.filters.agent = $("agentFilter").value;
     history.replaceState(null, "", location.pathname + serializeFilters(state.filters));
     render();
+    refreshUsage();
   }
 
   // ---- Cards -----------------------------------------------------------------
@@ -598,6 +599,28 @@
     }
   }
 
+  // Token usage strip: the selected project's totals, or the server's, plus the
+  // subscription chips. The ≈$ toggle lives on the channel page (shared setting).
+  const USAGE_MS = 10000;
+  let usageBusy = false;
+  async function refreshUsage() {
+    const Usage = root.AgentPttUsage;
+    if (!Usage || usageBusy) return;
+    usageBusy = true;
+    try {
+      const project = state.filters.project;
+      const estimate = Usage.estimateOn();
+      const base = project ? `/projects/${encodeURIComponent(project)}/usage` : "/usage";
+      const r = await api(base + (estimate ? "?estimate=1" : ""));
+      const strip = $("usageStrip");
+      if (!r.ok) { strip.classList.add("hidden"); return; }
+      const payload = await r.json();
+      const scope = project ? "project tokens" : "all projects";
+      strip.innerHTML = `<span class="usage-scope">${scope}</span>` + Usage.stripHtml(payload, { estimate });
+      strip.classList.remove("hidden");
+    } catch { /* keep the last strip */ } finally { usageBusy = false; }
+  }
+
   async function loadProjects() {
     try {
       const r = await api("/projects");
@@ -629,6 +652,8 @@
     loadProjects().then(render);
     poll();
     setInterval(poll, POLL_MS);
+    refreshUsage();
+    setInterval(refreshUsage, USAGE_MS);
     setInterval(render, 30000); // keep relative ages fresh between changes
   }
 

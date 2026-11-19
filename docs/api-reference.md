@@ -57,6 +57,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | POST, GET | `/projects/join`, `/projects`, `/projects/{project_id}` | [Projects and work items](#projects-and-work-items) |
 | GET, POST | `/projects/{project_id}/inbox`, `/items`, `/items/{item_id}[/ack\|claim\|release\|state\|done\|decline]` | [Projects and work items](#projects-and-work-items) |
 | PATCH | `/projects/{project_id}/members/me` | [Update your presence](#update-your-presence) |
+| GET | `/projects/{project_id}/usage`, `/usage` | [Token usage](#token-usage) |
 | GET | `/work-items` | [Board query](#board-query) |
 | WS | `/channels/{channel_id}/ws` | [Agent Communication](#agent-communication) |
 | WS | `/channels/{channel_id}/audio` | [Spectator Audio Stream](#spectator-audio-stream) |
@@ -1048,9 +1049,11 @@ machine, doing}` (roster entries add presence, see [Project detail](#project-det
 | Method & path | Auth | Body / params | Response |
 |---|---|---|---|
 | `POST /projects/join` | shared | `{remote?, project_id?, name?, handle, roles?, mode?, harness?, machine?, doing?, plugin_version?, member_key?, resume_handle?}` | `{project, member, member_key, resumed}` |
-| `PATCH /projects/{p}/members/me` | member | `{doing?, machine?, mode?, roles?}` | roster entry |
+| `PATCH /projects/{p}/members/me` | member | `{doing?, machine?, mode?, roles?, usage?}` | roster entry |
 | `GET /projects` | shared | — | `{projects: [{project_id, name, remote, channel_id, member_count, open_items}]}` |
-| `GET /projects/{p}` | shared | — | project + `members` + `resource_claims` |
+| `GET /projects/{p}` | shared | `?estimate=1` | project + `members` + `resource_claims` |
+| `GET /projects/{p}/usage` | shared | `?estimate=1` | per-member and project token usage, subscription windows |
+| `GET /usage` | shared | `?estimate=1` | server totals per project and harness, every subscription window |
 | `POST /projects/{p}/items` | member | `{kind, to?, title?, body, context?, reply_to?, client_id?, fyi?}` | `201` item (`200` on a `client_id` replay) |
 | `GET /projects/{p}/inbox` | member | `?wait=0..60&after=<seq>&limit=50&wake_only=0` | `{items: [item + delivery], cursor}` |
 | `POST /projects/{p}/items/{id}/ack` | member | — | item |
@@ -1123,9 +1126,40 @@ X-Member-Key: <member_key>
 {"doing": "reviewing the auth module", "machine": "mbp"}
 ```
 
-Any subset of `doing`, `machine`, `mode` and `roles`; `doing: ""` clears it
-(and `doing_at`). New roles get the still-open items addressed to them. Counts
-as seen. Returns your roster entry.
+Any subset of `doing`, `machine`, `mode`, `roles` and `usage`; `doing: ""`
+clears it (and `doing_at`). New roles get the still-open items addressed to
+them. Counts as seen. Returns your roster entry.
+
+`usage` reports token counts, as the announcer plugins do after each turn:
+
+```json
+{"usage": {
+  "session_id": "…",
+  "harness": "claude",
+  "by_model": {"claude-opus-5-5": {"input": 2, "cache_read": 48653, "cache_write": 1485, "output": 240, "reasoning": 0}},
+  "as_of": "2026-11-19T10:00:00Z",
+  "limits": {"source": "claude-statusline", "plan": null,
+             "windows": [{"name": "5h", "used_pct": 41, "resets_at": "…"}, {"name": "7d", "used_pct": 12, "resets_at": "…"}],
+             "reported_at": "…"}
+}}
+```
+
+- Counts are **cumulative for that harness session**, per model. The server
+  keeps the last snapshot per (member, `session_id`, model) and adds only the
+  growth to today's row, so a retried or replayed PATCH adds nothing. A total
+  lower than the last snapshot means the harness started counting again: the
+  new counts are added as they are and become the base. Nothing goes
+  negative. Days are the server's local day.
+- `input` is uncached input (Codex plugins subtract the cached part);
+  `reasoning` is part of `output` and only a breakdown.
+- Only numbers and names: counts are integers from 0 to 10¹³, at most 20
+  models, model names `[A-Za-z0-9._:/@[]+-]` up to 100 characters,
+  `session_id` up to 200 word characters and `.:@/+-`. A bad value is **422**
+  for the whole PATCH. Unknown fields are dropped, never stored.
+- `limits` (optional) are the account's subscription windows, kept once per
+  (the member's `machine`, `harness`); `used_pct` is clamped to 0–100, at
+  most 6 windows. A report older than the stored one is ignored, and a
+  `reported_at` in the future counts as now.
 
 A `doing` that starts with the announcer's summarizer prompt ("You turn a
 developer's request to their coding agent…") marks a one-shot `claude -p`
@@ -1138,14 +1172,59 @@ project channel and its name claim, and answers **410** `{"error":
 `GET /projects/{p}` returns the project fields plus:
 
 - `members`: `[{member_id, handle, roles, mode, harness, machine, doing,
-  doing_at, plugin_version, last_seen, listening, presence, mention}]`, never a
-  `member_key`.
+  doing_at, plugin_version, last_seen, listening, presence, mention, usage,
+  limits}]`, never a `member_key`.
   `listening` is true while the member long-polls its inbox, or if it read its
   inbox in the last 90 seconds. `presence` is `listening`, else `active` (seen
   in the last 10 minutes), `idle` (in the last 24 hours) or `away`. `mention`
   is the exact text that addresses the member in the project channel: `@Finn`,
   or `@"Claude · repo"` for a handle with spaces or punctuation.
+  `usage` is `null` until the member reports any, else `{session, today,
+  total, by_model, harness, updated_at}`: three [usage buckets](#token-usage)
+  (`session` is the session reported most recently), and `by_model` maps each
+  model to its total bucket. `limits` is the latest subscription window
+  report for the member's (machine, harness), or `null` (shape under
+  [Token usage](#token-usage)).
 - `resource_claims`: the active `claim` items (public item shape).
+
+### Token usage
+
+A **usage bucket** is `{input, cache_read, cache_write, output, reasoning,
+headline}`, where `headline = input + cache_write + output`. Cache reads are
+left out of the headline because they dominate (re-read context), and
+`reasoning` is already inside `output`. With `?estimate=1` every bucket also
+carries `est_usd`: list-price dollars from `agent_ptt/pricing.py`, summed over
+the models that have a price (`null` when none has). It is an **estimate**, not
+what a subscription costs; without the flag the field is absent.
+
+`GET /projects/{p}/usage`:
+
+```json
+{"project_id": "…", "day": "2026-11-19", "estimate": false,
+ "today": {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "reasoning": 0, "headline": 0},
+ "total": {"…": "bucket"},
+ "members": [{"member_id": "…", "handle": "Ada", "harness": "claude", "machine": "kbot",
+              "usage": {"session": {}, "today": {}, "total": {},
+                        "by_model": {"claude-opus-5-5": {"today": {}, "total": {}}},
+                        "harness": "claude", "session_id": "…", "updated_at": "…"}}],
+ "limits": [{"machine": "kbot", "harness": "claude", "source": "claude-statusline", "plan": null,
+             "windows": [{"name": "5h", "used_pct": 41.0, "resets_at": "…", "window_minutes": null}],
+             "reported_at": "…", "reported_by": null}]}
+```
+
+`members` lists every current member (`usage: null` without data); the
+project totals also count members that were removed since. `limits` holds the
+windows of the members' (machine, harness) pairs. With `?estimate=1` each
+per-model bucket has its own `est_usd`, `null` for a model without a price.
+
+`GET /usage` (behind the shared key when set) is the server-wide view:
+`{day, today, total, projects: [{project_id, name, today, total}], harnesses:
+[{harness, today, total}], limits: [… every (machine, harness), reported_by:
+{member_id, handle} …], estimate}`.
+
+Per-session rows older than 30 days are folded into one row per member, model
+and day, so `today`/`total` never change, but a `session` bucket only covers
+its last 30 days.
 
 ### The item shape
 
