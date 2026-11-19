@@ -58,6 +58,12 @@ as an absolute path on each machine): `say`, `who`, `inbox`, `wait`, `tell`,
 the commands, waking idle sessions, and the `AGENT_PTT_HANDLE` /
 `AGENT_PTT_ROLES` / `AGENT_PTT_WAKE` settings.
 
+An idle Claude Code session wakes through `ptt wait --first`, which the start
+context asks it to run with the Bash tool, `run_in_background: true` and no
+timeout. It exits on a delivery, which starts the next turn, and the agent
+starts it again after handling. Since 0.6.1 this replaces the Monitor tool,
+which expired every 30 min and woke an idle agent only to re-arm it.
+
 Only non-FYI mentions and requests wake an idle session; `ptt say --fyi` /
 `ptt tell … --fyi` (status, acknowledgements, "done", claim releases) arrive at
 the next prompt or tool hook. Close mentions are batched into one wake
@@ -68,7 +74,7 @@ preamble line plus one line per message or item (see
 **MCP tools.** The plugin also starts `hooks/ptt_mcp.py` as the MCP server
 `agent-ptt` (`.mcp.json`). Its tools `say`, `tell`, `who`, `inbox`, `ack` and
 `done` do the same as the `ptt` commands. Pass `session=<id>` from the session
-context when you want to be explicit; Claude Code gives the server its session id, so the tools find this session without it. The tools never block: waking stays with the Monitor on `ptt wait`. See
+context when you want to be explicit; Claude Code gives the server its session id, so the tools find this session without it. The tools never block: waking stays with a background `ptt wait --first` (the Bash tool with `run_in_background`, not the Monitor tool). See
 [docs/mcp.md](../../docs/mcp.md).
 
 ## Configuration (environment variables)

@@ -191,15 +191,17 @@ filesystem.
    (`ptt.py inbox` / `agent-ptt inbox`).
    A name that matches nobody still fails, and the error lists who can be
    addressed.
-5. **The Monitor wakes an idle agent.** In the M1 Claude Code session, start
-   the Monitor on the command the start context gives (`ptt.py wait`, or
-   `agent-ptt inbox --follow --ack` with the CLI), then leave the session idle
-   at its prompt. From M2, `ptt.py tell Poppy "found a broken link in ch. 3"`
-   (or `agent-ptt send --kind note --to agent:Poppy "…"`). Expected: within a
-   few seconds the Monitor prints
-   `[ptt] note from Theo: found a broken link in ch. 3 (item …)` and the
-   session starts a turn on it without anyone typing. The item is not
-   injected a second time at the next hook.
+5. **The background wait wakes an idle agent.** In the M1 Claude Code
+   session, the agent starts the command the start context gives
+   (`ptt.py wait --first`) as a background Bash command, then the session
+   sits idle at its prompt. Leave it idle for more than 35 min (past the
+   Monitor's old 30 min expiry): no turn happens meanwhile. From M2,
+   `ptt.py tell Poppy "please check the broken link in ch. 3"`. Expected:
+   within a few seconds the background command exits with
+   `[ptt] item <id> instruction from Theo: please check …`, the session starts a turn on it
+   without anyone typing, answers, and starts the wait again. The command's
+   output has no stderr. The item is not injected a second time at the next
+   hook.
 6. **Idle but present.** Leave the M1 session idle past the reaper grace.
    Expected: it shows as `away` in the channel's participant list and web UI
    instead of disappearing, and a `@Poppy` mention still reaches its channel
@@ -230,7 +232,7 @@ on M1 and `AGENT_PTT_HANDLE=Theo` on M2.
      doing) and the `ptt` commands. The later one introduces itself
      (`ptt.py say "@Poppy Theo here (Codex on m2) …"`) and the two agree a
      split of the files in the channel, by `@mention` or `ptt.py tell`.
-   - Poppy keeps a Monitor on `ptt.py wait`; Theo is woken by the Codex
+   - Poppy keeps a background `ptt.py wait --first`; Theo is woken by the Codex
      route the plugin documents (see the wake-up section of
      [plugins/README.md](../plugins/README.md)). Neither sits idle while a
      mention to it waits.
@@ -280,7 +282,7 @@ live check, refresh the plugins and start an agent session, select it from
 the browser composer’s `@` menu, and send a request while it works. The receipt
 should change from pending to delivered after a tool or turn boundary. Repeat
 while idle: it stays pending until another hook event runs, unless the session
-runs the plugin's wake-up loop (`ptt.py wait` under Claude Code's Monitor, or
+runs the plugin's wake-up loop (a background `ptt.py wait --first`, or
 the Codex route in [plugins/README.md](../plugins/README.md)); see
 [Cross-machine collaboration](#cross-machine-collaboration-roster-no-remote-projects-wake-durable-addressing). Delivered records
 a hook handoff, not task completion. See [Agent mentions](mentions.md).

@@ -124,9 +124,10 @@ def test_session_start_joins_channel_and_project_and_injects_roster(env, capsys)
     ptt_path = str(HOOKS / "ptt.py")
     assert ptt_path in context and sys.executable in context
     assert "--session s1" in context
-    assert (
-        "First, start the Monitor tool" in context.splitlines()[1]
-    )  # Claude: keep a Monitor running
+    wake = context.splitlines()[1]  # Claude: a background Bash wait, never a Monitor
+    assert wake.startswith("First, start `") and "ptt.py --session s1 wait --first`" in wake
+    assert "run_in_background: true and no timeout" in wake
+    assert "start the same command again" in wake and "Never run it in the Monitor" in wake
     assert "introduce yourself" in context  # etiquette
     assert "~/Projects" not in context and "kbot" not in context
 
@@ -256,7 +257,7 @@ def test_roster_lines_fit_the_budget():
     assert lines[-1].startswith("- … and ")
 
 
-def test_roster_changes_report_joins_and_departures():
+def test_roster_changes_report_joins_but_not_departures():
     link = session_start.link
     before = {"a": True, "b": False}
     people = [
@@ -271,8 +272,8 @@ def test_roster_changes_report_joins_and_departures():
         },
     ]
     lines = link.roster_changes(before, people)
-    assert lines[0].startswith("Theo (codex) went away")
-    assert lines[1].startswith("Poppy (claude on mbp) joined, doing: review docs")
+    assert len(lines) == 1  # Theo went away: noise, no line
+    assert lines[0].startswith("Poppy (claude on mbp) joined, doing: review docs")
     assert link.roster_changes(None, people) == []
 
 
@@ -1333,12 +1334,14 @@ def test_waiter_remembers_what_it_printed(env, capsys):
     assert delivered and delivered[0][0] == "message"
 
 
-def test_claude_stop_nudges_once_to_start_the_monitor(env, capsys, monkeypatch):
+def test_claude_stop_nudges_once_to_start_a_background_wait(env, capsys, monkeypatch):
     monkeypatch.setenv("AGENT_PTT_MONITOR_NUDGE", "1")
     start(capsys=capsys)
     _deliver("Stop")
     out = capsys.readouterr().out
-    assert '"decision": "block"' in out and "ptt.py --session s1 wait" in out
+    assert '"decision": "block"' in out and "ptt.py --session s1 wait --first`" in out
+    reason = json.loads(out)["reason"]
+    assert "run_in_background: true and no timeout (not the Monitor tool)" in reason
     _deliver("Stop")
     assert capsys.readouterr().out == ""  # once; no loop
     base = receive.link.base_url()
@@ -1346,12 +1349,40 @@ def test_claude_stop_nudges_once_to_start_the_monitor(env, capsys, monkeypatch):
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.write_text(str(os.getpid()))
     _deliver("Stop")
-    assert capsys.readouterr().out == ""  # a Monitor runs
+    assert capsys.readouterr().out == ""  # a wait runs
     assert receive.link.load_session(base, "s1")["monitor_seen"]
-    lock.unlink()
-    receive.link.save_session(base, "s1", monitor_nudged_at=1.0)
+    lock.unlink()  # it exited on a delivery and wasn't restarted
     _deliver("Stop")
-    assert "start the Monitor" in capsys.readouterr().out  # it died: remind to re-arm
+    assert "--first` with the Bash tool" in capsys.readouterr().out  # at once, no 10 min gate
+    _deliver("Stop")
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no kill(pid, 0) probe on Windows")
+def test_claude_stop_sees_a_running_background_wait(env, capsys, monkeypatch, tmp_path):
+    """A real `ptt wait --first` child process holds the lock the Stop hook checks."""
+    import subprocess
+    import time as _time
+
+    monkeypatch.setenv("AGENT_PTT_MONITOR_NUDGE", "1")
+    start(capsys=capsys)
+    base = receive.link.base_url()
+    lock = receive.link.wait_lock_path(base, "s1")
+    # The same lock a background `wait --first` takes: its own pid, kept fresh.
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        session = ptt.Session("s1")
+        assert ptt._wait_lock(session) == lock
+        lock.write_text(str(child.pid))  # as if the child had taken it
+        _deliver("Stop")
+        assert capsys.readouterr().out == ""
+    finally:
+        child.kill()
+        child.wait()
+    _time.sleep(0.05)
+    _deliver("Stop")  # the child is gone: its lock no longer counts
+    assert "wait --first" in capsys.readouterr().out
+    lock.unlink(missing_ok=True)
 
 
 def test_antigravity_stop_nudge_never_loops_when_the_agent_declines(env, capsys, monkeypatch):
@@ -1670,3 +1701,97 @@ def test_ptt_reconnect_adopts_a_renamed_channel_handle(env, capsys, monkeypatch)
     capsys.readouterr()
     assert ptt.main(["--session", "s1", "who"]) == 0
     assert "You are @Ivy2" in capsys.readouterr().out
+
+
+# --- 0.6.1: Claude waits in a background Bash command, quietly ------------------------
+
+
+def test_wait_writes_nothing_on_start_or_a_normal_exit(env, capsys, monkeypatch):
+    """A background command's stderr is flagged to the agent; stdout is a wake."""
+    start(capsys=capsys)
+    capsys.readouterr()
+    session = ptt.Session("s1")
+    monkeypatch.setattr(ptt.Waiter, "run", lambda self, stop=None: None)
+    for argv in (["wait"], ["wait", "--first"]):
+        ptt.cmd_wait(session, ptt.parser().parse_args(argv))
+        captured = capsys.readouterr()
+        assert captured.out == "" and captured.err == "", argv
+        assert not ptt.link.wait_lock_path(session.base, "s1").exists()
+
+
+def test_stale_plugin_warning_rides_along_with_the_first_delivery(env, capsys, monkeypatch):
+    start(capsys=capsys)
+    capsys.readouterr()
+    session = ptt.Session("s1")
+    monkeypatch.setattr(ptt.link, "stale_plugin_line", lambda mine, people: "update me")
+    seen = {}
+
+    def run(self, stop=None):
+        seen["notes"] = list(self.notes)
+
+    monkeypatch.setattr(ptt.Waiter, "run", run)
+    ptt.cmd_wait(session, ptt.parser().parse_args(["wait", "--first"]))
+    assert seen["notes"] == ["[ptt] update me"]
+    assert capsys.readouterr().err == ""
+    _mention_me(env, session)
+    out = io.StringIO()
+    waiter = ptt.Waiter(session, out=out, batch=0)
+    waiter.notes = ["[ptt] update me"]
+    waiter.channel_once(0)
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "[ptt] update me" and len(lines) == 2 and not waiter.notes
+
+
+def test_wait_first_takes_over_from_a_monitor_era_wait(env, capsys, monkeypatch):
+    """An older session's Monitor `ptt wait` holds the lock: wait for it, don't exit."""
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    held = ptt._wait_lock(session)  # our own pid: alive, fresh
+    assert held is not None
+    naps = []
+
+    def sleep(seconds):
+        naps.append(seconds)
+        held.unlink()  # the Monitor expired
+
+    assert ptt._await_lock(session, sleep=sleep) == held and naps == [ptt.LOCK_RETRY]
+    # A plain `wait` (a Monitor) still says so and exits.
+    capsys.readouterr()
+    ptt.cmd_wait(session, ptt.parser().parse_args(["wait"]))
+    assert "already waiting" in capsys.readouterr().out
+    held.unlink()
+
+
+def test_wait_first_stops_waiting_for_the_lock_when_the_session_ends(env, capsys, monkeypatch):
+    start(capsys=capsys)
+    session = ptt.Session("s1")
+    held = ptt._wait_lock(session)
+    monkeypatch.setattr(ptt.Session, "ended", lambda self: True)
+    assert ptt._await_lock(session, sleep=lambda s: pytest.fail("no sleep")) is None
+    held.unlink()
+
+
+def test_starting_the_wait_gets_no_roster_notices(env, capsys, monkeypatch):
+    """A join line right after (re)starting the wait only makes the agent narrate."""
+    start(capsys=capsys)
+    capsys.readouterr()
+    calls = []
+
+    def notices(self):
+        calls.append(1)
+        return ["Rex joined. Address them as @Rex."]
+
+    monkeypatch.setattr(receive.Project, "roster_notices", notices)
+    command = f"{sys.executable} /x/hooks/ptt.py --session s1 wait --first"
+    _deliver("PostToolUse", tool_name="Bash", tool_input={"command": command})
+    assert "Rex joined" not in capsys.readouterr().out
+    assert not calls  # the snapshot is untouched: the join shows at a later hook
+    _deliver("UserPromptSubmit")
+    assert "Rex joined" in capsys.readouterr().out
+    assert receive.starts_wait(
+        {"hook_event_name": "PostToolUse", "tool_input": {"command": command}}
+    )
+    assert not receive.starts_wait(
+        {"hook_event_name": "PostToolUse", "tool_input": {"command": "ptt.py say hi"}}
+    )
+    assert not receive.starts_wait({"hook_event_name": "UserPromptSubmit"})

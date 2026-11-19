@@ -581,7 +581,7 @@ def one_line(text: str, limit: int) -> str:
 
 
 def item_line(item: dict) -> str:
-    """One Monitor line: the full id first, so a cut-off line still keeps it."""
+    """One delivery line: the full id first, so a cut-off line still keeps it."""
     sender = (item.get("from") or {}).get("handle") or "?"
     # Same line as the CLI's `agent-ptt inbox --follow` (plus the FYI marker).
     title = one_line(item.get("body") or item.get("title") or "", LINE_TEXT_MAX)
@@ -590,7 +590,7 @@ def item_line(item: dict) -> str:
 
 
 def mention_line(message: dict) -> str:
-    """One Monitor line: the full id first, so a cut-off line still keeps it."""
+    """One delivery line: the full id first, so a cut-off line still keeps it."""
     text = one_line(message.get("text") or "", LINE_TEXT_MAX)
     sender = message.get("handle") or "?"
     kind = "FYI" if message.get("fyi") else "mention"
@@ -701,7 +701,11 @@ def snapshot(people: list[dict]) -> dict:
 
 
 def roster_changes(old: dict | None, people: list[dict]) -> list[str]:
-    """Short "X (codex on mbp) joined, doing …" lines for joins and departures."""
+    """Short "X (codex on mbp) joined, doing …" lines for joins.
+
+    Departures are noise (an idle agent "goes away" all the time, and messages to it
+    are queued anyway), so they get no line.
+    """
     if old is None:
         return []
     lines = []
@@ -714,8 +718,6 @@ def roster_changes(old: dict | None, people: list[dict]) -> list[str]:
                 line += ", doing: " + one_line(person["doing"], 80)
             mention = person.get("mention") or mention_text(person.get("handle") or "?")
             lines.append(f"{line}. Address them as {mention}.")
-        elif not present and old.get(key):
-            lines.append(f"{describe(person)} went away (messages to them are queued).")
     return lines
 
 
@@ -856,7 +858,8 @@ def alive(pid: int) -> bool:
 
 
 def wait_lock_path(base: str, session_id: str) -> Path:
-    """`ptt wait`'s single-instance lock (the Claude Monitor loop)."""
+    """`ptt wait`'s single-instance lock, held by whichever wait runs for the session
+    (a background `wait --first`, or an older session's Monitor)."""
     return PROJECTS_DIR / f"wait-{_digest(base, session_id)[:32]}.lock"
 
 

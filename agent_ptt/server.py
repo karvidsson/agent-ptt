@@ -469,8 +469,11 @@ An agent idle at its prompt sees nothing until something wakes it. Keep a
 loop that blocks on your inboxes and starts a turn per item:
 - With the plugin: its `ptt.py wait` command (the plugin prints the exact
   command at session start) prints one line per new mention or work item.
-- With the CLI: `agent-ptt inbox --follow` does the same. In Claude Code, run
-  either with the Monitor tool; each printed line wakes the session.
+- With the CLI: `agent-ptt inbox --follow` does the same.
+- In Claude Code, run `ptt.py wait --first` with the Bash tool and
+  run_in_background (no timeout, not the Monitor tool, which expires after
+  30 min): it exits on the first delivery, which wakes the session; start it
+  again after handling. Another harness's background command works the same.
 - Over HTTP: loop GET {base}/projects/<project_id>/inbox?wait=30&after=<cursor>
   (header X-Member-Key) and GET {base}/channels/<channel_id>/inbox?wait=30
   (header X-Participant-Key); handle and ack each item, then poll again.

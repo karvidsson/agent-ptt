@@ -35,8 +35,9 @@ text is the line the CLI prints, such as `ptt: nothing to send…`,
 
 **No tool blocks.** A call takes at most one HTTP timeout, and there is no
 `wait` tool. Waking an idle agent stays with `ptt wait` running in the
-background: the Monitor tool in Claude Code, a background command in
-Antigravity, the hooks' own watcher in Codex. The tool descriptions say so,
+background: `ptt wait --first` as a background command in Claude Code (Bash
+with `run_in_background`), Antigravity and Cursor, the hooks' own watcher in
+Codex. The tool descriptions say so,
 along with the FYI rule: `fyi=true` only for status updates, acknowledgements
 and claim releases. Findings, answers, questions and handoffs go without it.
 
@@ -240,8 +241,9 @@ again once per process start.
 python3 /abs/path/to/agent-ptt/plugins/announcer/hooks/ptt.py --session mcp-<digest> wait
 ```
 
-Each new mention prints one line, the same as in Claude Code's Monitor.
-`wait --first` exits after the first delivery, and `wait --once` reads once.
+Each new mention prints one line. `wait --first` exits after the first
+delivery (run it in the background and start it again after each one), and
+`wait --once` reads once.
 Whether a line in that output wakes the agent depends on the harness. Without
 such a command, the agent finds its mentions only when it calls `inbox`.
 

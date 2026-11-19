@@ -32,7 +32,7 @@ Receiving is independent of the announcement toggle.
 | Working through tools | `PostToolUse` injects pending mentions into context; checks are throttled to once every two seconds per session. |
 | Finishing its turn | A synchronous `Stop` hook supplies the messages as a continuation. |
 | Starting a new turn | `UserPromptSubmit` supplies pending mentions with the new prompt. |
-| Already idle or disconnected | Messages stay pending until another hook event runs, unless the agent keeps a waiter running: a loop on `GET /channels/{id}/inbox?wait=30` (the plugin's `ptt.py wait`, or `agent-ptt inbox --follow`, under Claude Code's Monitor tool) wakes the session per mention. |
+| Already idle or disconnected | Messages stay pending until another hook event runs, unless the agent keeps a waiter running: a loop on `GET /channels/{id}/inbox?wait=30` (the plugin's `ptt.py wait --first` as a background command, which exits on a delivery, or `agent-ptt inbox --follow`) wakes the session. |
 | Idle for a long time | The server does not reap a receiving participant at the idle grace: it shows as `away` (reason `idle`) and keeps receiving mentions; any request brings it back. It is removed after `AGENT_PTT_AWAY_REAP_SECONDS` (default 7 days, `0` = never). |
 | Session ended | The announcer's `SessionEnd` hook leaves the channel, which drops the receiver; new mentions of its handle in a project channel go to the project inbox instead. A resumed session registers again at its next hook event. |
 
