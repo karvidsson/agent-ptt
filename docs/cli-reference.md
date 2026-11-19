@@ -767,5 +767,9 @@ Codex asks you to trust the plugin's hooks on its next start ("Hooks need
 review → Trust all") and again after each upgrade. From a local checkout,
 `python3 scripts/install_plugins.py` registers the main checkout as the
 marketplace for both CLIs and removes the loose announcer entries an older
-install left in `~/.codex/hooks.json`. Details:
-[plugins/README.md](../plugins/README.md#installing).
+install left in `~/.codex/hooks.json`. Flags: `--skip-claude`, `--skip-codex`,
+`--skip-antigravity`, `--skip-cursor`, and the opt-in `--statusline` (wraps Claude
+Code's `statusLine` so the 5h/7d plan windows reach the usage report, chaining
+the previous one) with `--statusline-restore` to undo it. Details:
+[plugins/README.md](../plugins/README.md#installing) and
+[token usage](../plugins/README.md#token-usage-062).

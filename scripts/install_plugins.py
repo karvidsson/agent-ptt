@@ -18,6 +18,13 @@ you refresh Claude Code's and Codex's cached plugin copies after changing a plug
 
     python3 scripts/install_plugins.py              # Claude Code + Codex + Antigravity + Cursor
     python3 scripts/install_plugins.py --skip-codex --skip-antigravity --skip-cursor
+    python3 scripts/install_plugins.py --statusline          # also: Claude plan usage (opt-in)
+    python3 scripts/install_plugins.py --statusline-restore  # put the old statusLine back
+
+``--statusline`` points Claude Code's ``statusLine`` (in ~/.claude/settings.json) at
+plugins/announcer/statusline.py, which saves the 5h/7d subscription windows for the
+usage report and then runs the statusLine you had before (saved in
+~/.agent-ptt/statusline-previous.json). Without the flag your settings are not touched.
 
 Stdlib-only, like the plugins themselves.
 """
@@ -44,6 +51,8 @@ CURSOR_PLUGIN = "agent-ptt-announcer"
 # non-plugin hooks.json also lists the event, so the install adds a no-op for each.
 CURSOR_NOOP_MARKER = "agent-ptt: lets plugin hooks run"
 CURSOR_NOOP_EVENTS = ("beforeSubmitPrompt", "stop")
+STATUSLINE_SCRIPT = "plugins/announcer/statusline.py"
+STATUSLINE_PREVIOUS = "statusline-previous.json"
 HERE = Path(__file__).resolve().parent
 
 
@@ -185,6 +194,76 @@ def install_cursor(root: Path, cursor_home: Path) -> int:
     return added
 
 
+def claude_settings_path() -> Path:
+    config = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(config) if config else Path.home() / ".claude") / "settings.json"
+
+
+def _is_wrapper(status_line) -> bool:
+    return isinstance(status_line, dict) and STATUSLINE_SCRIPT in str(
+        status_line.get("command", "")
+    )
+
+
+def _read_settings(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text())  # invalid JSON: raise, never overwrite it
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} is not a JSON object")
+    return data
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".agent-ptt.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+def install_statusline(root: Path, settings_path: Path, state_dir: Path) -> str:
+    """Point Claude Code's statusLine at the wrapper, chaining the previous one.
+
+    The previous statusLine (or none) is saved once; re-running only refreshes the
+    wrapper's path. Other settings and the previous entry's options (padding, …) stay.
+    Returns "installed" or "refreshed".
+    """
+    settings = _read_settings(settings_path)
+    current = settings.get("statusLine")
+    refreshed = _is_wrapper(current)
+    if not refreshed:
+        _write_json(state_dir / STATUSLINE_PREVIOUS, {"statusLine": current})
+    entry = dict(current) if isinstance(current, dict) else {}
+    entry.update(type="command", command=f'python3 "{root / STATUSLINE_SCRIPT}"')
+    settings["statusLine"] = entry
+    _write_json(settings_path, settings)
+    return "refreshed" if refreshed else "installed"
+
+
+def restore_statusline(settings_path: Path, state_dir: Path) -> str:
+    """Put back the statusLine saved by install_statusline (none: remove ours).
+
+    Returns "restored", "removed" or "not installed" (settings left alone).
+    """
+    settings = _read_settings(settings_path)
+    if not _is_wrapper(settings.get("statusLine")):
+        return "not installed"
+    saved_path = state_dir / STATUSLINE_PREVIOUS
+    try:
+        previous = json.loads(saved_path.read_text()).get("statusLine")
+    except (OSError, ValueError, AttributeError):
+        previous = None
+    if isinstance(previous, dict) and not _is_wrapper(previous):
+        settings["statusLine"] = previous
+        result = "restored"
+    else:
+        settings.pop("statusLine", None)
+        result = "removed"
+    _write_json(settings_path, settings)
+    saved_path.unlink(missing_ok=True)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--skip-claude", action="store_true", help="don't touch Claude Code")
@@ -193,6 +272,17 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-antigravity", action="store_true", help="don't touch Antigravity (agy)"
     )
     parser.add_argument("--skip-cursor", action="store_true", help="don't touch Cursor")
+    statusline = parser.add_mutually_exclusive_group()
+    statusline.add_argument(
+        "--statusline",
+        action="store_true",
+        help="also wrap Claude Code's statusLine to report 5h/7d plan usage (opt-in)",
+    )
+    statusline.add_argument(
+        "--statusline-restore",
+        action="store_true",
+        help="put back the statusLine that --statusline replaced",
+    )
     args = parser.parse_args(argv)
 
     root = main_checkout()
@@ -246,6 +336,20 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             print("⏭️  Cursor: `agent` / `cursor-agent` not on PATH, skipped")
+
+    if args.statusline or args.statusline_restore:
+        settings_path = claude_settings_path()
+        state_dir = Path.home() / ".agent-ptt"
+        if args.statusline:
+            result = install_statusline(root, settings_path, state_dir)
+            print(
+                f"✅ Claude statusLine: wrapper {result} in {settings_path}"
+                f" (previous saved in {state_dir / STATUSLINE_PREVIOUS};"
+                " undo with --statusline-restore)"
+            )
+        else:
+            result = restore_statusline(settings_path, state_dir)
+            print(f"✅ Claude statusLine: {result} ({settings_path})")
 
     print("Restart any running Claude Code / Codex / agy / Cursor sessions to pick up the plugins.")
     return 0

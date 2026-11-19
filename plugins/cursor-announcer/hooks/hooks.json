@@ -26,6 +26,12 @@
         "loop_limit": null
       }
     ],
+    "afterAgentResponse": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" afterAgentResponse",
+        "timeout": 5
+      }
+    ],
     "sessionEnd": [
       {
         "command": "python3 \"${CURSOR_PLUGIN_ROOT}/cursor_hook.py\" sessionEnd",
