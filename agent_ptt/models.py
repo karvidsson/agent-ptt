@@ -7,6 +7,7 @@ so configs are portable between the two apps.
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -285,6 +286,73 @@ class WorkItemEventDB(Base):
     from_state = Column(String, nullable=True)
     to_state = Column(String, nullable=True)
     note = Column(Text, nullable=True)
+
+
+class MemberUsageDB(Base):
+    """Token usage per member, harness session, model and server-local day.
+
+    Rows hold the delta applied that day (see usage.py). Rows older than 30 days
+    are folded into ``session_id = ""``, so daily totals are kept forever.
+    """
+
+    __tablename__ = "member_usage"
+    __table_args__ = (
+        UniqueConstraint("member_id", "session_id", "model", "day", name="ux_member_usage"),
+        Index("ix_member_usage_project_day", "project_id", "day"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String, nullable=False)
+    member_id = Column(String, nullable=False, index=True)
+    session_id = Column(String(200), nullable=False, default="")
+    harness = Column(String(40), nullable=True)
+    model = Column(String(100), nullable=False)
+    day = Column(String(10), nullable=False)  # YYYY-MM-DD, server local time
+    input = Column(Integer, nullable=False, default=0)
+    cache_read = Column(Integer, nullable=False, default=0)
+    cache_write = Column(Integer, nullable=False, default=0)
+    output = Column(Integer, nullable=False, default=0)
+    reasoning = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class MemberUsageSnapshotDB(Base):
+    """The last cumulative counts a member reported for one session and model.
+
+    The next report's delta is measured against it, so replays add nothing.
+    """
+
+    __tablename__ = "member_usage_snapshots"
+    __table_args__ = (
+        UniqueConstraint("member_id", "session_id", "model", name="ux_member_usage_snapshot"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    member_id = Column(String, nullable=False, index=True)
+    session_id = Column(String(200), nullable=False)
+    model = Column(String(100), nullable=False)
+    input = Column(Integer, nullable=False, default=0)
+    cache_read = Column(Integer, nullable=False, default=0)
+    cache_write = Column(Integer, nullable=False, default=0)
+    output = Column(Integer, nullable=False, default=0)
+    reasoning = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class AccountLimitsDB(Base):
+    """The latest subscription windows reported for one (machine, harness)."""
+
+    __tablename__ = "account_limits"
+    __table_args__ = (UniqueConstraint("machine", "harness", name="ux_account_limits"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    machine = Column(String(100), nullable=False, default="")
+    harness = Column(String(40), nullable=False)
+    source = Column(String(40), nullable=True)
+    plan = Column(String(40), nullable=True)
+    windows = Column(JSON, nullable=False, default=list)
+    reported_at = Column(DateTime, nullable=False)
+    reported_by = Column(String, nullable=True)  # member_id
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +656,82 @@ class ProjectMemberOut(MemberOut):
     presence: MemberPresence = "away"
     # The exact text that addresses this member in the project channel.
     mention: str = ""
+    # Token usage {session, today, total, by_model, …}; null when never reported.
+    usage: dict[str, Any] | None = None
+    # Latest subscription windows for this member's (machine, harness).
+    limits: dict[str, Any] | None = None
+
+
+USAGE_COUNT_MAX = 10**13  # Far above any real session; rejects garbage, not usage.
+USAGE_MODELS_MAX = 20
+_MODEL_NAME = r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,99}$"
+_SHORT_NAME = r"^[A-Za-z0-9][A-Za-z0-9._:/ +-]{0,39}$"
+
+
+class UsageCounts(BaseModel):
+    """Cumulative token counts for one model in one harness session (numbers only)."""
+
+    model_config = {"extra": "ignore"}
+
+    input: int = Field(default=0, ge=0, le=USAGE_COUNT_MAX)
+    cache_read: int = Field(default=0, ge=0, le=USAGE_COUNT_MAX)
+    cache_write: int = Field(default=0, ge=0, le=USAGE_COUNT_MAX)
+    output: int = Field(default=0, ge=0, le=USAGE_COUNT_MAX)
+    # Part of ``output`` (thinking / reasoning tokens), shown as a breakdown only.
+    reasoning: int = Field(default=0, ge=0, le=USAGE_COUNT_MAX)
+
+
+class UsageWindow(BaseModel):
+    """One subscription window, e.g. ``5h`` at 41 % that resets at ``resets_at``."""
+
+    model_config = {"extra": "ignore"}
+
+    name: str = Field(pattern=_SHORT_NAME, max_length=20)
+    used_pct: float = Field(ge=0)
+    resets_at: datetime | None = None
+    window_minutes: int | None = Field(default=None, ge=0, le=10**6)
+
+    @field_validator("used_pct")
+    @classmethod
+    def _clamp_pct(cls, value: float) -> float:
+        return round(min(value, 100.0), 1)
+
+
+class UsageLimits(BaseModel):
+    """Account-scope subscription usage (percentages only; never an account id)."""
+
+    model_config = {"extra": "ignore"}
+
+    source: str | None = Field(default=None, pattern=_SHORT_NAME, max_length=40)
+    plan: str | None = Field(default=None, pattern=_SHORT_NAME, max_length=40)
+    windows: list[UsageWindow] = Field(default_factory=list, max_length=6)
+    reported_at: datetime | None = None
+
+
+class UsageReport(BaseModel):
+    """``MemberPatch.usage``: one session's cumulative counts per model.
+
+    Applied idempotently: the server stores the last snapshot per session and
+    model and adds only the growth since then to today's row.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    session_id: str = Field(min_length=1, max_length=200, pattern=r"^[\w.:@/+-]+$")
+    harness: str | None = Field(default=None, pattern=_SHORT_NAME, max_length=40)
+    by_model: dict[str, UsageCounts] = Field(default_factory=dict)
+    as_of: datetime | None = None
+    limits: UsageLimits | None = None
+
+    @field_validator("by_model")
+    @classmethod
+    def _check_models(cls, value: dict[str, UsageCounts]) -> dict[str, UsageCounts]:
+        if len(value) > USAGE_MODELS_MAX:
+            raise ValueError(f"at most {USAGE_MODELS_MAX} models")
+        for name in value:
+            if not re.match(_MODEL_NAME, name):
+                raise ValueError(f"invalid model name: {name[:40]!r}")
+        return value
 
 
 class MemberPatch(BaseModel):
@@ -597,6 +741,7 @@ class MemberPatch(BaseModel):
     machine: str | None = Field(default=None, max_length=100)
     mode: MemberMode | None = None
     roles: list[str] | None = Field(default=None, max_length=20)
+    usage: UsageReport | None = None
 
     @field_validator("roles")
     @classmethod

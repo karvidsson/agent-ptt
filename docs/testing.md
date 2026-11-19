@@ -11,6 +11,7 @@ uv run ruff format --check .             # format check (CI); drop --check to re
 python3 scripts/validate_plugins.py      # plugin manifests and the marketplace registry
 node --test tests/workspace-ui.test.mjs tests/workspace-speech.test.mjs   # browser-side workspace JS
 node --test tests/datedivider.test.mjs   # transcript day dividers (both web UIs)
+node --test tests/usage.test.mjs         # token usage ticker, chips, staleness
 node --test tests/board.test.mjs         # Board (work items kanban) logic
 ```
 

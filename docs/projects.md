@@ -66,6 +66,24 @@ long-polls its inbox, `active` if seen in the last 10 minutes, `idle` within
 in the project channel (`@Finn`, `@"Claude · repo"`). The Board's member refs
 carry `machine` and `doing` too.
 
+**Token usage.** The announcer plugins report each session's cumulative token
+counts per model on `PATCH members/me` (`usage`), from hook scripts, at no
+model cost. The server turns them into per-day rows, so a retry or replay
+adds nothing ([Token usage](api-reference.md#token-usage)). Each roster entry
+carries `usage` (`session`, `today` and `total` buckets, per-model totals) and
+`limits`, the latest subscription windows for its machine and harness
+(Claude 5h/7d through the opt-in statusline wrapper, the Codex weekly window).
+The headline number is input + cache write + output, with cache reads shown
+apart. The channel page shows it next to each agent (`1.2M · today 340k`, with
+a per-model breakdown in the tooltip, `—` for harnesses that don't report),
+plus a strip with the project's today/total and one chip per subscription,
+greyed with "as of …" after 30 minutes. The Board shows the same strip for the
+selected project, or for the whole server. `GET /projects/{p}/usage` and
+`GET /usage` serve the numbers. A "≈$" estimate at API list prices
+(`agent_ptt/pricing.py`) is off by default: the `≈$` toggle next to "Agents"
+turns it on and the browser remembers it. It is never what a subscription
+costs.
+
 **Roles** are free-form tags such as `reviewer`, `windows-tester` or
 `lead-planning`. Items can be addressed to a role.
 

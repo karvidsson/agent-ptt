@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from agent_ptt import projects as pj
+from agent_ptt import usage as usage_mod
 from agent_ptt.auth import require_api_key
 from agent_ptt.db import SessionLocal, get_db
 from agent_ptt.models import (
@@ -77,9 +78,20 @@ def _member_out(member: ProjectMemberDB) -> MemberOut:
     )
 
 
-def _public_member(member: ProjectMemberDB, now: datetime | None = None) -> dict:
-    """The roster entry: presence and the mention text; never the member_key."""
+def _public_member(
+    member: ProjectMemberDB,
+    now: datetime | None = None,
+    usage: dict | None = None,
+    db: Session | None = None,
+) -> dict:
+    """The roster entry: presence, the mention text and usage; never the member_key.
+
+    ``usage`` is this member's ``usage.member_summaries`` entry; with ``db`` the
+    subscription windows for its (machine, harness) are added as ``limits``.
+    """
     now = now or pj.now_utc()
+    harness = (usage or {}).get("harness") or member.harness
+    limits = usage_mod.limits_for(db, member.machine, harness) if db is not None else None
     return ProjectMemberOut(
         **_member_out(member).model_dump(),
         last_seen=pj.as_utc(member.last_seen),
@@ -90,7 +102,28 @@ def _public_member(member: ProjectMemberDB, now: datetime | None = None) -> dict
         plugin_version=member.plugin_version,
         presence=pj.presence(member, now),
         mention=pj.mention_text(member.handle),
+        usage=_roster_usage(usage),
+        limits=limits,
     ).model_dump(mode="json")
+
+
+def _roster_usage(summary: dict | None) -> dict | None:
+    """Session/today/total buckets plus per-model totals (for the tooltip)."""
+    if not summary:
+        return None
+    return {
+        "session": summary["session"],
+        "today": summary["today"],
+        "total": summary["total"],
+        "by_model": {model: entry["total"] for model, entry in summary["by_model"].items()},
+        "harness": summary["harness"],
+        "updated_at": summary["updated_at"],
+    }
+
+
+def _member_entry(db: Session, member: ProjectMemberDB, estimate: bool = False) -> dict:
+    summary = usage_mod.member_summaries(db, [member], estimate=estimate).get(member.member_id)
+    return _public_member(member, usage=summary, db=db)
 
 
 def _start_channel_worker(channel_id: str) -> None:
@@ -123,7 +156,7 @@ async def join_project(req: ProjectJoinRequest, db: Session = Depends(get_db)):
         member=_member_out(result.member),
         member_key=result.member.member_key,
     ).model_dump(mode="json")
-    body["member"] = _public_member(result.member)
+    body["member"] = _member_entry(db, result.member)
     body["resumed"] = result.resumed
     return body
 
@@ -146,19 +179,52 @@ async def list_projects(db: Session = Depends(get_db)):
 
 
 @router.get("/projects/{project_id}")
-async def project_detail(project_id: str, db: Session = Depends(get_db)):
-    """The project, its members (with presence) and active resource claims."""
+async def project_detail(
+    project_id: str,
+    estimate: bool = Query(default=False, description="Add list-price est_usd to usage"),
+    db: Session = Depends(get_db),
+):
+    """The project, its members (with presence and usage) and active resource claims."""
     await pj.expire_and_publish(db)
     project = db.get(ProjectDB, project_id)
     if project is None:
         raise HTTPException(404, "Project not found")
     now = pj.now_utc()
-    members = [_public_member(member, now) for member in pj.project_members(db, project_id)]
+    roster = pj.project_members(db, project_id)
+    summaries = usage_mod.member_summaries(db, roster, now, estimate=estimate)
+    members = [
+        _public_member(member, now, summaries.get(member.member_id), db) for member in roster
+    ]
     return {
         **_project_out(project),
         "members": members,
         "resource_claims": pj.serialize_items(db, pj.active_resource_claims(db, project_id)),
     }
+
+
+@router.get("/projects/{project_id}/usage")
+async def project_usage(
+    project_id: str,
+    estimate: bool = Query(default=False, description="Add list-price est_usd (an estimate)"),
+    db: Session = Depends(get_db),
+):
+    """Token usage per member (session, today, total, per model) and project totals,
+    plus the subscription windows of the members' (machine, harness) pairs."""
+    project = db.get(ProjectDB, project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return usage_mod.project_usage(
+        db, project, pj.project_members(db, project_id), estimate=estimate
+    )
+
+
+@router.get("/usage")
+async def server_usage(
+    estimate: bool = Query(default=False, description="Add list-price est_usd (an estimate)"),
+    db: Session = Depends(get_db),
+):
+    """Server-wide token totals per project and per harness, plus every account's windows."""
+    return usage_mod.server_usage(db, estimate=estimate)
 
 
 @router.patch("/projects/{project_id}/members/me")
@@ -168,7 +234,8 @@ async def update_me(
     x_member_key: str | None = Header(default=None, alias="X-Member-Key"),
     db: Session = Depends(get_db),
 ):
-    """Update your own presence (``doing``, ``machine``) or ``mode`` / ``roles``.
+    """Update your own presence (``doing``, ``machine``), ``mode`` / ``roles``, or
+    report token ``usage`` (cumulative per harness session; replays add nothing).
 
     ``doing: ""`` clears it. Counts as seen. Returns your public roster entry.
     """
@@ -187,7 +254,7 @@ async def update_me(
     except pj.ProjectError as exc:
         return _error(exc)
     await pj.publish(db, db.get(ProjectDB, project_id), effects)
-    return _public_member(member)
+    return _member_entry(db, member)
 
 
 @router.post("/projects/{project_id}/items", status_code=201)

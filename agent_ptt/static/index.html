@@ -326,6 +326,14 @@
   .agent .h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent .sub { font-size: 10px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent .mic { color: var(--accent); width: 13px; height: 13px; }
+  .agent .usage-tick { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+  .agent .usage-tick.none { color: var(--dim); }
+  .usage-strip { display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 0 16px 8px; font-size: 10px; color: var(--muted); }
+  .usage-strip .usage-total { width: 100%; cursor: help; }
+  .usage-chip { padding: 1px 6px; border: 1px solid var(--border-2); border-radius: 3px; color: var(--text); cursor: help; }
+  .usage-chip.stale { color: var(--dim); border-color: var(--border); }
+  .sec-head .usage-est { margin-left: 4px; }
+  .sec-head .usage-est[aria-pressed="true"] { color: var(--accent); }
   .listener { display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px; }
   .listener svg { color: var(--dim); width: 14px; height: 14px; }
   .listener .tag { margin-left: auto; font-size: 10px; color: var(--dim); }
@@ -497,7 +505,8 @@ ___( o)&gt;
     </main>
 
     <aside class="right" id="agentRoster">
-      <div class="sec-head">Agents <span class="n" id="agentCount">0</span></div>
+      <div class="sec-head">Agents <span class="n" id="agentCount">0</span><button class="link-btn usage-est hidden" id="usageEstBtn" aria-pressed="false" title="Show a ≈$ estimate at API list prices (not what a subscription costs)">≈$</button></div>
+      <div class="usage-strip hidden" id="usageStrip" aria-label="Project token usage"></div>
       <div class="agents" id="agents"></div>
       <div class="sec-head">Listeners</div>
       <div class="listeners" id="listeners"></div>
@@ -543,6 +552,7 @@ ___( o)&gt;
   </div>
 
 <script src="datedivider.js"></script>
+<script src="usage.js"></script>
 <script>
 (() => {
   "use strict";
@@ -963,6 +973,7 @@ ___( o)&gt;
   async function poll() {
     const id = state.channelId;
     if (!id) return;
+    refreshUsage(id);
     await Promise.all([pollHistory(id), refreshParticipants(id, true)]);
   }
   async function pollHistory(id = state.channelId) {
@@ -1170,7 +1181,59 @@ ___( o)&gt;
   window.addEventListener("resize", updateRosterToggle);
 
   // ---- Right column -------------------------------------------------------
+  // ---- Token usage (project channels only; GET /projects/{p}/usage) ------
+  const Usage = globalThis.AgentPttUsage;
+  const USAGE_EVERY_MS = 10000;
+  const usageState = { projects: null, projectsAt: 0, channelId: null, payload: null, members: new Map(), at: 0, busy: false, estimate: Usage.estimateOn() };
+  async function projectForChannel(id) {
+    if (!usageState.projects || Date.now() - usageState.projectsAt > 60000) {
+      const r = await api(`${httpBase}/projects`);
+      usageState.projects = r.ok ? (await r.json()).projects || [] : [];
+      usageState.projectsAt = Date.now();
+    }
+    return usageState.projects.find((p) => p.channel_id === id) || null;
+  }
+  async function refreshUsage(id = state.channelId, force = false) {
+    if (!id || usageState.busy) return;
+    if (!force && usageState.channelId === id && Date.now() - usageState.at < USAGE_EVERY_MS) return;
+    usageState.busy = true;
+    try {
+      const project = await projectForChannel(id);
+      let payload = null;
+      if (project) {
+        const r = await api(`${httpBase}/projects/${encodeURIComponent(project.project_id)}/usage${usageState.estimate ? "?estimate=1" : ""}`);
+        if (r.ok) payload = await r.json();
+      }
+      if (id !== state.channelId) return;
+      usageState.channelId = id;
+      usageState.payload = payload;
+      usageState.members = Usage.byHandle(payload);
+      usageState.at = Date.now();
+      renderAgents();
+    } catch { /* keep the last numbers */ } finally { usageState.busy = false; }
+  }
+  function usageTick(p) {
+    if (!usageState.payload || usageState.channelId !== state.channelId) return "";
+    const m = usageState.members.get(String(p.handle).toLowerCase());
+    if (!m) return "";
+    const opts = { estimate: usageState.estimate };
+    return `<div class="usage-tick${m.usage ? "" : " none"}" title="${esc(Usage.tickerTitle(m.usage, m.harness, opts))}">${esc(Usage.tickerText(m.usage, opts))}</div>`;
+  }
+  function renderUsageStrip() {
+    const payload = usageState.channelId === state.channelId ? usageState.payload : null;
+    $("usageStrip").classList.toggle("hidden", !payload);
+    $("usageEstBtn").classList.toggle("hidden", !payload);
+    $("usageEstBtn").setAttribute("aria-pressed", String(usageState.estimate));
+    $("usageStrip").innerHTML = payload ? Usage.stripHtml(payload, { estimate: usageState.estimate }) : "";
+  }
+  $("usageEstBtn").onclick = () => {
+    usageState.estimate = !usageState.estimate;
+    Usage.setEstimate(usageState.estimate);
+    refreshUsage(state.channelId, true);
+  };
+
   function renderAgents() {
+    renderUsageStrip();
     const wrap = $("agents");
     const people = [...new Map(state.participants.map((p) => [p.handle, p])).values()];
     $("agentCount").textContent = people.length;
@@ -1194,7 +1257,7 @@ ___( o)&gt;
       el.innerHTML =
         `<div class="avatar" style="background:var(--panel-2);color:${nickColor(p.handle)}">${esc(initials(p.handle))}</div>` +
         `<div class="meta"><button class="h agent-name" aria-haspopup="dialog">${esc(p.handle)}</button>` +
-        `${bits.length ? `<div class="sub${idle ? ` ${idle}` : ""}">${esc(bits.join(" · "))}</div>` : ""}</div>` +
+        `${bits.length ? `<div class="sub${idle ? ` ${idle}` : ""}">${esc(bits.join(" · "))}</div>` : ""}${usageTick(p)}</div>` +
         (talking ? icon("mic").replace('class="i"', 'class="i mic"') : "");
       el.querySelector(".agent-name").onclick = (event) => openAgentDetails(p, event.currentTarget);
       const kick = document.createElement("button");

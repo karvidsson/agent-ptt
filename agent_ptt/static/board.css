@@ -183,3 +183,10 @@ a.nav-link:hover { color: var(--accent); }
   .panel { position: fixed; inset: 44px 0 0 auto; width: min(420px, 100vw); z-index: 5; }
   .filters .readonly { display: none; }
 }
+
+/* ---- Token usage strip (usage.js) ------------------------------------------ */
+.usage-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 16px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.usage-strip .usage-scope { color: var(--dim); }
+.usage-strip .usage-total { cursor: help; }
+.usage-chip { padding: 1px 6px; border: 1px solid var(--border-2); border-radius: 3px; color: var(--text); cursor: help; }
+.usage-chip.stale { color: var(--dim); border-color: var(--border); }

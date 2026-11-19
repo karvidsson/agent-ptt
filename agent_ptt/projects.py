@@ -179,6 +179,9 @@ def listening(member_id: str, now: datetime | None = None) -> bool:
 
 
 def reset_runtime_state() -> None:
+    from agent_ptt import usage
+
+    usage.reset_runtime_state()
     """Forget in-memory waiters (tests)."""
     _member_events.clear()
     _active_waits.clear()
@@ -452,6 +455,10 @@ def update_member(db: Session, member: ProjectMemberDB, patch: MemberPatch) -> E
         member.roles = list(patch.roles)
         db.flush()
         _deliver_open_items_to(db, member, effects)
+    if patch.usage is not None:
+        from agent_ptt import usage
+
+        usage.apply_report(db, member, patch.usage, now)
     member.last_seen = now
     handles.touch(member.handle)
     db.commit()
