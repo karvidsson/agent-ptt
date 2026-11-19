@@ -400,8 +400,10 @@ class Waiter:
     both polls send ``wake_only=1``, and notes, claims and FYIs never start a wake.
     The first waking entry opens a batch window (``AGENT_PTT_WAKE_BATCH_SECONDS``,
     default 4): whatever else arrives meanwhile, plus pending FYIs, is printed in
-    one burst at its end (a Monitor turns lines within 200 ms into one turn) and
-    only then acknowledged.
+    one burst at its end (a Monitor turns lines within 200 ms into one turn; a
+    background ``wait --first`` exits with it) and only then acknowledged. Nothing
+    else goes to stdout or stderr while it waits: a background command's stderr is
+    flagged to the agent, and any stdout line is a Monitor turn.
     """
 
     def __init__(
@@ -430,6 +432,7 @@ class Waiter:
         self.stopped: str | None = None  # why a poll loop gave up: the whole wait ends
         self.ended = False  # the session ended (no restart advice)
         self.trouble_after = TROUBLE_SECONDS  # failing this long: say so once, keep trying
+        self.notes: list[str] = []  # informational lines that ride along with a delivery
 
     def wake_only(self) -> str:
         return "&wake_only=1" if self.session.channel().get("fyi_supported") else ""
@@ -474,7 +477,9 @@ class Waiter:
                 if not self._known(item["item_id"]):
                     entries.append((link.item_line(item), "item", item["item_id"]))
             if entries:
-                self.out.write("".join(line + "\n" for line, _, _ in entries))
+                notes, self.notes = self.notes, []
+                lines = notes + [line for line, _, _ in entries]
+                self.out.write("".join(line + "\n" for line in lines))
                 self.out.flush()
                 if self.first and self.stop_event:
                     self.stop_event.set()  # the exit is the wake (an Antigravity background task)
@@ -552,7 +557,7 @@ class Waiter:
         return len(fresh)
 
     def say(self, line: str) -> None:
-        """One stdout line (a Monitor event), outside the batched delivery."""
+        """One stdout line outside the batched delivery (a Monitor event): trouble only."""
         with self.lock:
             self.out.write(line + "\n")
             self.out.flush()
@@ -695,6 +700,21 @@ def _wait_lock(session: Session, path: Path | None = None) -> Path | None:
     return None
 
 
+LOCK_RETRY = 5.0
+
+
+def _await_lock(session: Session, sleep=time.sleep) -> Path | None:
+    """Block until this session's wait lock is free and take it; None if the session ends."""
+    while True:
+        lock = _wait_lock(session)
+        if lock is not None:
+            return lock
+        with contextlib.suppress(Exception):
+            if session.ended():
+                return None
+        sleep(LOCK_RETRY)
+
+
 def cmd_wait(session: Session, args) -> None:
     if args.once:
         waiter = Waiter(session, batch=0)
@@ -713,26 +733,34 @@ def cmd_wait(session: Session, args) -> None:
         print(waiter.stop_line(), flush=True)
         return
     lock = _wait_lock(session)
+    if lock is None and waiter.first:
+        # Held by another wait: most likely a Monitor-era `ptt wait` of this session
+        # (it expires within 30 min). Take over quietly when it ends: exiting now
+        # would wake the agent for nothing.
+        lock = _await_lock(session)
+        if lock is None:
+            waiter.give_up(f"session {session.session_id} ended", threading.Event(), ended=True)
+            print(waiter.stop_line(), flush=True)
+            return
     if lock is None:
         print("[ptt] already waiting for this session in another process", flush=True)
         return
     waiter.heartbeat = lambda: os.utime(lock)
-    # A Monitor that expires ends us with SIGTERM: exit through the finally below,
-    # so the lock is gone and a re-armed Monitor can wait straight away.
+    # A Monitor that expires ends us with SIGTERM (and the user may stop a background
+    # task): exit through the finally below, so the lock is gone and a new wait can
+    # start straight away.
     for name in ("SIGTERM", "SIGHUP"):
         if hasattr(signal, name):
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(getattr(signal, name), _exit_on_signal)
-    me = session.me()
-    # stderr: a Monitor turns each stdout line into a turn; this one carries nothing to act on.
-    version = link.plugin_version()
-    note = f" (plugin {version})" if version else ""
-    print(f"[ptt] waiting for mentions and work items as {me}{note}", file=sys.stderr, flush=True)
+    # Nothing on stderr (a background command's stderr is flagged to the agent as a
+    # problem) and nothing extra on stdout (a Monitor line or a background exit is a
+    # turn): a stale-plugin warning rides along with the first delivery instead.
     with contextlib.suppress(Exception):
         people = link.fetch_people(session.base, session.member or {}, None)
-        stale = link.stale_plugin_line(version, people)
+        stale = link.stale_plugin_line(link.plugin_version(), people)
         if stale:
-            print(f"[ptt] {stale}", file=sys.stderr, flush=True)
+            waiter.notes.append(f"[ptt] {stale}")
     try:
         waiter.run()
     except (KeyboardInterrupt, SystemExit):
@@ -1207,10 +1235,10 @@ def parser() -> argparse.ArgumentParser:
     say.add_argument("--fyi", action="store_true", help="informational: mentions wake no one")
     sub.add_parser("who", help="who is in the project and channel")
     sub.add_parser("inbox", help="pending mentions and work items")
-    wait = sub.add_parser("wait", help="print one line per new mention/work item (Monitor)")
+    wait = sub.add_parser("wait", help="print one line per new mention/work item")
     wait.add_argument("--once", action="store_true", help="poll once and exit")
     wait.add_argument(
-        "--first", action="store_true", help="exit after the first delivery (a background task)"
+        "--first", action="store_true", help="exit after the first delivery (a background command)"
     )
     tell = sub.add_parser("tell", help="send a work item")
     tell.add_argument("to", help='Handle, @Handle, @"Two Words", role:<role> or project')

@@ -57,8 +57,8 @@ PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MODES = ("auto", "hooked", "standalone")
 
 WAKE_NOTE = (
-    "Never blocks: waking stays `ptt wait` running in the background (Claude Code: the"
-    " Monitor tool; Antigravity and Cursor: a background command). A standalone MCP session"
+    "Never blocks: waking stays `ptt wait --first` running as a background command"
+    " (Claude Code: Bash with run_in_background, not the Monitor tool). A standalone MCP session"
     " has no hooks and nothing wakes it: call inbox between steps."
 )
 FYI_NOTE = (

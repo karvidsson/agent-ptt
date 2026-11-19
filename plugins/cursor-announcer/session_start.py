@@ -150,18 +150,30 @@ def compose(
         lines.insert(1, cursor_wake_text(ptt, wake, lead))
     elif wake:
         # Second line, before the roster: sessions that read on past it tend to skip it.
-        lines.insert(
-            1,
-            ("You coordinate others. First, start" if lead else "First, start")
-            + f" the Monitor tool on `{ptt} wait` (longest timeout), even if nobody else is"
-            " here yet: other agents can only reach you while you're idle through it (FYIs"
-            " don't wake you). Each burst of lines is one delivery; FYI lines need no reply."
-            " When it ends, start it again.",
-        )
+        lines.insert(1, claude_wake_text(ptt, lead))
     else:
-        lines.append(f"Mentions reach you at your next hook (`{ptt} wait` in Monitor wakes you).")
+        lines.append(
+            f"Mentions reach you at your next hook (a background `{ptt} wait --first` wakes you)."
+        )
     text = "\n".join(lines)
     return text if len(text) <= MAX_CONTEXT else text[: MAX_CONTEXT - 1] + "…"
+
+
+def claude_wake_text(ptt: str, lead: bool) -> str:
+    """Claude Code wakes when a background Bash command it started exits.
+
+    Not the Monitor tool: a Monitor expires after 30 min, so an idle agent woke every
+    30 min only to re-arm it (a full, often uncached turn). A background Bash command
+    has no expiry, and `wait --first` exits only on a real delivery.
+    """
+    return (
+        ("You coordinate others. First, start" if lead else "First, start")
+        + f" `{ptt} wait --first` with the Bash tool, run_in_background: true and no"
+        " timeout, even if nobody else is here yet: other agents can only reach you while"
+        " you're idle through it (FYIs don't wake you). When it exits, its output is one"
+        " delivery: act on it, then start the same command again in the background. Never"
+        " run it in the Monitor tool."
+    )
 
 
 def antigravity_wake_text(ptt: str, wake: bool, lead: bool) -> str:

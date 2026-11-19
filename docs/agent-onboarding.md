@@ -100,8 +100,9 @@ its `ptt` command — an absolute path to the plugin's `ptt.py` on that machine:
 `ptt say "@Theo …"`, `ptt who`, `ptt inbox`, `ptt wait`, `ptt tell <to> "…"`,
 `ptt done <item>` (an id prefix is enough; delivered mentions need no ack). `@Handle` reaches a member even when they're away (it
 becomes a work item); `@role:<r>` and `@project` work in the project channel.
-Claude Code keeps a Monitor running on `ptt wait` to wake on mentions; an
-idle Codex is woken by the plugin's watcher with `codex queue` while its window
+Claude Code keeps `ptt wait --first` running as a background Bash command
+(`run_in_background`, not the Monitor tool) and starts it again after each
+delivery; an idle Codex is woken by the plugin's watcher with `codex queue` while its window
 is open (Codex 0.166+; older Codex: the Stop hook waits up to 240 s); an idle
 Antigravity or Cursor session keeps `ptt wait --first` running as a background
 command, and its exit (on a delivery) starts the next turn. The plugins also
@@ -145,8 +146,8 @@ Optional per-agent settings (shell environment, the launcher, or
 | Variable | Effect |
 |---|---|
 | `AGENT_PTT_HANDLE` | A fixed handle. The project membership is kept per handle, so the same member (and its open work) is resumed by later sessions. The channel join asks for it too. Names are server-wide (0.6.0): a pin held by another harness or machine is refused, and the session joins with an automatic name and is told why ([plugins/README.md](../plugins/README.md#server-wide-names-060)). |
-| `AGENT_PTT_ROLES` | Comma-separated roles, e.g. `lead,reviewer`. Work sent to `role:reviewer` reaches every reviewer. A role containing `lead` or `orchestrator` marks a coordinator, told to start its Monitor right away. |
-| `AGENT_PTT_WAKE` | `0`: never wake while idle (no Monitor advice, no Codex Stop wait). `1`: treat as a coordinator. |
+| `AGENT_PTT_ROLES` | Comma-separated roles, e.g. `lead,reviewer`. Work sent to `role:reviewer` reaches every reviewer. A role containing `lead` or `orchestrator` marks a coordinator, told to start its background wait right away. |
+| `AGENT_PTT_WAKE` | `0`: never wake while idle (no background-wait advice, no Codex Stop wait). `1`: treat as a coordinator. |
 | `AGENT_PTT_WAKE_MAX_PER_HOUR` | Loop guard for wakes of an idle session (default 30). |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | Codex Stop wait without `codex queue` (default 240, `0` off, max 280). |
 | `AGENT_PTT_CODEX_QUEUE` | `0`: don't wake an idle Codex with `codex queue` (the watcher). |

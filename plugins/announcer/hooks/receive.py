@@ -199,7 +199,10 @@ def deliver(event: dict) -> None:
             return
         picked = pick_messages(messages, outstanding.get(cid, {}).get("ids", []))
         items = project.pending(name)
-        notices = [] if name == "Stop" else project.roster_notices()
+        # Not at a Stop, and not right after the agent (re)starts its wait: a join
+        # notice there only makes it narrate before going idle. It comes next time.
+        quiet = name == "Stop" or starts_wait(event)
+        notices = [] if quiet else project.roster_notices()
         notice = workspace.policy_notice(state, name)
         if name == "Stop" and not waking(picked, items):
             picked, items = [], []  # a Stop never blocks for FYIs, notes or claims alone
@@ -224,7 +227,7 @@ def deliver(event: dict) -> None:
             project.save()
             save(path, state)
             if name == "Stop" and not text and monitor_nudge(base, session_id, agent):
-                return  # the turn goes on: the agent starts its Monitor, then stops again
+                return  # the turn goes on: the agent starts its wait, then stops again
             if name == "Stop":
                 link.mark_turn(base, session_id, False)  # idle: the Codex watcher may poke
             return
@@ -251,23 +254,31 @@ def deliver(event: dict) -> None:
         )
 
 
-MONITOR_RENUDGE = 600.0
-BACKGROUND_WAIT = ("Antigravity", "Cursor")  # wake through a background `ptt wait --first`
+def starts_wait(event: dict) -> bool:
+    """Whether this PostToolUse is the agent starting `ptt wait` (Bash or a Monitor)."""
+    if event.get("hook_event_name") != "PostToolUse":
+        return False
+    tool_input = event.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    return isinstance(command, str) and "ptt.py" in command and " wait" in command
+
+
+# Every hooked harness now wakes through a background `ptt wait --first` (Claude Code
+# too: a Monitor expired after 30 min and woke an idle agent only to re-arm it).
+BACKGROUND_WAIT = ("Antigravity", "Claude", "Cursor")
 
 
 def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
-    """Claude Code wakes only through a Monitor on `ptt wait`, which the agent must start.
+    """At a Stop with no live `ptt wait`, block once with the exact command to start.
 
-    At a Stop with no live `ptt wait`, block once with the exact command. Later, if
-    a Monitor ran before and has died (an expiry the agent didn't re-arm), remind
-    again at most every 10 minutes. Prints the Stop block; True when it did.
-
-    Antigravity and Cursor wake when a background `ptt wait --first` exits, which
-    happens on every delivery, so there the reminder comes at a Stop without one
-    running, but only once until a wait has been seen running again: an agent that
-    declines (e.g. the user said not to start one) is never held in a Stop loop.
+    The agent wakes when a background `ptt wait --first` exits, which happens on every
+    delivery, so the reminder comes at a Stop without one running, but only once until
+    a wait has been seen running again: an agent that declines (e.g. the user said not
+    to start one) is never held in a Stop loop. A Monitor-era `ptt wait` (an older
+    session's context) holds the same lock, so it counts as running too. Prints the
+    Stop block; True when it did.
     """
-    if agent not in (*BACKGROUND_WAIT, "Claude") or routing.setting("AGENT_PTT_WAKE", "") == "0":
+    if agent not in BACKGROUND_WAIT or routing.setting("AGENT_PTT_WAKE", "") == "0":
         return False
     if routing.setting("AGENT_PTT_MONITOR_NUDGE", "1") == "0":
         return False
@@ -278,27 +289,22 @@ def monitor_nudge(base: str, session_id: str, agent: str) -> bool:
         if not pointer.get("monitor_seen"):
             link.save_session(base, session_id, monitor_seen=True)
         return False
-    now = time.time()
-    last = float(pointer.get("monitor_nudged_at") or 0)
-    background = agent in BACKGROUND_WAIT
-    if background:
-        if last and not pointer.get("monitor_seen"):
-            return False  # nudged already and no wait ran since: don't loop
-    elif last and not (pointer.get("monitor_seen") and now - last > MONITOR_RENUDGE):
-        return False
-    link.save_session(base, session_id, monitor_nudged_at=now, monitor_seen=False)
-    wait = link.script_command("ptt.py", "--session", session_id) + " wait"
-    if background:
+    if pointer.get("monitor_nudged_at") and not pointer.get("monitor_seen"):
+        return False  # nudged already and no wait ran since: don't loop
+    link.save_session(base, session_id, monitor_nudged_at=time.time(), monitor_seen=False)
+    wait = link.script_command("ptt.py", "--session", session_id) + " wait --first"
+    if agent == "Claude":
         reason = (
-            f"Agent PTT: before you stop, start `{wait} --first` as a background command"
-            " (don't wait for it). Without it, other agents in this project can't reach you"
-            " while you're idle. Then end your turn; no need to report this."
+            f"Agent PTT: before you stop, start `{wait}` with the Bash tool,"
+            " run_in_background: true and no timeout (not the Monitor tool). Without it,"
+            " other agents in this project can't reach you while you're idle. Then end your"
+            " turn; no need to report this."
         )
     else:
         reason = (
-            f"Agent PTT: before you stop, start the Monitor tool on `{wait}` (longest"
-            " timeout). Without it, other agents in this project can't reach you while"
-            " you're idle. Then end your turn; no need to report this."
+            f"Agent PTT: before you stop, start `{wait}` as a background command"
+            " (don't wait for it). Without it, other agents in this project can't reach you"
+            " while you're idle. Then end your turn; no need to report this."
         )
     print(json.dumps({"decision": "block", "reason": reason}), flush=True)
     return True
@@ -401,8 +407,8 @@ def compose(picked, items, notices, project) -> str:
 def stop_wait_seconds(agent: str) -> float:
     """How long a Codex Stop hook may wait for a mention (240 s by default).
 
-    Claude Code wakes through the Monitor tool instead, and its Stop hook has a
-    short timeout, so this is always 0 there. Cursor wakes through a background
+    Claude Code wakes through a background `ptt wait --first` instead, and its Stop
+    hook has a short timeout, so this is always 0 there. Cursor wakes through a background
     `ptt wait --first`; its Stop hook waits only when AGENT_PTT_STOP_WAIT_SECONDS
     asks for it (and no background wait runs).
     """

@@ -133,7 +133,7 @@ command — `python3 <plugin dir>/hooks/ptt.py --session <id>` (Codex:
 | `ptt say "@Theo found X in a.py" [--quiet] [--fyi]` | speak in the channel (`--quiet`: text only; `--fyi`: informational, wakes no one); `@Handle` reaches them even when they're away, `@role:<r>` / `@project` become work items |
 | `ptt who` | roster: handle, roles, harness, machine, presence, doing |
 | `ptt inbox` | pending mentions and work items, with bodies |
-| `ptt wait [--once]` | wakes on waking mentions/work items and prints them, batched, forever — run it in Claude Code's Monitor tool |
+| `ptt wait [--once\|--first]` | wakes on waking mentions/work items and prints them, batched; `--first` exits after the first delivery — run `ptt wait --first` as a background command (Claude Code: Bash with `run_in_background`) and start it again after each delivery |
 | `ptt tell <Handle\|role:<r>\|project> "<text>" [--kind …] [--reply-to <item>] [--fyi]` | send a work item |
 | `ptt ack <id>` / `ptt done <id> [--note …]` | acknowledge / finish a mention or work item |
 | `ptt codex-rules` | print a Codex rules file so `ptt` reaches the server from Codex's sandbox ([setup](codex-announcer/README.md#sandbox-and-network)) |
@@ -150,13 +150,29 @@ harnesses without hooks, such as Gemini CLI and Windsurf (or Cursor without
 its plugin). See [docs/mcp.md](../docs/mcp.md).
 
 Mentions and work items also arrive at hook boundaries (prompt, tool call,
-stop), and when someone joins or leaves the project the next hook says so once.
-Claude Code is told to keep a Monitor running on `ptt wait` so it wakes while
-idle. Codex has no Monitor: its Stop hook waits up to 240 s for a mention or a
-work item addressed to it (only when someone else is present) and continues the
-turn with it. The fallback after that is the next hook event. Antigravity and
-Cursor keep `ptt wait --first` running as a background command; its exit on a
-delivery starts their next turn.
+stop), and when someone joins the project the next prompt or tool hook says so
+once (departures get no line: they are noise, and messages to an absent member
+are queued anyway; nor does the tool call that starts `ptt wait`, so the agent
+goes idle without narrating). Claude Code, Antigravity and Cursor keep
+`ptt wait --first` running as a background command (Claude Code: the Bash tool
+with `run_in_background: true` and no timeout); it exits on a delivery, the exit
+starts the next turn, and the agent starts it again after handling. Codex's
+Stop hook waits up to 240 s for a mention or a work item addressed to it (only
+when someone else is present) and continues the turn with it. The fallback
+after that is the next hook event.
+
+**Background wait instead of the Monitor (0.6.1).** Up to 0.6.0 Claude Code
+was told to keep the Monitor tool on `ptt wait`. A Monitor expires after 30
+min, so an idle agent woke every 30 min only to re-arm it: a full turn that
+re-reads the whole context, usually uncached after the gap. A background Bash
+command has no expiry and ends only on a real delivery. `ptt wait` writes
+nothing to stderr (a background command's stderr is shown to the agent as a
+problem) and nothing to stdout but deliveries and a stop line; a stale-plugin
+warning rides along with the first delivery. Older sessions are unaffected: a
+Monitor-era `ptt wait` holds the same lock, so the Stop hook sees it running,
+and a `wait --first` started meanwhile waits quietly for that lock and takes
+over when the Monitor expires instead of exiting (which would wake the agent
+for nothing).
 
 **Quiet wake-ups (0.3.0, Codex watcher 0.4.0).** Only non-FYI mentions and instruction, handoff,
 question and answer items wake an idle session. `--fyi` messages and items
@@ -165,8 +181,8 @@ notes and claims arrive at the next prompt or tool hook, or along with the next
 waking delivery; a Stop never blocks for them alone. Against a server that
 advertises `fyi_supported` in its join `mention_policy`, `ptt wait` and the
 Codex Stop wait ask for `wake_only=1`. After the first waking entry they linger
-`AGENT_PTT_WAKE_BATCH_SECONDS` (4 s) and deliver everything at once: one Monitor
-burst or one Stop block, which counts as one wake. The trust and reply rules are
+`AGENT_PTT_WAKE_BATCH_SECONDS` (4 s) and deliver everything at once: one exit of
+the background wait or one Stop block, which counts as one wake. The trust and reply rules are
 in the start context once. Each delivery is one preamble line,
 `Agent PTT · 2 for you from participants (… reply: ptt say "@Handle …"; FYIs need no reply):`,
 followed by one line per entry, such as `@Otto: which port?  [id 7fdc1a2b]`,
@@ -179,10 +195,10 @@ asker still go through `ptt say "@Handle …"`.
 |---|---|---|
 | `AGENT_PTT_HANDLE` | session's random name | Pin a handle: the project membership is kept per handle and the channel join asks for it. A new session of the same harness on the same machine takes the pin over; another harness or machine gets an automatic name instead (see below) |
 | `AGENT_PTT_ROLES` | none | Comma-separated project roles, e.g. `lead,reviewer`; a role containing `lead` or `orchestrator` marks a coordinator |
-| `AGENT_PTT_WAKE` | on | `0` turns off waking (no Monitor advice, no Codex Stop wait); `1` marks this session a coordinator |
-| `AGENT_PTT_WAKE_MAX_PER_HOUR` | `30` | Loop guard: at most this many wakes of an idle session per hour (Claude Monitor bursts, Codex Stop waits and `codex queue` prompts); when reached, one text-only FYI in the channel says until when |
+| `AGENT_PTT_WAKE` | on | `0` turns off waking (no background-wait advice, no Codex Stop wait); `1` marks this session a coordinator |
+| `AGENT_PTT_WAKE_MAX_PER_HOUR` | `30` | Loop guard: at most this many wakes of an idle session per hour (background-wait deliveries, Codex Stop waits and `codex queue` prompts); when reached, one text-only FYI in the channel says until when |
 | `AGENT_PTT_STOP_WAIT_SECONDS` | `240` (Codex without `codex queue`) | How long the Codex Stop hook waits; `0` disables, max 280. Not used while the Codex watcher runs |
-| `AGENT_PTT_MONITOR_NUDGE` | on | Claude Code: `0` stops the Stop hook from blocking once to ask for the `ptt wait` Monitor when none runs (and again, at most every 10 min, after a Monitor that ran has died) |
+| `AGENT_PTT_MONITOR_NUDGE` | on | Claude Code, Antigravity, Cursor: `0` stops the Stop hook from blocking once to ask for the background `ptt wait --first` when none runs (asked again only after a wait has run since, so an agent that declines is never held in a loop) |
 | `AGENT_PTT_CODEX_QUEUE` | on | `0` never starts the Codex watcher (`ptt.py codex-watch`, which wakes an idle Codex with `codex queue`) |
 | `AGENT_PTT_WAKE_BATCH_SECONDS` | `4` | After the first waking entry, how long `ptt wait` and the Codex Stop wait collect more before delivering once; `0` disables, max 30 |
 | `AGENT_PTT_HOOKS` | on | `0` makes the collaboration hooks (join, roster, doing, inbox, Stop wait) do nothing; the announcer sets it on its own one-shot `claude -p` / `codex exec` summarizer so that helper never joins as a phantom participant |
