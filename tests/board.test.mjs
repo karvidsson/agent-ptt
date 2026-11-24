@@ -29,7 +29,7 @@ const ids = (list) => Array.from(list, (i) => i.item_id);
 test('states map to the five columns', () => {
   const expect = {
     pending: 'open', delivered: 'open', acked: 'open', claimed: 'progress',
-    waiting: 'waiting', review: 'review', done: 'done', declined: 'done',
+    waiting: 'waiting', review: 'review', done: 'done', declined: 'done', expired: 'done',
   };
   for (const [s, col] of Object.entries(expect)) assert.equal(B.columnFor(s), col, s);
   assert.equal(B.columnFor('bogus'), null);
@@ -60,17 +60,38 @@ test('a waiting card finds its open question, newest first, ignoring answered on
   assert.deepEqual(ids(B.buildColumns(items, {}, NOW).waiting), ['w']);
 });
 
-test('done and declined cards drop off after 7 days; open ones never do', () => {
+test('final cards drop off after the done window (3 days); open ones never do', () => {
   const day = 24 * 60;
   const items = [
-    item({ id: 'recent', state: 'done', updated: 6 * day }),
-    item({ id: 'old', state: 'done', updated: 8 * day }),
-    item({ id: 'olddecl', state: 'declined', updated: 7 * day + 1 }),
+    item({ id: 'recent', state: 'done', updated: 2 * day }),
+    item({ id: 'recentexp', state: 'expired', updated: 2 * day + 5 }),
+    item({ id: 'old', state: 'done', updated: 4 * day }),
+    item({ id: 'olddecl', state: 'declined', updated: 3 * day + 1 }),
+    item({ id: 'oldexp', state: 'expired', updated: 9 * day }),
     item({ id: 'stale-open', state: 'pending', updated: 30 * day }),
   ];
   const cols = B.buildColumns(items, {}, NOW);
-  assert.deepEqual(ids(cols.done), ['recent']);
+  assert.deepEqual(ids(cols.done), ['recent', 'recentexp']);
   assert.deepEqual(ids(cols.open), ['stale-open']);
+  // The server's done_days wins; Older (filters.all) keeps everything.
+  assert.deepEqual(ids(B.buildColumns(items, {}, NOW, 5).done), ['recent', 'recentexp', 'olddecl', 'old']);
+  assert.deepEqual(ids(B.buildColumns(items, { all: true }, NOW).done), ['recent', 'recentexp', 'olddecl', 'old', 'oldexp']);
+  assert.equal(B.withinDoneWindow(items[4], NOW, null), true);
+});
+
+test('expired cards sit in Done with a grey expired tag', () => {
+  const cols = B.buildColumns([item({ id: 'x', state: 'expired', updated: 60 })], {}, NOW);
+  assert.deepEqual(ids(cols.done), ['x']);
+  assert.deepEqual(plain(B.stateTag('expired')), { cls: 'expired', text: 'expired' });
+  assert.deepEqual(plain(B.stateTag('declined')), { cls: 'declined', text: 'declined' });
+  assert.equal(B.stateTag('done'), null);
+  assert.equal(B.stateTag('pending'), null);
+  const it = item({ id: 'x', state: 'expired', last_event: { action: 'expired', by: null, at: iso(60) } });
+  assert.equal(B.lastUpdateText(it, NOW), 'expired · 1h ago');
+  it.last_event = { action: 'auto-done', by: rex, at: iso(1) };
+  assert.equal(B.lastUpdateText(it, NOW), 'Rex read · closed · 1m ago');
+  it.last_event = { action: 'closed', by: null, at: iso(1) };
+  assert.equal(B.lastUpdateText(it, NOW), 'closed · 1m ago');
 });
 
 test('project and agent filters (agent matches sender or assignee)', () => {
@@ -91,13 +112,48 @@ test('project and agent filters (agent matches sender or assignee)', () => {
 });
 
 test('URL filters parse and serialize round trip', () => {
-  assert.deepEqual(plain(B.parseFilters('')), { project: '', agent: '', demo: false });
+  assert.deepEqual(plain(B.parseFilters('')), { project: '', agent: '', all: false, demo: false });
   assert.equal(B.serializeFilters({ project: '', agent: '' }), '');
-  const f = { project: 'p 1/&x', agent: 'm-rex', demo: true };
+  const f = { project: 'p 1/&x', agent: 'm-rex', all: false, demo: true };
   const s = B.serializeFilters(f);
   assert.ok(s.startsWith('?project='));
   assert.deepEqual(plain(B.parseFilters(s)), f);
-  assert.deepEqual(plain(B.parseFilters('?agent=m-finn&other=1')), { project: '', agent: 'm-finn', demo: false });
+  assert.deepEqual(plain(B.parseFilters('?agent=m-finn&other=1')), { project: '', agent: 'm-finn', all: false, demo: false });
+});
+
+test('the Older toggle lives in the URL and asks the server for all items', () => {
+  assert.equal(B.serializeFilters({ project: 'p1', all: true }), '?project=p1&all=1');
+  assert.equal(B.parseFilters('?all=1').all, true);
+  assert.equal(B.parseFilters('?all=0').all, false);
+  assert.equal(B.pollUrl(null, false), '/work-items');
+  assert.equal(B.pollUrl(null, true), '/work-items?all=1');
+  assert.equal(B.pollUrl('2026-11-09T12:00:00Z', false), '/work-items?updated_after=2026-11-09T12%3A00%3A00Z');
+  assert.equal(B.pollUrl('2026-11-09T12:00:00Z', true), '/work-items?updated_after=2026-11-09T12%3A00%3A00Z&all=1');
+});
+
+test('select mode: what can be picked, toggling, pruning and grouping per project', () => {
+  const items = [
+    item({ id: 'a', project: 'p1' }),
+    item({ id: 'b', project: 'p2', state: 'claimed', assignee: rex }),
+    item({ id: 'c', project: 'p1', state: 'expired' }),
+    item({ id: 'd', project: 'p1', state: 'done' }),
+    item({ id: 'e', project: 'p1', state: 'declined' }),
+    item({ id: 'n', project: 'p1', kind: 'note' }),
+  ];
+  assert.deepEqual(items.filter(B.isSelectable).map((i) => i.item_id), ['a', 'b', 'c']);
+  let picked = new Set();
+  for (const id of ['c', 'b', 'a', 'd']) picked = B.toggleSelected(picked, id);
+  assert.deepEqual([...picked], ['c', 'b', 'a', 'd']);
+  const again = B.toggleSelected(picked, 'b');
+  assert.deepEqual([...again], ['c', 'a', 'd']);
+  assert.ok(picked.has('b'), 'toggle returns a new set');
+  assert.deepEqual(plain(B.selectionByProject(items, picked)), [
+    { project_id: 'p1', ids: ['c', 'a'] },
+    { project_id: 'p2', ids: ['b'] },
+  ]);
+  // Another agent finished 'a' and 'gone' vanished: both drop out of the picks.
+  const later = B.mergeItems(items, [{ ...items[0], state: 'done' }]);
+  assert.deepEqual([...B.pruneSelection(later, new Set(['a', 'b', 'gone']))], ['b']);
 });
 
 test('merging an update batch moves a card and keeps order stable', () => {
@@ -153,6 +209,7 @@ test('demo items fill every column and carry no secrets', () => {
   const demo = B.demoItems(NOW);
   const cols = B.buildColumns(demo, {}, NOW);
   for (const c of B.COLUMNS) assert.ok(cols[c.key].length > 0, c.key);
+  assert.ok(cols.done.some((i) => i.state === 'expired'), 'demo shows an expired card');
   const text = JSON.stringify(demo);
   assert.ok(!/key_id|member_key/.test(text));
   assert.equal(B.resourceClaims(demo, {}).length, 1);

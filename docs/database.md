@@ -286,7 +286,7 @@ Hosted mode never uses them.
 | `context` | JSON (nullable) | Handoff context, free-form keys allowed |
 | `reply_to` | TEXT (indexed, nullable) | Parent item |
 | `client_id` | TEXT (nullable) | Idempotency key; unique per `(from_member_id, client_id)` |
-| `state` | TEXT | `pending`, `delivered`, `acked`, `claimed`, `waiting`, `review`, `done`, `declined` |
+| `state` | TEXT | `pending`, `delivered`, `acked`, `claimed`, `waiting`, `review`, `done`, `declined`, `expired` |
 | `assignee_member_id` | TEXT (nullable) | Claim holder |
 | `lease_expires_at` | DATETIME (nullable) | When the claim lease runs out |
 | `notice_message_id` | TEXT (nullable) | The creation notice in `messages` |
@@ -310,7 +310,7 @@ Hosted mode never uses them.
 | `item_id` | TEXT (indexed) | Item |
 | `at` | DATETIME | When |
 | `by_member_id` | TEXT (nullable) | Who; null for the server (lease expiry) |
-| `action` | TEXT | `created`, `delivered`, `acked`, `claimed`, `released`, `waiting`, `review`, `resumed`, `answered`, `done`, `declined`, `lease_expired` |
+| `action` | TEXT | `created`, `delivered`, `acked`, `claimed`, `released`, `waiting`, `review`, `resumed`, `answered`, `done`, `declined`, `lease_expired`, `auto-done`, `expired`, `reopened`, `closed` |
 | `from_state`, `to_state` | TEXT (nullable) | The transition |
 | `note` | TEXT (nullable) | Optional note (e.g. from done/decline) |
 

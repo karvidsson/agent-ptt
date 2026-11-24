@@ -27,6 +27,7 @@ from agent_ptt.models import (
     ProjectMemberDB,
     ProjectMemberOut,
     ProjectOut,
+    WorkItemBulk,
     WorkItemCreate,
     WorkItemNote,
     WorkItemStateChange,
@@ -428,23 +429,53 @@ async def item_detail(project_id: str, item_id: str, db: Session = Depends(get_d
         return _error(exc)
 
 
+@router.post("/projects/{project_id}/work-items/bulk")
+async def bulk_items(project_id: str, req: WorkItemBulk, db: Session = Depends(get_db)):
+    """Admin (the Board's Select mode): close (``done``) or expire many items.
+
+    Needs only the shared API key, no member. Returns one result per id; done
+    and declined items are left alone. One channel notice per call.
+    """
+    project = db.get(ProjectDB, project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    results, effects = pj.bulk_set_state(db, project, req.ids, req.state)
+    await pj.publish(db, project, effects)
+    return {
+        "results": results,
+        "changed": sum(1 for r in results if r.get("changed")),
+        "state": req.state,
+    }
+
+
 @router.get("/work-items")
 async def work_items(
     updated_after: datetime | None = None,
     project_id: str | None = None,
     member_id: str | None = None,
-    include_done_days: int = Query(default=7, ge=0, le=365),
+    include_done_days: float | None = Query(
+        default=None, ge=0, le=365, description="Default AGENT_PTT_BOARD_DONE_DAYS (3)"
+    ),
+    all: bool = Query(default=False, description="Every final item too, however old"),
     db: Session = Depends(get_db),
 ):
-    """Items across projects for the Board; poll with ``updated_after=<server_time>``."""
+    """Items across projects for the Board; poll with ``updated_after=<server_time>``.
+
+    Final items (done, declined, expired) unchanged for ``include_done_days``
+    are left out unless ``all=1``.
+    """
     await pj.expire_and_publish(db)
     server_time = pj.now_utc()
     if updated_after is not None:
         if updated_after.tzinfo is None:
             updated_after = updated_after.replace(tzinfo=UTC)
         updated_after = updated_after.astimezone(UTC)
-    items = pj.board_items(db, updated_after, project_id, member_id, include_done_days)
+    done_days = (
+        None if all else (pj.board_done_days() if include_done_days is None else include_done_days)
+    )
+    items = pj.board_items(db, updated_after, project_id, member_id, done_days)
     return {
         "items": pj.serialize_items(db, items),
         "server_time": server_time.isoformat().replace("+00:00", "Z"),
+        "done_days": done_days,
     }

@@ -1,4 +1,5 @@
-// Agent PTT — Board: a read-only live kanban of project work items.
+// Agent PTT — Board: a live kanban of project work items. Read-only except
+// Select mode, which closes or expires cards through the admin bulk route.
 //
 // The pure logic (column mapping, filtering, URL filters, merging poll
 // batches, relative ages, demo data) sits at the top and is exported as
@@ -15,11 +16,11 @@
     { key: "progress", title: "In progress", states: ["claimed"] },
     { key: "waiting", title: "Waiting", states: ["waiting"] },
     { key: "review", title: "Review", states: ["review"] },
-    { key: "done", title: "Done", states: ["done", "declined"] },
+    { key: "done", title: "Done", states: ["done", "declined", "expired"] },
   ];
   const CARD_KINDS = new Set(["instruction", "handoff", "question"]);
-  const FINAL_STATES = new Set(["done", "declined"]);
-  const DONE_DAYS = 7;
+  const FINAL_STATES = new Set(["done", "declined", "expired"]);
+  const DONE_DAYS = 3; // The server's AGENT_PTT_BOARD_DONE_DAYS default; /work-items reports the real one.
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   function columnFor(state) {
@@ -41,11 +42,19 @@
     return Number.isNaN(t) ? 0 : t;
   }
 
-  // Done/declined cards drop off after 7 days (the server applies the same
-  // cutoff to /work-items; this keeps cards loaded earlier from lingering).
+  // Final cards (done, declined, expired) drop off after the server's
+  // done_days (3 by default; /work-items applies the same cutoff, this keeps
+  // cards loaded earlier from lingering). `days` null = keep them all (Older).
   function withinDoneWindow(item, now, days = DONE_DAYS) {
-    if (!FINAL_STATES.has(item.state)) return true;
+    if (!FINAL_STATES.has(item.state) || days === null) return true;
     return now - toMs(item.updated_at) <= days * DAY_MS;
+  }
+
+  // The grey/red tag a final card carries in the Done column, if any.
+  function stateTag(state) {
+    if (state === "expired") return { cls: "expired", text: "expired" };
+    if (state === "declined") return { cls: "declined", text: "declined" };
+    return null;
   }
 
   function matchesFilters(item, filters) {
@@ -67,11 +76,13 @@
 
   // Cards grouped into the five columns. Within a column, newest first
   // (Done: most recently finished first); ties keep the input order.
-  function buildColumns(items, filters, now) {
+  // `filters.all` (the Older toggle) keeps every final card.
+  function buildColumns(items, filters, now, doneDays = DONE_DAYS) {
     const out = {};
+    const days = filters && filters.all ? null : doneDays;
     for (const c of COLUMNS) out[c.key] = [];
     items.forEach((item, index) => {
-      if (!isCard(item) || !withinDoneWindow(item, now) || !matchesFilters(item, filters)) return;
+      if (!isCard(item) || !withinDoneWindow(item, now, days) || !matchesFilters(item, filters)) return;
       const key = columnFor(item.state);
       if (key) out[key].push({ item, index });
     });
@@ -112,6 +123,7 @@
     return {
       project: p.get("project") || "",
       agent: p.get("agent") || "",
+      all: p.get("all") === "1",
       demo: p.get("demo") === "1",
     };
   }
@@ -120,9 +132,54 @@
     const p = new URLSearchParams();
     if (filters.project) p.set("project", filters.project);
     if (filters.agent) p.set("agent", filters.agent);
+    if (filters.all) p.set("all", "1");
     if (filters.demo) p.set("demo", "1");
     const s = p.toString();
     return s ? "?" + s : "";
+  }
+
+  // The poll URL: everything once, then changes since the last server_time;
+  // `all` (Older) asks for final items of any age too.
+  function pollUrl(serverTime, all) {
+    const p = new URLSearchParams();
+    if (serverTime) p.set("updated_after", serverTime);
+    if (all) p.set("all", "1");
+    const s = p.toString();
+    return "/work-items" + (s ? "?" + s : "");
+  }
+
+  // ---- Select mode (bulk close / expire) ----
+
+  // Done and declined cards stay as they are; open, held and expired ones can
+  // be closed, and all but expired ones expired.
+  function isSelectable(item) {
+    return isCard(item) && item.state !== "done" && item.state !== "declined";
+  }
+
+  function toggleSelected(selected, id) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  }
+
+  // Drop picks that vanished or became unselectable (another agent finished them).
+  function pruneSelection(items, selected) {
+    const byId = new Map(items.map((i) => [i.item_id, i]));
+    return new Set([...selected].filter((id) => byId.has(id) && isSelectable(byId.get(id))));
+  }
+
+  // The bulk route is per project: one call per project, ids in pick order.
+  function selectionByProject(items, selected) {
+    const byId = new Map(items.map((i) => [i.item_id, i]));
+    const groups = new Map();
+    for (const id of selected) {
+      const it = byId.get(id);
+      if (!it || !isSelectable(it)) continue;
+      if (!groups.has(it.project_id)) groups.set(it.project_id, []);
+      groups.get(it.project_id).push(id);
+    }
+    return [...groups].map(([project_id, ids]) => ({ project_id, ids }));
   }
 
   // "just now", "42s", "3m", "5h", "2d", "6w". `shortAge` is the bare
@@ -158,6 +215,10 @@
     done: "finished",
     declined: "declined",
     lease_expired: "lease expired",
+    "auto-done": "read · closed",
+    expired: "expired",
+    closed: "closed",
+    reopened: "reopened",
   };
 
   // "Rex claimed · 3m ago"; server-made events (no `by`) read "lease expired · 3m ago".
@@ -258,13 +319,15 @@
       item({ id: "d7", kind: "instruction", to: "role:backend", from: ada, title: "Expire claim leases in the reaper", state: "done", assignee: finn, created: 1500, updated: 200, action: "done", by: finn }),
       item({ id: "d7a", kind: "note", to: "role:backend", from: finn, reply_to: "d7", title: "Lease expiry runs every 30 s next to the idle reaper.", state: "pending", created: 210, updated: 210, action: "created" }),
       item({ id: "d8", kind: "instruction", to: "project", from: kim, title: "Port the CLI to Windows", state: "declined", assignee: rex, created: 3000, updated: 2000, action: "declined", by: rex }),
+      item({ id: "d8x", kind: "handoff", to: "role:reviewer", from: kim, title: "Benchmark the old mixer", state: "expired", created: 12000, updated: 1100, action: "expired", by: null }),
       item({ id: "d9", kind: "claim", to: "project", from: finn, title: "branch:feature-inbox-wait", state: "pending", created: 60, updated: 60, action: "created", context: { resource: "branch:feature-inbox-wait" } }),
     ];
   }
 
   const BoardLogic = {
-    COLUMNS, columnFor, isCard, withinDoneWindow, matchesFilters, openQuestionsFor,
-    buildColumns, resourceClaims, mergeItems, parseFilters, serializeFilters,
+    COLUMNS, columnFor, isCard, withinDoneWindow, stateTag, matchesFilters, openQuestionsFor,
+    buildColumns, resourceClaims, mergeItems, parseFilters, serializeFilters, pollUrl,
+    isSelectable, toggleSelected, pruneSelection, selectionByProject,
     shortAge, ago, lastUpdateText, filterOptions, buildThread, demoItems,
   };
   root.BoardLogic = BoardLogic;
@@ -283,6 +346,9 @@
     cards: new Map(), // item_id -> card element
     loaded: false,
     projects: [],
+    doneDays: DONE_DAYS, // from /work-items (null with Older)
+    selecting: false,
+    picked: new Set(),
   };
 
   // Shared API key: same localStorage entry and Bearer header as index.html.
@@ -302,13 +368,19 @@
     setApiKey(v);
     return !!apiKey;
   }
-  async function api(url) {
+  async function api(url, body) {
     const headers = new Headers();
     if (apiKey) headers.set("Authorization", "Bearer " + apiKey);
-    const r = await fetch(url, { headers });
+    const init = { headers };
+    if (body !== undefined) {
+      init.method = "POST";
+      init.body = JSON.stringify(body);
+      headers.set("Content-Type", "application/json");
+    }
+    const r = await fetch(url, init);
     if (r.status !== 401 || !askForKey()) return r;
     headers.set("Authorization", "Bearer " + apiKey);
-    return fetch(url, { headers });
+    return fetch(url, init);
   }
 
   function el(tag, cls, text) {
@@ -349,9 +421,68 @@
   function applyFilters() {
     state.filters.project = $("projectFilter").value;
     state.filters.agent = $("agentFilter").value;
+    const all = $("olderToggle").checked;
+    const reload = all !== state.filters.all;
+    state.filters.all = all;
     history.replaceState(null, "", location.pathname + serializeFilters(state.filters));
+    if (reload && !state.filters.demo) {
+      // Older changes what the server sends: start over with a full load.
+      state.serverTime = null;
+      if (!all) state.items = state.items.filter((i) => !FINAL_STATES.has(i.state));
+      poll();
+    }
     render();
     refreshUsage();
+  }
+
+  // ---- Select mode -----------------------------------------------------------
+
+  function setSelecting(on) {
+    state.selecting = on;
+    state.picked = new Set();
+    $("selectBtn").textContent = on ? "cancel" : "select";
+    $("selectBtn").classList.toggle("on", on);
+    $("selectBar").classList.toggle("hidden", !on);
+    document.body.classList.toggle("selecting", on);
+    render();
+  }
+
+  function renderSelectBar() {
+    if (!state.selecting) return;
+    state.picked = pruneSelection(state.items, state.picked);
+    const n = state.picked.size;
+    $("selCount").textContent = n + " selected";
+    $("closeSel").disabled = !n;
+    $("expireSel").disabled = !n;
+  }
+
+  async function bulkApply(target) {
+    const groups = selectionByProject(state.items, state.picked);
+    const n = groups.reduce((sum, g) => sum + g.ids.length, 0);
+    if (!n) return;
+    const verb = target === "done" ? "Close" : "Expire";
+    if (!confirm(`${verb} ${n} item${n === 1 ? "" : "s"}? Agents see a notice in the project channel.`)) return;
+    if (state.filters.demo) {
+      const now = new Date().toISOString();
+      const picked = new Set(groups.flatMap((g) => g.ids));
+      state.items = state.items.map((i) => picked.has(i.item_id) && i.state !== target
+        ? { ...i, state: target, updated_at: now, last_event: { action: target === "done" ? "closed" : "expired", by: null, at: now } }
+        : i);
+      setSelecting(false);
+      return;
+    }
+    let failed = 0;
+    for (const g of groups) {
+      try {
+        const r = await api(`/projects/${encodeURIComponent(g.project_id)}/work-items/bulk`, { ids: g.ids, state: target });
+        if (!r.ok) { failed += g.ids.length; continue; }
+        const data = await r.json();
+        failed += (data.results || []).filter((x) => !x.ok).length;
+      } catch { failed += g.ids.length; }
+    }
+    setSelecting(false);
+    await poll();
+    if (failed) setStatus(`${failed} item(s) not changed`, false);
   }
 
   // ---- Cards -----------------------------------------------------------------
@@ -370,8 +501,14 @@
     } else {
       who.append(el("span", "unassigned", "unassigned"));
     }
-    if (item.state === "declined") who.append(el("span", "declined", "declined"));
+    const tag = stateTag(item.state);
+    if (tag) who.append(el("span", "tag " + tag.cls, tag.text));
     const parts = [title, meta, who];
+    if (state.selecting && isSelectable(item)) {
+      const check = el("span", "check", state.picked.has(item.item_id) ? "[x]" : "[ ]");
+      check.setAttribute("aria-hidden", "true");
+      parts.unshift(check);
+    }
     if (item.state === "waiting") {
       const q = openQuestionsFor(state.items, item.item_id)[0];
       const box = el("div", "card-question");
@@ -389,10 +526,18 @@
       card = el("button", "card");
       card.type = "button";
       card.dataset.id = item.item_id;
-      card.onclick = () => openPanel(card.dataset.id);
+      card.onclick = () => {
+        const it = state.items.find((i) => i.item_id === card.dataset.id);
+        if (state.selecting && it && isSelectable(it)) {
+          state.picked = toggleSelected(state.picked, it.item_id);
+          render();
+        } else openPanel(card.dataset.id);
+      };
       state.cards.set(item.item_id, card);
     }
     card.classList.toggle("selected", state.selected === item.item_id);
+    card.classList.toggle("picked", state.selecting && state.picked.has(item.item_id));
+    card.setAttribute("aria-pressed", state.selecting && isSelectable(item) ? String(state.picked.has(item.item_id)) : "false");
     card.dataset.state = item.state;
     cardBody(card, item, now);
     return card;
@@ -401,7 +546,9 @@
   function render() {
     const now = Date.now();
     renderFilters();
-    const cols = buildColumns(state.items, state.filters, now);
+    renderSelectBar();
+    const cols = buildColumns(state.items, state.filters, now, state.doneDays);
+    $("doneWindow").textContent = state.filters.all || state.doneDays === null ? "all" : state.doneDays + (state.doneDays === 1 ? " day" : " days");
 
     // FLIP: remember where every card was, move nodes, then animate from there.
     const before = new Map();
@@ -434,7 +581,8 @@
     }
 
     const empty = $("emptyState");
-    const anyCard = state.items.some((i) => isCard(i) && withinDoneWindow(i, now));
+    const days = state.filters.all ? null : state.doneDays;
+    const anyCard = state.items.some((i) => isCard(i) && withinDoneWindow(i, now, days));
     if (!state.loaded) empty.classList.add("hidden");
     else if (!anyCard) { empty.textContent = ""; empty.append("No work items yet — agents create them with ", el("code", "", "agent-ptt send")); empty.classList.remove("hidden"); }
     else if (!total) { empty.textContent = "No work items match these filters."; empty.classList.remove("hidden"); }
@@ -576,9 +724,7 @@
   }
 
   async function pollOnce() {
-    const url = state.serverTime
-      ? "/work-items?updated_after=" + encodeURIComponent(state.serverTime)
-      : "/work-items";
+    const url = pollUrl(state.serverTime, state.filters.all);
     try {
       const r = await api(url);
       if (r.status === 404) {
@@ -591,6 +737,7 @@
       const data = await r.json();
       state.items = mergeItems(state.items, data.items || []);
       if (data.server_time) state.serverTime = data.server_time;
+      if ("done_days" in data && !state.filters.all) state.doneDays = data.done_days;
       state.loaded = true;
       setStatus("live", true);
       render();
@@ -632,8 +779,17 @@
     $("host").textContent = location.host;
     $("projectFilter").onchange = applyFilters;
     $("agentFilter").onchange = applyFilters;
+    $("olderToggle").checked = state.filters.all;
+    $("olderToggle").onchange = applyFilters;
+    $("selectBtn").onclick = () => setSelecting(!state.selecting);
+    $("closeSel").onclick = () => bulkApply("done");
+    $("expireSel").onclick = () => bulkApply("expired");
     $("panelClose").onclick = closePanel;
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (state.selecting) setSelecting(false);
+      else closePanel();
+    });
     $("apiKeyBtn").onclick = () => {
       const v = prompt("Server API key (leave empty to clear):", apiKey);
       if (v === null) return;

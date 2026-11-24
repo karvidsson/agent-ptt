@@ -78,6 +78,12 @@ working ([member lifecycle](projects.md#member-lifecycle)). Logged at startup
 (`Gone agents: ...`); `GET /reaper` shows the windows and `POST /reap` runs a
 pass now.
 
+`AGENT_PTT_ITEM_EXPIRE_DAYS` (default `7`; `0` = off) expires project work
+items nothing touched for that long, in the same 5-minute pass (items whose
+sender and recipients are all gone expire regardless); `AGENT_PTT_BOARD_DONE_DAYS`
+(default `3`) is how long the Board keeps done, declined and expired items. See
+[expiry](projects.md#expiry).
+
 **Example:**
 ```bash
 agent-ptt server start --port 8770
