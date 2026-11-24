@@ -254,3 +254,25 @@ def test_rename_refuses_old_plugins_and_sessionless_holders(client):
 def test_rename_needs_the_api_key(client, monkeypatch):
     monkeypatch.setenv(API_KEY_ENV, "k")
     assert client.post("/handles/Oscar2/rename").status_code == 401
+
+
+def test_restored_hooked_seats_stay_offline_and_free_their_names(client):
+    """Task 42: 10 min after a restart the idle reaper turned every restored
+    hooked seat ``away``, so dead seats counted as live and new sessions got Name2."""
+    import asyncio
+
+    from agent_ptt import server
+
+    rooms = [channel(client, f"restored{i}") for i in range(4)]
+    seats = []
+    for i, name in enumerate(NAMES):
+        key = seat(rooms[i % len(rooms)], name, "offline")  # restored, never came back
+        key.mention_id = f"receiver-{i}"  # hooked: it had a mention receiver
+        seats.append(key)
+
+    later = datetime.now(UTC) + timedelta(minutes=11)
+    asyncio.run(server._reap_idle_once(600, now=later))
+    assert {key.state for key in seats} == {"offline"}
+
+    joined = cjoin(client, rooms[0], "after-restart")
+    assert plain(joined["handle"]), joined["handle"]

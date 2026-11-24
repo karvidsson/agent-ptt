@@ -448,10 +448,13 @@ def idle_participants(
 
 
 def idle_receivers(now: datetime, grace: float, live_keys: Collection[str]) -> list[ParticipantKey]:
-    """Hooked participants unseen past ``grace`` that are not yet ``away``.
+    """Hooked participants unseen past ``grace`` that are still ``active``.
 
     The reaper marks them away (``idle_away``) instead of removing them: they
-    keep their seat and keep receiving mentions in their channel inbox.
+    keep their seat and keep receiving mentions in their channel inbox. A seat
+    restored ``offline`` that never came back stays offline: turning it away
+    would make it look alive (it would hold its name, see
+    ``handles.live_seat_handles``) though it has shown no sign of life.
     """
     found: list[ParticipantKey] = []
     for channel in _channels.values():
@@ -461,7 +464,7 @@ def idle_receivers(now: datetime, grace: float, live_keys: Collection[str]) -> l
             if (
                 participant.mention_id
                 and participant.key_id not in live_keys
-                and participant.state != "away"
+                and participant.state == "active"
                 and (now - participant.last_seen).total_seconds() > grace
             ):
                 found.append(participant)
