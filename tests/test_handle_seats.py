@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from agent_ptt import channel as ch
 from agent_ptt import handles
 from agent_ptt.auth import API_KEY_ENV
+from agent_ptt.compound_names import COMPOUNDS
 from agent_ptt.db import SessionLocal
 from agent_ptt.models import (
     HandleClaimDB,
@@ -99,7 +100,7 @@ def test_stale_seats_leave_plain_names_free(client):
 
 def test_a_live_seat_without_a_claim_still_blocks_its_name(client):
     cid = channel(client)
-    others = set(NAMES) - {"Atlas"}
+    others = (set(NAMES) | set(COMPOUNDS)) - {"Atlas"}
     seat(cid, "Atlas", "active")
     with SessionLocal() as db:
         name = handles.allocate(db, exclude=others)

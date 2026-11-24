@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from agent_ptt import channel as ch
 from agent_ptt import handles
+from agent_ptt.compound_names import COMPOUNDS
 from agent_ptt.db import SessionLocal
 from agent_ptt.models import HandleClaimDB, SessionIdentityDB, VoiceProfile
 from agent_ptt.session_identity import NAMES, get_session_identity
@@ -98,12 +99,15 @@ def occupy(db, handles):
     return channel
 
 
-def test_all_plain_names_busy_gives_a_numbered_name(db_session):
+def test_all_plain_names_busy_gives_a_compound_then_a_numbered_name(db_session):
     seed(db_session)
     occupy(db_session, NAMES)
     fresh = get_session_identity("new", "Codex", db_session)
-    assert fresh.handle.endswith("2")
-    assert fresh.handle.removesuffix("2") in NAMES
+    assert fresh.handle in COMPOUNDS
+    occupy(db_session, [name for name in COMPOUNDS if name != fresh.handle])
+    numbered = get_session_identity("newer", "Codex", db_session)
+    assert numbered.handle.endswith("2")
+    assert numbered.handle.removesuffix("2") in NAMES
 
 
 def test_plain_handle_participant_blocks_its_name(db_session):
@@ -114,7 +118,7 @@ def test_plain_handle_participant_blocks_its_name(db_session):
         # Only Milo is free of participants, but a plain "Milo" now joins.
         occupy(db, ["Milo"])
     fresh = get_session_identity("new", "Codex", db_session)
-    assert fresh.handle.endswith("2")
+    assert fresh.handle in COMPOUNDS
 
 
 def test_deleted_channel_does_not_keep_names_busy(db_session):
@@ -188,8 +192,11 @@ def test_live_claims_push_new_sessions_to_the_next_tier(db_session):
     seed(db_session)
     hold(db_session, NAMES, age=timedelta(hours=23))
     fresh = get_session_identity("new", "Codex", db_session)
-    assert fresh.handle.endswith("2") and fresh.handle.removesuffix("2") in NAMES
-    hold(db_session, [f"{n}2" for n in NAMES if f"{n}2" != fresh.handle], prefix="two")
+    assert fresh.handle in COMPOUNDS
+    hold(db_session, [n for n in COMPOUNDS if n != fresh.handle], prefix="compound")
+    second = get_session_identity("second", "Codex", db_session)
+    assert second.handle.endswith("2") and second.handle.removesuffix("2") in NAMES
+    hold(db_session, [f"{n}2" for n in NAMES if f"{n}2" != second.handle], prefix="two")
     third = get_session_identity("newer", "Codex", db_session)
     assert third.handle.endswith("3") and third.handle.removesuffix("3") in NAMES
 
@@ -201,7 +208,7 @@ def test_session_keeps_its_name_out_of_every_channel(db_session):
     assert mine.handle == NAMES[-1]
     # In no channel, but its claim is live: nobody else gets the name.
     other = get_session_identity("other", "Codex", db_session)
-    assert other.handle.endswith("2")
+    assert other.handle in COMPOUNDS
     again = get_session_identity("mine", "Codex", db_session)
     assert (again.handle, again.voice_id) == (NAMES[-1], mine.voice_id)
 
@@ -221,6 +228,6 @@ def test_leaving_a_channel_does_not_free_the_name(client, db_session):
     left = client.post(f"/channels/{cid}/leave", json={"key_id": first["key_id"]})
     assert left.status_code == 200
     later = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "c"}).json()
-    assert later["handle"].endswith("2")
+    assert later["handle"] in COMPOUNDS
     back = client.post(f"/channels/{cid}/join", json={**payload, "session_id": "a"}).json()
     assert back["handle"] == NAMES[-1]

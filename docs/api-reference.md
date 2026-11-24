@@ -359,9 +359,10 @@ without one (`AGENT_PTT_HANDLE_TTL_HOURS`). A *new* session of the same
 `agent`, `machine` and `folder` inherits its predecessor's name and voice once
 the predecessor has been quiet for 10 minutes, so restarting an agent in a
 folder keeps its name; two sessions running at once in one folder get
-different names. New names are plain ones first, then `Name2`, `Name3`, …:
-a name never claimed wins over one whose claim expired, and among expired names
-the one that expired longest ago.
+different names. New names are plain ones first, then two-part compounds
+(`Fernwick`), then `Name2`, `Name3`, …: within a tier a name never claimed
+wins over one whose claim expired, and among expired names the one that
+expired longest ago.
 New assignments prefer non-auto profiles with an installed engine, balancing
 usage across the saved library. An empty library falls back to a designed voice.
 If a paired profile is deleted, the next join replaces the voice but keeps the name.
@@ -770,7 +771,8 @@ POST /handles/{handle}/rename
 
 Admin cleanup (API key; 404 when hosted): moves a session's name to a freed-up
 one. The body is optional; `to` defaults to the name without its trailing
-digits (`Oscar2` → `Oscar`). The session identity, claim, project members and
+digits (`Oscar2` → `Oscar`; a compound such as `Fernwick` has none, so it needs
+`to`, else 422). The session identity, claim, project members and
 the session's channel participants are renamed in the DB and in memory; dead
 seats still called `to` are detached; each affected channel gets a notice
 `@Oscar2 is now @Oscar (name freed up)`.
