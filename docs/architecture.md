@@ -84,9 +84,16 @@ no sign of life. Hooked seats are left after it (on top of the idle grace,
 unless `AGENT_PTT_AWAY_REAP_SECONDS` is set explicitly), and a second lifespan
 loop (`_gone_reaper`, every 5 minutes) marks project members gone
 (`projects.reap_gone_members`, see [projects](projects.md#member-lifecycle)).
+The same loop then puts obsolete work items away
+(`projects.expire_stale_items`, see [expiry](projects.md#expiry)): read
+FYIs/notes/answers still open close, and open items whose people are all gone
+or that nothing touched for `AGENT_PTT_ITEM_EXPIRE_DAYS` (7) become `expired`.
+The loop always runs on the legacy server (each part has its own off switch).
 The startup log describes the windows; `GET /reaper` returns them and
-`POST /reap` runs one pass of both now and returns what it removed. A pass
-posts nothing; the member pass logs one line when it marked anyone gone.
+`POST /reap` runs one pass of all of it now and returns what it changed. The
+seat and member passes post nothing (the member pass logs one line when it
+marked anyone gone); the item pass posts one `Board: …` notice per project
+that changed.
 - `send_message()` — broadcasts text + queues for TTS
 - `get_history()` — returns in-memory message list
 
@@ -161,13 +168,16 @@ that reads offset-less SQLite timestamps as UTC and relabels "Today"/"Yesterday"
 on every append and just after local midnight.
 
 **Board** (`board.html` + `board.js` + `board.css`, served at `/ui/board.html`,
-linked from the channels header) is a read-only kanban of project work items
+linked from the channels header) is a kanban of project work items
 (see [the collaboration plan](plans/2026-11-09-agent-collaboration.md)). Cards
 are top-level work only — `instruction`, `handoff`, and `question` items without
 `reply_to`; answers, notes, replies and claim/release items are not cards.
 Columns: **Open** (pending, delivered, acked), **In progress** (claimed),
 **Waiting** (waiting; the card shows the newest open question asked about it),
-**Review** (review), **Done** (done and declined, last 7 days). A card shows the
+**Review** (review), **Done** (done, declined, and expired with a grey
+"expired" tag; changed in the last `AGENT_PTT_BOARD_DONE_DAYS`, 3 days, as
+`/work-items` reports in `done_days`). The **older** toggle (`?all=1`) loads
+every final item instead. A card shows the
 title, project, kind, assignee with harness badge, age and the last event
 ("Rex claimed · 3m ago"); clicking it opens a side panel with the thread and
 events from `GET /projects/{p}/items/{id}` and a link to the project channel.
@@ -178,7 +188,11 @@ page loads `GET /work-items` once, then polls
 `GET /work-items?updated_after=<server_time>` every 3 seconds and merges the
 batch by `item_id`, animating cards that change column. It sends the same
 stored API key as `index.html`. `?demo=1` renders built-in sample items with no
-server, for eyeballing layout changes. The pure logic is exported as
+server, for eyeballing layout changes. **Select** mode is the Board's only
+write action: cards get checkboxes (done and declined ones can't be picked),
+and "close selected" / "expire selected" call
+`POST /projects/{p}/work-items/bulk` once per project with the stored API key,
+after a confirm. The pure logic is exported as
 `globalThis.BoardLogic` and tested by `node --test tests/board.test.mjs`.
 
 ### `agent_ptt/cli.py`

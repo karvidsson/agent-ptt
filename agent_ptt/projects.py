@@ -56,8 +56,12 @@ logger = logging.getLogger(__name__)
 CLAIMABLE_KINDS = {"instruction", "handoff", "question"}
 OPEN_STATES = ("pending", "delivered", "acked")
 HELD_STATES = ("claimed", "waiting", "review")
-FINAL_STATES = ("done", "declined")
+FINAL_STATES = ("done", "declined", "expired")
+# FYIs, notes and answers have nothing left to do once read: the first ack closes them.
+INFORMATIONAL_KINDS = ("note", "answer")
 DEFAULT_LEASE_SECONDS = 1800
+DEFAULT_ITEM_EXPIRE_DAYS = 7.0
+DEFAULT_BOARD_DONE_DAYS = 3.0
 LEASE_CHECK_SECONDS = 30.0
 LISTENING_SECONDS = 90.0
 SERVER_HANDLE = "agent-ptt"
@@ -92,6 +96,35 @@ def lease_seconds() -> int:
     except ValueError:
         value = DEFAULT_LEASE_SECONDS
     return value if value > 0 else DEFAULT_LEASE_SECONDS
+
+
+def _env_days(name: str, default: float) -> float:
+    """A non-negative number of days from the environment (bad values: the default)."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = -1
+    if not value >= 0:  # Also rejects NaN.
+        logger.warning("Ignoring %s=%r (not a non-negative number); using %g", name, raw, default)
+        return default
+    return value
+
+
+def item_expire_days() -> float:
+    """Untouched open items expire after ``AGENT_PTT_ITEM_EXPIRE_DAYS`` (7; 0 = off)."""
+    return _env_days("AGENT_PTT_ITEM_EXPIRE_DAYS", DEFAULT_ITEM_EXPIRE_DAYS)
+
+
+def board_done_days() -> float:
+    """The Board hides final items older than ``AGENT_PTT_BOARD_DONE_DAYS`` (3)."""
+    return _env_days("AGENT_PTT_BOARD_DONE_DAYS", DEFAULT_BOARD_DONE_DAYS)
+
+
+def is_informational(item: WorkItemDB) -> bool:
+    return bool(item.fyi) or item.kind in INFORMATIONAL_KINDS
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +815,19 @@ def _reopen(
     effects.wake |= _upsert_deliveries(db, item, recipients(db, item), reset=True)
 
 
+def _revive(db: Session, item: WorkItemDB, member: ProjectMemberDB, effects: Effects) -> None:
+    """An expired item goes back to open on any normal action (claim, reply, done)."""
+    if item.state != "expired":
+        return
+    _reopen(db, item, "reopened", member.member_id, None, effects)
+    effects.notice(
+        f"{member.handle} reopened {_quote(item.title)}",
+        member.handle,
+        member.member_id,
+        item.item_id,
+    )
+
+
 def expire_leases(db: Session, now: datetime | None = None) -> dict[str, Effects]:
     """Return every held item whose lease ran out to ``pending``.
 
@@ -837,6 +883,166 @@ async def lease_expiry_loop(interval: float = LEASE_CHECK_SECONDS) -> None:
             raise
         except Exception as exc:
             logger.error(f"Lease expiry error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Obsolete items: read FYIs close, stale and orphaned items expire
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ItemPass:
+    """What one ``expire_stale_items`` pass changed, per project_id."""
+
+    expired: dict[str, int] = field(default_factory=dict)
+    closed: dict[str, int] = field(default_factory=dict)
+    effects: dict[str, Effects] = field(default_factory=dict)
+
+    @property
+    def expired_total(self) -> int:
+        return sum(self.expired.values())
+
+    @property
+    def closed_total(self) -> int:
+        return sum(self.closed.values())
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def expire_stale_items(
+    db: Session, now: datetime | None = None, days: float | None = None
+) -> ItemPass:
+    """One pass over every open or held item (the gone reaper's, and ``POST /reap``).
+
+    - An informational item (FYI, note, answer) that is still open but has an
+      acked delivery goes to ``done`` (``auto-done``, by its first acker): what
+      the ack does since task 41, applied to older rows.
+    - Any other open or held item becomes ``expired`` (no member) when its
+      sender and every recipient member are gone (``gone_at`` set, or the row
+      is missing; role and project addresses count their delivery members, the
+      assignee counts too), or when nothing touched it (``updated_at``) for
+      ``days`` (``AGENT_PTT_ITEM_EXPIRE_DAYS``, 7; 0 = this rule is off).
+
+    Collects one ``Board: …`` channel notice per project that changed; the
+    caller publishes them (``expire_items_and_publish``).
+    """
+    now = now or now_utc()
+    days = item_expire_days() if days is None else days
+    cutoff = now - timedelta(days=days) if days > 0 else None
+    result = ItemPass()
+    live_states = (*OPEN_STATES, *HELD_STATES)
+    items = db.query(WorkItemDB).filter(WorkItemDB.state.in_(live_states)).all()
+    if not items:
+        return result
+    deliveries: dict[str, list[WorkItemDeliveryDB]] = {}
+    for delivery in (
+        db.query(WorkItemDeliveryDB)
+        .join(WorkItemDB, WorkItemDB.item_id == WorkItemDeliveryDB.item_id)
+        .filter(WorkItemDB.state.in_(live_states))
+        .all()
+    ):
+        deliveries.setdefault(delivery.item_id, []).append(delivery)
+    members = {m.member_id: m for m in db.query(ProjectMemberDB).all()}
+
+    def gone(member_id: str | None) -> bool:
+        member = members.get(member_id or "")
+        return member is None or member.gone_at is not None
+
+    never = datetime.min.replace(tzinfo=UTC)
+    for item in items:
+        mine = deliveries.get(item.item_id, [])
+        if is_informational(item) and item.state in OPEN_STATES:
+            acked = [d for d in mine if d.state == "acked"]
+            if acked:
+                first = min(acked, key=lambda d: as_utc(d.acked_at) or never)
+                _set_state(db, item, "done", "auto-done", first.member_id)
+                result.closed[item.project_id] = result.closed.get(item.project_id, 0) + 1
+                continue
+        audience = {d.member_id for d in mine}
+        if item.to_address.startswith("agent:"):
+            audience.add(item.to_address.removeprefix("agent:"))
+        if item.assignee_member_id:
+            audience.add(item.assignee_member_id)
+        if gone(item.from_member_id) and all(gone(m) for m in audience):
+            reason = "everyone gone"
+        elif cutoff is not None and (as_utc(item.updated_at) or never) < cutoff:
+            reason = f"untouched {days:g} days"
+        else:
+            continue
+        item.lease_expires_at = None
+        _set_state(db, item, "expired", "expired", None, reason)
+        result.expired[item.project_id] = result.expired.get(item.project_id, 0) + 1
+    for project_id in {*result.expired, *result.closed}:
+        parts = []
+        if expired := result.expired.get(project_id, 0):
+            why = f"untouched {days:g} days or everyone gone" if cutoff else "everyone gone"
+            parts.append(f"{_plural(expired, 'stale item')} expired ({why})")
+        if closed := result.closed.get(project_id, 0):
+            parts.append(f"{_plural(closed, 'read FYI/note')} closed")
+        effects = result.effects.setdefault(project_id, Effects())
+        effects.notice("Board: " + "; ".join(parts), SERVER_HANDLE, None, None)
+    if result.expired or result.closed:
+        db.commit()
+    return result
+
+
+async def expire_items_and_publish(db: Session, now: datetime | None = None) -> ItemPass:
+    """``expire_stale_items`` plus its one notice per changed project."""
+    result = expire_stale_items(db, now)
+    for project_id, effects in result.effects.items():
+        project = db.get(ProjectDB, project_id)
+        if project is not None:
+            await publish(db, project, effects)
+    if result.expired or result.closed:
+        logger.info(
+            f"🧹 Board: {result.expired_total} item(s) expired, "
+            f"{result.closed_total} read FYI/note item(s) closed"
+        )
+    return result
+
+
+BULK_STATES = ("done", "expired")
+BULK_MAX = 500
+
+
+def bulk_set_state(
+    db: Session, project: ProjectDB, item_ids: list[str], state: str
+) -> tuple[list[dict[str, Any]], Effects]:
+    """Admin close (``done``) or expire many items at once; per-id results.
+
+    No member does it: events carry no member and the note ``admin (bulk)``.
+    Done or declined items stay as they are (an error entry); an expired item
+    can still be closed. One notice per call when anything changed.
+    """
+    effects = Effects()
+    results: list[dict[str, Any]] = []
+    changed = 0
+    action = "closed" if state == "done" else "expired"
+    for item_id in dict.fromkeys(item_ids):
+        item = db.get(WorkItemDB, item_id)
+        if item is None or item.project_id != project.project_id:
+            results.append({"item_id": item_id, "ok": False, "error": "not found"})
+            continue
+        entry: dict[str, Any] = {"item_id": item_id, "ok": True, "changed": False}
+        if item.state == state:
+            pass
+        elif item.state in ("done", "declined"):
+            entry.update(ok=False, error=f"already {item.state}")
+        else:
+            item.lease_expires_at = None
+            _set_state(db, item, state, action, None, "admin (bulk)")
+            entry["changed"] = True
+            changed += 1
+        entry["state"] = item.state
+        results.append(entry)
+    if changed:
+        verb = "closed" if state == "done" else "expired"
+        text = f"Board: {verb} {_plural(changed, 'item')} (admin)"
+        effects.notice(text, SERVER_HANDLE, None, None)
+        db.commit()
+    return results, effects
 
 
 # ---------------------------------------------------------------------------
@@ -948,6 +1154,10 @@ def create_item(db: Session, member: ProjectMemberDB, req: WorkItemCreate) -> Cr
     )
 
     if parent is not None:
+        if parent.state == "expired":
+            _revive(db, parent, member, effects)
+        elif parent.state not in FINAL_STATES:
+            parent.updated_at = now  # A reply or question keeps the item from expiring.
         if parent.assignee_member_id == member.member_id and parent.state in HELD_STATES:
             _renew(parent)
         if (
@@ -1042,7 +1252,10 @@ def ack_item(db: Session, member: ProjectMemberDB, item_id: str) -> WorkItemDB:
     if _delivery(db, item, member) is None:
         raise ProjectError(403, "This item was not delivered to you")
     if _ack_delivery(db, item, member):
-        if item.state in ("pending", "delivered"):
+        if is_informational(item) and item.state in OPEN_STATES:
+            # Nothing left to do once read: the first recipient's ack closes it.
+            _set_state(db, item, "done", "auto-done", member.member_id)
+        elif item.state in ("pending", "delivered"):
             _set_state(db, item, "acked", "acked", member.member_id)
         else:
             _event(db, item, "acked", member.member_id, item.state, item.state)
@@ -1076,6 +1289,7 @@ def claim_item(db: Session, member: ProjectMemberDB, item_id: str) -> tuple[Work
     """Atomically claim an open item: the first claim wins and holds a lease."""
     effects = Effects()
     item = _item_in_project(db, member.project_id, item_id)
+    _revive(db, item, member, effects)
     _claim_checks(db, item, member)
     if item.assignee_member_id == member.member_id and item.state in HELD_STATES:
         _renew(item)
@@ -1179,6 +1393,7 @@ def finish_item(
     """``done`` or ``declined``; final, repeatable with the same outcome."""
     effects = Effects()
     item = _item_in_project(db, member.project_id, item_id)
+    _revive(db, item, member, effects)
     if item.state in FINAL_STATES:
         if item.state == final and item.assignee_member_id == member.member_id:
             return item, effects
@@ -1504,13 +1719,16 @@ def board_items(
     updated_after: datetime | None,
     project_id: str | None,
     member_id: str | None,
-    include_done_days: int,
+    include_done_days: float | None,
 ) -> list[WorkItemDB]:
-    """Items for the board: all open ones, finished ones from the last N days."""
-    cutoff = now_utc() - timedelta(days=include_done_days)
-    query = db.query(WorkItemDB).filter(
-        or_(WorkItemDB.state.not_in(FINAL_STATES), WorkItemDB.updated_at >= cutoff)
-    )
+    """Items for the board: all open ones, final ones (done, declined, expired)
+    changed in the last N days; ``None`` = every final item too."""
+    query = db.query(WorkItemDB)
+    if include_done_days is not None:
+        cutoff = now_utc() - timedelta(days=include_done_days)
+        query = query.filter(
+            or_(WorkItemDB.state.not_in(FINAL_STATES), WorkItemDB.updated_at >= cutoff)
+        )
     if updated_after is not None:
         query = query.filter(WorkItemDB.updated_at > updated_after)
     if project_id:

@@ -174,11 +174,12 @@ GET /        →  307 redirect to /ui/ for browsers (Accept: text/html);
                  to /workspace/ when AGENT_PTT_HOSTED=1
 GET /ui/     →  the web interface (static HTML/JS, no build step)
 GET /ui/#<channel_id>   →  opens that channel
-GET /ui/board.html      →  the read-only work-items Board (?project=, ?agent=, ?demo=1)
+GET /ui/board.html      →  the work-items Board (?project=, ?agent=, ?all=1, ?demo=1)
 ```
 
 The Board polls `GET /work-items` every 3 seconds and opens threads with
-`GET /projects/{p}/items/{id}`; see [architecture.md](architecture.md#agent_pttstatic).
+`GET /projects/{p}/items/{id}`; its Select mode closes or expires cards with
+`POST /projects/{p}/work-items/bulk`. See [architecture.md](architecture.md#agent_pttstatic).
 
 The page lists channels, shows a channel's live conversation, streams the
 channel's audio, and lets you join with a handle + voice to post messages —
@@ -806,6 +807,7 @@ How long the server keeps silent agents (API key; 404 when hosted):
 
 ```json
 {"idle_seconds": 600, "away_seconds": 86400, "gone_seconds": 86400, "name_ttl_seconds": 86400,
+ "item_expire_days": 7.0, "board_done_days": 3.0,
  "description": "Idle participant reaping: after 600s … Gone agents: …"}
 ```
 
@@ -813,28 +815,38 @@ How long the server keeps silent agents (API key; 404 when hosted):
 `away_seconds` how long a hooked seat stays away after it before it is left
 (`AGENT_PTT_AWAY_REAP_SECONDS`, default `gone_seconds`; 0 when idle reaping is
 off), `gone_seconds` the gone window for project members (`AGENT_PTT_GONE_HOURS`
-× 3600, default 24 h, 0 = off; see [member lifecycle](projects.md#member-lifecycle)).
+× 3600, default 24 h, 0 = off; see [member lifecycle](projects.md#member-lifecycle)),
+`item_expire_days` how long an untouched open work item lives
+(`AGENT_PTT_ITEM_EXPIRE_DAYS`, default 7, 0 = off; see [expiry](projects.md#expiry))
+and `board_done_days` how long `GET /work-items` keeps final items
+(`AGENT_PTT_BOARD_DONE_DAYS`, default 3).
 
 ```
 POST /reap
 ```
 
 Admin (API key; 404 when hosted): runs one pass now, the same as the
-background loops (seats every 5–60 s, members every 5 minutes), and returns
-what it removed. No keys in the output.
+background loops (seats every 5–60 s, members and then work items every 5
+minutes), and returns what it removed. No keys in the output.
 
 ```json
 {"seats": [{"handle": "Bram", "participant_id": "…", "channel_id": "…", "unseen_seconds": 90061}],
  "members": [{"member_id": "…", "project_id": "…", "project": "litium-brain", "handle": "Ada",
               "last_seen": "2026-11-23T12:04:00+00:00"}],
  "claims_released": ["Ada"],
+ "items_expired": 57, "items_closed": 138,
+ "item_projects": [{"project_id": "…", "project": "litium-brain", "expired": 36, "closed": 130}],
  "windows": {"…": "as GET /reaper"}}
 ```
 
 `seats` were left like a [Leave](#leave-channel) (idle past the grace, or hooked
 and away past `away_seconds`; seats only marked away are not listed),
 `members` marked gone (their `member_key` now answers 401), `claims_released`
-the expired names they still held.
+the expired names they still held. `items_expired` open or held work items
+that became `expired` (everyone gone, or untouched for `item_expire_days`),
+`items_closed` read FYIs, notes and answers that were still open (now `done`),
+and `item_projects` both per project; see [expiry](projects.md#expiry). Each
+project that changed gets one `Board: …` notice in its channel.
 
 ### Pinned Voices
 
@@ -1136,7 +1148,8 @@ machine, doing}` (roster entries add presence, see [Project detail](#project-det
 | `POST /projects/{p}/items/{id}/done` | member | `{note?}` | item |
 | `POST /projects/{p}/items/{id}/decline` | member | `{note?}` | item |
 | `GET /projects/{p}/items/{id}` | shared | — | `{item, thread, events}` |
-| `GET /work-items` | shared | `?updated_after=ISO&project_id=&member_id=&include_done_days=7` | `{items, server_time}` |
+| `POST /projects/{p}/work-items/bulk` | shared | `{ids: [...], state: "done"\|"expired"}` | `{results, changed, state}` |
+| `GET /work-items` | shared | `?updated_after=ISO&project_id=&member_id=&include_done_days=3&all=0` | `{items, server_time, done_days}` |
 
 ### Join a project
 
@@ -1408,6 +1421,14 @@ long-poll ends only on a non-FYI item. FYI items it skipped are not marked
   addressee can too, without claiming first. Both are final: the same call
   again gets 200, a different one gets 409. A non-holder gets 403 while the
   item is unclaimed, and 409 when someone else holds it.
+- **ack** of an FYI item, a `note` or an `answer` that is still open closes it:
+  state `done`, event `auto-done` by the acker. Other kinds go to `acked`.
+- An **`expired`** item (state set by the server's [expiry
+  pass](projects.md#expiry) or the bulk route) comes back on a claim, a reply
+  with `reply_to` on it, or done/decline: it is first reopened to `pending`
+  (event `reopened`, a notice, redelivered), then the action runs. A refused
+  action leaves it expired. A reply or question with `reply_to` on an open
+  item also counts as a touch (moves its `updated_at`).
 
 Expired leases are reopened before every action, inbox read and item read,
 and every 30 seconds by a background task (event `lease_expired`, plus a
@@ -1421,13 +1442,41 @@ channel notice).
   replying to it or to its replies, by `created_at`.
 - `events`: `[{action, by, at, from_state, to_state, note}]`. The actions are
   `created`, `delivered`, `acked`, `claimed`, `released`, `waiting`, `review`,
-  `resumed`, `answered`, `done`, `declined` and `lease_expired`.
+  `resumed`, `answered`, `done`, `declined`, `lease_expired`, `auto-done` (a
+  read FYI/note/answer closed), `expired` and `closed` (no member: the server
+  or the bulk route) and `reopened`.
+
+### Bulk close or expire
+
+```
+POST /projects/{p}/work-items/bulk
+{"ids": ["…", "…"], "state": "done"}
+```
+
+Admin (shared API key only, no member key; 404 when hosted or for an unknown
+project; 1–500 ids). `state` is `done` (event `closed`) or `expired` (event
+`expired`); events carry no member and the note `admin (bulk)`. Returns one
+result per id, in order (duplicates once):
+
+```json
+{"results": [{"item_id": "…", "ok": true, "changed": true, "state": "done"},
+             {"item_id": "…", "ok": false, "changed": false, "state": "declined", "error": "already declined"},
+             {"item_id": "…", "ok": false, "error": "not found"}],
+ "changed": 1, "state": "done"}
+```
+
+Done and declined items are left alone (`ok: false`); an item already in the
+target state is `ok` and unchanged; an expired item can still be closed. Each
+call that changed something posts one notice, `Board: closed 1 item (admin)`.
+The Board's Select mode calls it once per project.
 
 ### Board query
 
-`GET /work-items` returns `{items, server_time}` across all projects. It
-includes every item except finished (`done`/`declined`) ones last updated
-more than `include_done_days` (default 7) days ago. Filters:
+`GET /work-items` returns `{items, server_time, done_days}` across all
+projects. It includes every open and held item, and final ones (`done`,
+`declined`, `expired`) last updated within `include_done_days` days (default
+`AGENT_PTT_BOARD_DONE_DAYS`, 3). `all=1` includes every final item however old
+(`done_days` is then `null`). Filters:
 
 - `project_id`
 - `member_id`: matches the assignee or the sender

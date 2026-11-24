@@ -46,6 +46,7 @@ from agent_ptt.models import (
     MessageContext,
     ParticipantKeyDB,
     PinnedVoiceDB,
+    ProjectDB,
     RevokedParticipantDB,
     SessionIdentityDB,
     SetVoiceRequest,
@@ -268,12 +269,19 @@ def _reap_gone_members_once(now: datetime | None = None) -> projects.GonePass:
 GONE_INTERVAL_SECONDS = 300
 
 
+async def _expire_items_once() -> projects.ItemPass:
+    """One work-item pass (``projects.expire_stale_items``), after the member pass."""
+    with SessionLocal() as db:
+        return await projects.expire_items_and_publish(db)
+
+
 async def _gone_reaper(interval: float = GONE_INTERVAL_SECONDS) -> None:
-    """Background loop around ``_reap_gone_members_once``; cancelled on shutdown."""
+    """Background loop: gone members, then obsolete work items; cancelled on shutdown."""
     while True:
         await asyncio.sleep(interval)
         try:
             await asyncio.to_thread(_reap_gone_members_once)
+            await _expire_items_once()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -334,7 +342,9 @@ async def lifespan(app: FastAPI):
         logger.info(f"🧹 {ch.gone_message(grace)}")
         if grace > 0:
             reaper = asyncio.create_task(_idle_reaper(grace))
-    gone = None if hosted() or ch.gone_seconds() <= 0 else asyncio.create_task(_gone_reaper())
+    # Members (AGENT_PTT_GONE_HOURS) and obsolete work items share one loop; it
+    # always runs, as read FYIs and orphaned items are closed even with both off.
+    gone = None if hosted() else asyncio.create_task(_gone_reaper())
     # Claim leases on project work items (projects.py) expire in the background too.
     leases = None if hosted() else asyncio.create_task(projects.lease_expiry_loop())
     # Signs of life keep handle claims alive; they reach the DB once a minute.
@@ -501,6 +511,10 @@ this (`agent-ptt project join`, `inbox`, `send`, `claim`, `done`, …).
           "reply_to": "<question_id>", "body": "fix-login"}}
 6. Finish (or decline, or release it back to open):
      POST {base}/projects/<project_id>/items/<item_id>/done  {{"note": "merged"}}
+   Notes, answers and FYI items need no done: acking one closes it.
+     POST {base}/projects/<project_id>/items/<item_id>/ack
+   Open items nobody touched for 7 days (or whose people are all gone) expire;
+   claiming, replying to or finishing an expired item reopens it.
 
 Every item and state change posts a text-only notice in the project's channel.
 Report what you are working on (shown in the roster and on the Board):
@@ -1286,6 +1300,8 @@ def _reaper_windows() -> dict:
         "away_seconds": ch.away_reap_seconds() if grace > 0 else 0,
         "gone_seconds": ch.gone_seconds(),
         "name_ttl_seconds": int(handles.auto_ttl().total_seconds()),
+        "item_expire_days": projects.item_expire_days(),
+        "board_done_days": projects.board_done_days(),
         "description": f"{ch.idle_reap_message(grace)}. {ch.gone_message(grace)}",
     }
 
@@ -1300,18 +1316,24 @@ async def reaper_settings():
 
 @api.post("/reap", tags=["Reaper"])
 async def reap_now():
-    """Admin: run one reaper pass now (seats, then project members); returns what it removed.
+    """Admin: run one reaper pass now (seats, project members, then work items).
 
     Same rules as the background loops: ``seats`` were left (idle or gone
     past the away window), ``members`` marked gone (their member_key now
     answers 401), ``claims_released`` the expired names they still held.
-    A window set to 0 skips its part.
+    ``items_expired`` open items expired (everyone gone, or untouched for
+    ``AGENT_PTT_ITEM_EXPIRE_DAYS``), ``items_closed`` read FYIs/notes/answers
+    closed; ``item_projects`` splits both per project. A window set to 0
+    skips its part.
     """
     if hosted():
         raise HTTPException(404, "Not Found")
     grace = ch.idle_reap_seconds()
     seats = await _reap_seats(grace) if grace > 0 else []
     gone = await asyncio.to_thread(_reap_gone_members_once)
+    items = await _expire_items_once()
+    with SessionLocal() as db:
+        names = {p.project_id: p.name for p in db.query(ProjectDB)}
     return {
         "seats": seats,
         "members": [
@@ -1325,6 +1347,17 @@ async def reap_now():
             for m in gone.members
         ],
         "claims_released": gone.claims_released,
+        "items_expired": items.expired_total,
+        "items_closed": items.closed_total,
+        "item_projects": [
+            {
+                "project_id": project_id,
+                "project": names.get(project_id),
+                "expired": items.expired.get(project_id, 0),
+                "closed": items.closed.get(project_id, 0),
+            }
+            for project_id in sorted({*items.expired, *items.closed})
+        ],
         "windows": _reaper_windows(),
     }
 

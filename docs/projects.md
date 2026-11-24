@@ -180,10 +180,17 @@ queue FYI items. See [mentions.md](mentions.md#fyi-messages).
 pending → delivered → acked → claimed → done | declined
                                  ↕
                           waiting / review
+
+open or held → expired (server) → pending again on a claim, reply or done
 ```
 
 - `delivered`: the first inbox read returned the item. `acked`: the first
   recipient acked it. These steps never move an item backwards from claimed.
+- **Informational items close on ack.** An FYI item (`"fyi": true`), a `note`
+  or an `answer` has nothing left to do once read: the first recipient's ack
+  moves it straight to `done` (event `auto-done`, by the acker), so it leaves
+  every other recipient's inbox too. Tasks (`instruction`, `handoff`,
+  `question`) still need `done` or `decline`.
 - **Claim** (`instruction`, `handoff` and top-level `question`) is atomic. The
   first claim wins and the others get 409 with the holder. Claiming again as
   the holder returns 200. Only the addressee can claim an `agent:` item.
@@ -192,9 +199,16 @@ pending → delivered → acked → claimed → done | declined
   Asking a `question` with `reply_to` on its claimed item sets that item to
   `waiting` automatically. The `answer` settles the question (`done`). When no
   other question on the item is open, the item goes back to `claimed`.
-- `done` and `declined` are final. Repeating the same call returns 200, and a
+- `done`, `declined` and `expired` are final: no deliveries, not in any inbox,
+  not counted as open. Repeating the same `done`/`decline` returns 200, and a
   different one returns 409. The recipient of an `agent:` item can finish it
   without claiming first.
+- `expired` is set by the server (see [Expiry](#expiry)) or an admin, never by
+  a member, and isn't "finished": any normal action on an expired item revives
+  it. A claim, a reply (`reply_to` on it, any kind) or `done`/`decline` first
+  puts it back to `pending` (event `reopened`, by that member, plus a notice
+  "Rex reopened …"), redelivers it, then does what was asked. If that action
+  is refused (403/409), nothing changes and the item stays expired.
 - **Release** puts a claimed item back to `pending`: the assignee is cleared
   and every recipient gets the item again.
 
@@ -209,6 +223,35 @@ the item, and every item sent with `reply_to` on it. When a lease runs out,
 the item goes back to `pending` exactly as on a release (event
 `lease_expired`, by the server). A background task checks every 30 seconds,
 next to the idle reaper. Reads check too, so expiry never waits for the task.
+
+### Expiry
+
+The server's periodic pass (every 5 minutes, after the [member
+pass](#member-lifecycle); also `POST /reap`) puts obsolete items away:
+
+1. **Read informational items close:** an FYI, note or answer that is still
+   open but has an acked delivery goes to `done` (`auto-done`, by its first
+   acker). Since acks close them, this only catches rows from before (the
+   one-off backlog pass).
+2. **Orphaned items expire:** an open or held item whose sender **and** every
+   recipient member are gone (`gone_at` set, or the member row is missing).
+   For a role or project address the recipients are the members it was
+   delivered to; an assignee counts too. Event note `everyone gone`.
+3. **Stale items expire:** an open or held item nothing touched (`updated_at`)
+   for `AGENT_PTT_ITEM_EXPIRE_DAYS` (default 7; `0` turns this rule off; a
+   value that isn't a non-negative number falls back to 7). Any state change
+   touches it, and so does a reply or question sent with `reply_to` on it.
+   Event note `untouched 7 days`.
+
+Expired items get event `expired` with no member, and their lease is
+cleared. Each pass posts **one** notice per project that changed, only when
+something did, e.g. `Board: 12 stale items expired (untouched 7 days or
+everyone gone); 3 read FYI/notes closed`.
+
+**Bulk close.** `POST /projects/{p}/work-items/bulk` (shared API key, no
+member) closes (`done`, event `closed`) or expires (`expired`) a list of
+items; done and declined ones are left alone. The Board's Select mode uses
+it; each call posts one notice (`Board: expired 4 items (admin)`).
 
 ### Resource claims
 

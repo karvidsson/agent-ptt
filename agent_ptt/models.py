@@ -574,7 +574,7 @@ class Channel(BaseModel):
 
 WorkItemKind = Literal["instruction", "handoff", "question", "answer", "claim", "release", "note"]
 WorkItemState = Literal[
-    "pending", "delivered", "acked", "claimed", "waiting", "review", "done", "declined"
+    "pending", "delivered", "acked", "claimed", "waiting", "review", "done", "declined", "expired"
 ]
 MemberMode = Literal["monitor", "hooks"]
 WORK_ITEM_BODY_MAX = 8000
@@ -850,6 +850,13 @@ class WorkItemCreate(BaseModel):
 
 class WorkItemNote(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
+
+
+class WorkItemBulk(BaseModel):
+    """Admin: close (``done``) or expire many items of one project (the Board)."""
+
+    ids: list[str] = Field(min_length=1, max_length=500)
+    state: Literal["done", "expired"]
 
 
 class WorkItemStateChange(WorkItemNote):
