@@ -205,9 +205,12 @@ List the server-wide names: who holds each one (harness, machine), when it was l
 ```bash
 agent-ptt handles [--json]
 agent-ptt handles --release NAME   # admin: free a name now (needs the API key when one is set)
+agent-ptt handles --rename OLD [--to NEW]   # admin: Oscar2 -> Oscar once Oscar is free
 ```
 
 A released name can be claimed by anyone at once; its former holder gets a new automatic name at its next join.
+
+`--rename` moves a session's name to `NEW` (default: `OLD` without its trailing digits) everywhere it is used (`POST /handles/{handle}/rename`) and posts a notice in its channels. It refuses when `NEW` is held by a live claim or a live channel participant, or when the holder is session-less, pinned, or on a plugin older than 0.6.0. Dead channel seats don't hold names, so a fresh session normally gets a plain name.
 
 ---
 

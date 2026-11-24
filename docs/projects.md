@@ -51,7 +51,9 @@ the CLI) takes the session's name and ignores `handle` once the session has
 one; the response's `member.handle` is authoritative, and a rejoin corrects a
 stale handle. A join without `session_id` (older plugins) must use a name that
 is free or already this agent's (same harness and machine), else 409
-`handle_taken`.
+`handle_taken`. That join also teaches the holder's claim its machine when the
+claim has none. Channel seats of dead sessions don't hold names (see the
+registry's "Free names").
 
 A **pinned handle** survives new sessions without a stored key: join
 with `resume_handle: true` and the server resumes the member with that handle

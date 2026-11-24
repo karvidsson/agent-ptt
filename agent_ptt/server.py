@@ -1181,6 +1181,36 @@ async def release_handle(handle: str, db: Session = Depends(get_db)):
     return {"released": claim.handle}
 
 
+class RenameHandleRequest(BaseModel):
+    to: str | None = Field(
+        default=None, max_length=64, description="New name; default: the old one without digits"
+    )
+
+
+@api.post("/handles/{handle}/rename", tags=["Handles"])
+async def rename_handle(
+    handle: str, req: RenameHandleRequest | None = None, db: Session = Depends(get_db)
+):
+    """Admin cleanup: move a session's name to a freed-up one (``Oscar2`` -> ``Oscar``).
+
+    Renames the session identity, claim, project members and channel seats,
+    and posts a notice in each affected channel. 409 when the target is held
+    (live claim or live seat), or the holder can't follow a rename (no
+    session, pinned, or a plugin older than 0.6.0).
+    """
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    to = req.to if req else None
+    try:
+        renamed = await asyncio.to_thread(handles.rename_handle, db, handle, to)
+    except handles.RenameRefused as refused:
+        return JSONResponse({"error": refused.detail}, status_code=refused.status)
+    for channel_id in renamed.channels:
+        await ch.post_notice(channel_id, "agent-ptt", renamed.notice, "project-server", db)
+    logger.info(f"🏷️  Handle {renamed.old} renamed to {renamed.new}")
+    return {"renamed": renamed.old, "to": renamed.new, "channels": renamed.channels}
+
+
 @api.get("/voices", tags=["Voices"])
 async def list_voices(engine: str = "pocket-tts"):
     """List designed voices from the active TTS engine."""

@@ -151,7 +151,7 @@ def _choose_voice(identity: SessionIdentityDB, db: Session) -> None:
     if pool:
         # Spread voices over the sessions people hear now (in a channel),
         # then over every remembered session.
-        busy = handles.busy_participant_handles(db)
+        busy = handles.live_seat_handles()
         active = Counter(item.voice_id for item in others if handles.ci(item.handle) in busy)
         total = Counter(item.voice_id for item in others)
 
@@ -313,14 +313,22 @@ def get_session_identity(
                 wanted = handles.get_claim(db, preferred_handle)
                 if not handles.is_live(wanted, now):
                     handle = preferred_handle.strip()
-            handle = handle or handles.allocate(db, now)
+            if not handle:
+                handle = handles.allocate(db, now)
+                # The name is free, so any seat still called that is dead: detach
+                # it, or the roster shows two of them and @mentions reach the dead one.
+                handles.evict_seats(
+                    db, handle, keep_recipients={handles.recipient_id(agent, session_id)}
+                )
         identity = _become(db, session_id, agent, handle, None, inherit_voice=inherited is not None)
         handles.take(db, handle, owner, pinned=pinned, now=now)
         db.commit()
         return identity
 
 
-def adopt_handle(session_id: str, agent: str, handle: str, db: Session) -> SessionIdentityDB | None:
+def adopt_handle(
+    session_id: str, agent: str, handle: str, db: Session, machine: str | None = None
+) -> SessionIdentityDB | None:
     """A session rejoining a project member takes that member's name.
 
     For names claimed without a session (an older plugin's project join, or
@@ -351,7 +359,7 @@ def adopt_handle(session_id: str, agent: str, handle: str, db: Session) -> Sessi
             Owner(
                 owner_id,
                 harness=agent,
-                machine=mine.machine if mine else None,
+                machine=(mine.machine if mine else None) or machine,
                 folder=mine.folder if mine else None,
                 session_id=session_id,
             ),

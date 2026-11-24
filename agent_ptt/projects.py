@@ -291,7 +291,10 @@ def _member_handle(db: Session, req: ProjectJoinRequest, rejoining: ProjectMembe
             req.session_id, agent, db, machine=req.machine, preferred_handle=req.handle
         )
         if rejoining is not None and handles.ci(rejoining.handle) != handles.ci(identity.handle):
-            identity = adopt_handle(req.session_id, agent, rejoining.handle, db) or identity
+            identity = (
+                adopt_handle(req.session_id, agent, rejoining.handle, db, machine=req.machine)
+                or identity
+            )
         return identity.handle
 
     # A rejoin that omits harness or machine keeps the stored ones.
