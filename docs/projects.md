@@ -58,7 +58,38 @@ registry's "Free names").
 A **pinned handle** survives new sessions without a stored key: join
 with `resume_handle: true` and the server resumes the member with that handle
 (case-insensitive), returning its `member_key`, and its open items come back.
-The pinned name itself belongs to one harness on one machine.
+The pinned name itself belongs to one harness on one machine. A gone member
+(below) is never resumed.
+
+### Member lifecycle
+
+Members are never deleted; the server marks the ones that are gone.
+
+- **Signs of life:** joins, inbox reads and long-polls, item actions,
+  `PATCH members/me`, and saying something in the project channel under the
+  member's handle. Each moves `last_seen` and keeps the handle claim alive.
+- **Gone:** a member unseen for the gone window (`AGENT_PTT_GONE_HOURS`,
+  default 24, `0` = off) gets `gone_at` set by the server's member pass (every
+  5 minutes, or `POST /reap`). It is kept while it long-polls its inbox or read
+  it in the last minute, and while a live claim of the same agent holds its
+  name (same harness and machine, an unknown side matching, and claimed by its
+  holder before the member's last sign of life: a later session that reused
+  the name doesn't count), i.e. the agent is still alive in a channel or
+  another project. A pinned name's claim lives 30 days, so a pinned member is
+  kept as long. Of several members with one name in a project, only the most
+  recently seen one is kept by the claim.
+- **What gone means:** its `member_key` answers 401 everywhere (`Unknown
+  member_key` on join), it leaves the roster, `member_count`, `@Handle`/`to`
+  resolution and role/project deliveries. Its row stays, so the Board, item
+  threads and events still show its handle, and `GET /projects/{p}/usage` still
+  lists it (with `gone: true`) when it reported usage. Its name claim is
+  released if it is expired and still this agent's. Open items addressed to it
+  are left as they are. Nothing is posted in the channel.
+- **Coming back:** the plugins (0.6.x `project_link._join_project`) retry a
+  join without the key on 401/403, so a returning session joins as a **new
+  member**, also with `resume_handle` for a pinned name: a gone member's key and
+  inbox are not resurrected. Role and project items still open are delivered to
+  the new member; items addressed to the old `agent:<member_id>` stay with it.
 
 **Presence.** Members report `machine` and `doing` at join or with
 `PATCH /projects/{p}/members/me` (`doing: ""` clears it). The roster in

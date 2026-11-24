@@ -388,6 +388,9 @@ def project_usage(
     seen_limits: dict[tuple[str, str], dict[str, Any]] = {}
     for member in members:
         summary = summaries.get(member.member_id)
+        gone = getattr(member, "gone_at", None) is not None
+        if gone and summary is None:
+            continue  # A gone member stays listed only for the usage it reported.
         harness = (summary or {}).get("harness") or member.harness
         member_rows.append(
             {
@@ -396,6 +399,7 @@ def project_usage(
                 "harness": harness,
                 "machine": member.machine,
                 "usage": summary,
+                "gone": gone,
             }
         )
         limits = limits_for(db, member.machine, harness)

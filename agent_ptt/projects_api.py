@@ -170,7 +170,10 @@ async def list_projects(db: Session = Depends(get_db)):
             {
                 **_project_out(project),
                 "member_count": db.query(ProjectMemberDB)
-                .filter_by(project_id=project.project_id)
+                .filter(
+                    ProjectMemberDB.project_id == project.project_id,
+                    ProjectMemberDB.gone_at.is_(None),
+                )
                 .count(),
                 "open_items": pj.open_item_count(db, project.project_id),
             }
@@ -213,9 +216,14 @@ async def project_usage(
     project = db.get(ProjectDB, project_id)
     if project is None:
         raise HTTPException(404, "Project not found")
-    return usage_mod.project_usage(
-        db, project, pj.project_members(db, project_id), estimate=estimate
+    # Gone members too (flagged ``gone``), so per-member rows still add up to the totals.
+    members = (
+        db.query(ProjectMemberDB)
+        .filter_by(project_id=project_id)
+        .order_by(ProjectMemberDB.created_at)
+        .all()
     )
+    return usage_mod.project_usage(db, project, members, estimate=estimate)
 
 
 @router.get("/usage")

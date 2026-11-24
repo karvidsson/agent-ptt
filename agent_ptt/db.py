@@ -59,6 +59,13 @@ def init_db() -> None:
             existing = {c["name"] for c in inspect(connection).get_columns(table)}
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+        # Seat age across restarts (legacy table; no Alembic revision).
+        if inspect(connection).has_table("participant_keys"):
+            existing = {c["name"] for c in inspect(connection).get_columns("participant_keys")}
+            if "last_seen" not in existing:
+                connection.execute(
+                    text("ALTER TABLE participant_keys ADD COLUMN last_seen DATETIME")
+                )
         # Project member presence (legacy table; no Alembic revision).
         if inspect(connection).has_table("project_members"):
             existing = {c["name"] for c in inspect(connection).get_columns("project_members")}
@@ -67,6 +74,7 @@ def init_db() -> None:
                 "doing": "VARCHAR(200)",
                 "doing_at": "DATETIME",
                 "plugin_version": "VARCHAR(20)",
+                "gone_at": "DATETIME",
             }.items():
                 if name not in existing:
                     connection.execute(
