@@ -51,7 +51,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | GET | `/voices` | [List Voices](#list-voices) |
 | POST, GET | `/voices/profiles` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE | `/voices/profiles/{voice_id}` | [Voice Profiles](#voice-profiles) |
-| GET, DELETE | `/handles`, `/handles/{handle}` | [Handle registry](#handle-registry) |
+| GET, DELETE, POST | `/handles`, `/handles/{handle}`, `/handles/{handle}/rename` | [Handle registry](#handle-registry) |
 | GET | `/voices/pinned` | [Pinned Voices](#pinned-voices) |
 | POST | `/voices/pinned/{handle}/redesign` | [Pinned Voices](#pinned-voices) |
 | POST, GET | `/projects/join`, `/projects`, `/projects/{project_id}` | [Projects and work items](#projects-and-work-items) |
@@ -762,6 +762,32 @@ DELETE /handles/{handle}
 Releases a name early (case-insensitive): `{"released": "Theo"}`, or 404 when
 nobody holds it. Anyone may claim it at once; its former session gets a new
 automatic name at its next join. The CLI: `agent-ptt handles [--release NAME]`.
+
+```
+POST /handles/{handle}/rename
+{"to": "Oscar"}
+```
+
+Admin cleanup (API key; 404 when hosted): moves a session's name to a freed-up
+one. The body is optional; `to` defaults to the name without its trailing
+digits (`Oscar2` → `Oscar`). The session identity, claim, project members and
+the session's channel participants are renamed in the DB and in memory; dead
+seats still called `to` are detached; each affected channel gets a notice
+`@Oscar2 is now @Oscar (name freed up)`.
+
+```json
+{"renamed": "Oscar2", "to": "Oscar", "channels": ["<channel-id>", "…"]}
+```
+
+Errors: 404 when `{handle}` has no live claim; 422 when there is no target
+name; 409 when `to` has a live claim or a live channel seat, or when the holder
+can't follow a rename: its claim has no `session_id`, it is pinned, or one of
+its project members reports a `plugin_version` below 0.6.0 (older plugins claim
+their cached name again). Error bodies are `{"error": "<reason>"}`.
+
+Dead seats don't hold names: a participant blocks its name only while it is
+in memory, in a non-archived channel, not `offline` and seen within the 24 h
+name TTL; see [handle registry](architecture.md#handle-registry).
 
 ### Pinned Voices
 

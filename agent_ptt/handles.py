@@ -31,7 +31,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from agent_ptt.models import ChannelDB, HandleClaimDB, ParticipantKeyDB
+from agent_ptt.models import HandleClaimDB, ParticipantKeyDB
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +248,18 @@ def refresh(claim: HandleClaimDB, owner: Owner, now: datetime | None = None) -> 
         claim.folder = owner.folder[:500]
 
 
+def fill_unknown(claim: HandleClaimDB, owner: Owner) -> None:
+    """Learn the holder's machine and harness when the claim lacks them.
+
+    A known value is never overwritten: ``owner`` may be a compatible client
+    (an older plugin's project join) rather than the holder itself.
+    """
+    if not claim.machine and owner.machine:
+        claim.machine = owner.machine[:100]
+    if not claim.harness and owner.harness:
+        claim.harness = owner.harness[:64]
+
+
 def release(db: Session, handle: str) -> HandleClaimDB | None:
     """Delete the claim (``DELETE /handles``); the caller commits."""
     claim = get_claim(db, handle)
@@ -266,14 +278,61 @@ def claims_of(db: Session, owner_id: str) -> list[HandleClaimDB]:
 # ---------------------------------------------------------------------------
 
 
-def busy_participant_handles(db: Session) -> set[str]:
-    """Casefolded handles of participants in a (still existing) channel."""
-    rows = db.execute(
-        select(ParticipantKeyDB.handle)
-        .join(ChannelDB, ChannelDB.channel_id == ParticipantKeyDB.channel_id)
-        .distinct()
-    )
-    return {ci(handle) for (handle,) in rows}
+def live_seat_handles(now: datetime | None = None) -> set[str]:
+    """Casefolded handles of channel seats that are plausibly alive.
+
+    A seat counts while it is in memory in a non-archived channel, has shown a
+    sign of life since the last restart (not ``offline``) and was seen within
+    ``auto_ttl()``. Dead seats (a hooked session gone for days, a seat restored
+    after a restart that never came back) hold no name: the registry claims are
+    the authority, and a live claim already blocks its name on its own.
+    """
+    from agent_ptt import channel as ch
+
+    now = now or now_utc()
+    since = now - auto_ttl()
+    return {
+        ci(participant.handle)
+        for live in ch.list_channels()
+        for participant in live.participants.values()
+        if participant.state != "offline" and (as_utc(participant.last_seen) or now) > since
+    }
+
+
+def evict_seats(db: Session, handle: str, keep_recipients: set[str] = frozenset()) -> set[str]:
+    """Detach the seats called ``handle`` (DB and memory); returns channel IDs.
+
+    Used when a name is handed to a new holder: seats of earlier holders are
+    dead (see ``live_seat_handles``), and leaving them would put two "@Oscar"
+    in one roster. Same semantics as ``channel.leave_channel``: the key row is
+    detached, its mention receiver dropped, no ban and no notice. Seats whose
+    mention receiver is in ``keep_recipients`` stay. The caller commits.
+    """
+    from agent_ptt import channel as ch
+    from agent_ptt.models import MentionReceiverDB
+
+    wanted = ci(handle)
+    receivers = {row.key_id: row.recipient_id for row in db.scalars(select(MentionReceiverDB))}
+    evicted: set[str] = set()
+    keys: set[str] = set()
+    for row in db.scalars(select(ParticipantKeyDB).where(ParticipantKeyDB.channel_id.is_not(None))):
+        if ci(row.handle) == wanted and receivers.get(row.key_id) not in keep_recipients:
+            evicted.add(row.channel_id)
+            keys.add(row.key_id)
+            row.channel_id = None
+    for live in ch.list_channels(include_archived=True):
+        for key_id, participant in list(live.participants.items()):
+            if ci(participant.handle) != wanted or key_id in keys:
+                continue
+            if (participant.mention_id or receivers.get(key_id)) not in keep_recipients:
+                keys.add(key_id)
+                evicted.add(live.channel_id)
+    if keys:
+        db.query(MentionReceiverDB).filter(MentionReceiverDB.key_id.in_(keys)).delete()
+        for live in ch.list_channels(include_archived=True):
+            for key_id in keys & set(live.participants):
+                del live.participants[key_id]
+    return evicted
 
 
 def tier(suffix: int) -> list[str]:
@@ -286,13 +345,13 @@ def tier(suffix: int) -> list[str]:
 def allocate(db: Session, now: datetime | None = None, exclude: set[str] = frozenset()) -> str:
     """A free name: plain names first, then ``Name2``, ``Name3``, ….
 
-    Free means no live claim and no participant using it in a channel.
+    Free means no live claim and no live seat using it (``live_seat_handles``).
     Within the first tier with a free name, one never claimed wins (random);
     otherwise the name whose claim expired longest ago.
     """
     now = now or now_utc()
     claims = {claim.handle_ci: claim for claim in db.scalars(select(HandleClaimDB))}
-    busy = busy_participant_handles(db) | {ci(name) for name in exclude}
+    busy = live_seat_handles(now) | {ci(name) for name in exclude}
     suffix = 1
     while True:
         free = [
@@ -357,9 +416,11 @@ def claim_raw(db: Session, handle: str, owner: Owner, compatible=None) -> Handle
             if compatible is None or not compatible(claim):
                 raise HandleTaken(claim)
             refresh(claim, Owner(claim.owner_id), now)
+            fill_unknown(claim, owner)
             return claim
         if claim is not None and claim.owner_id == owner.owner_id:
             refresh(claim, owner, now)
+            fill_unknown(claim, owner)
             return claim
         return take(db, handle, owner, now=now)
 
@@ -474,3 +535,123 @@ def rename_participants(
                 participant.handle = new
                 touched.add(live.channel_id)
     return touched
+
+
+# ---------------------------------------------------------------------------
+# POST /handles/{handle}/rename (admin cleanup)
+# ---------------------------------------------------------------------------
+
+# Plugins before 0.6.0 cache their name and claim it again at the next join,
+# so renaming one would split it into two identities.
+RENAME_MIN_PLUGIN = (0, 6, 0)
+
+
+class RenameRefused(Exception):
+    def __init__(self, status: int, detail: str) -> None:
+        self.status = status
+        self.detail = detail
+        super().__init__(detail)
+
+
+@dataclass
+class Renamed:
+    old: str
+    new: str
+    channels: list[str]  # channel IDs that should get a notice
+
+    @property
+    def notice(self) -> str:
+        return f"@{self.old} is now @{self.new} (name freed up)"
+
+
+def _version(text: str | None) -> tuple[int, ...] | None:
+    import re
+
+    match = re.match(r"\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", text or "")
+    return tuple(int(part or 0) for part in match.groups()) if match else None
+
+
+def default_rename_target(handle: str) -> str:
+    """``Oscar2`` -> ``Oscar``: the name without its trailing digits."""
+    return handle.strip().rstrip("0123456789").strip()
+
+
+def rename_handle(db: Session, handle: str, to: str | None = None) -> Renamed:
+    """Move a session's claimed name to ``to`` (default: digits stripped).
+
+    Renames the session identity, the claim, the project members and the
+    session's channel seats, in the DB and in memory; seats of dead former
+    holders of ``to`` are detached. Raises ``RenameRefused`` (404/409/422).
+    The caller posts ``Renamed.notice`` in ``Renamed.channels``.
+    """
+    from agent_ptt import channel as ch
+    from agent_ptt.models import ProjectDB, ProjectMemberDB, SessionIdentityDB
+
+    with lock:
+        flush(db)
+        now = now_utc()
+        claim = get_claim(db, handle)
+        if claim is None or not is_live(claim, now):
+            raise RenameRefused(404, f"No live claim on {handle!r}")
+        old = claim.handle
+        new = (to or "").strip() or default_rename_target(old)
+        if not new:
+            raise RenameRefused(422, f"No name to rename {old} to; pass one")
+        if ci(new) == claim.handle_ci:
+            raise RenameRefused(422, f"{old} is already called that")
+        target = get_claim(db, new)
+        if is_live(target, now):
+            raise RenameRefused(409, f"{target.handle} is held by a live claim")
+        if ci(new) in live_seat_handles(now):
+            raise RenameRefused(409, f"{new} is in use by a live channel participant")
+        if not claim.session_id:
+            raise RenameRefused(
+                409, f"{old} is held without a session (old plugin or CLI); it would claim it again"
+            )
+        if claim.pinned:
+            raise RenameRefused(409, f"{old} is pinned (AGENT_PTT_HANDLE); change the pin instead")
+        members = [
+            m for m in db.scalars(select(ProjectMemberDB)) if ci(m.handle) == claim.handle_ci
+        ]
+        for member in members:
+            version = _version(member.plugin_version)
+            if version is not None and version < RENAME_MIN_PLUGIN:
+                raise RenameRefused(
+                    409,
+                    f"{old} runs plugin {member.plugin_version} (< 0.6.0), "
+                    "which would claim its cached name again",
+                )
+
+        agent = claim.owner_id.split(":", 2)[1] if claim.owner_id.startswith("session:") else None
+        identity = db.get(SessionIdentityDB, (claim.session_id, agent)) if agent else None
+        for stale in db.scalars(select(SessionIdentityDB)):
+            if ci(stale.handle) == ci(new) and stale is not identity:
+                db.delete(stale)
+        db.flush()  # Free the UNIQUE handle before renaming.
+        if identity is not None:
+            identity.handle = new
+        owner = Owner(
+            claim.owner_id,
+            harness=claim.harness,
+            machine=claim.machine,
+            folder=claim.folder,
+            session_id=claim.session_id,
+        )
+        claimed_at, seen = claim.claimed_at, last_seen(claim)
+        release(db, old)
+        db.flush()
+        renamed = take(db, new, owner, pinned=False, now=now)
+        renamed.claimed_at, renamed.last_seen = claimed_at, seen
+
+        recipients = {recipient_id(agent, claim.session_id)} if agent else set()
+        evict_seats(db, new, keep_recipients=recipients)
+        channels = rename_participants(db, old, new, recipients=recipients)
+        project_ids = {m.project_id for m in members}
+        for member in members:
+            member.handle = new
+        for project in db.scalars(select(ProjectDB).where(ProjectDB.project_id.in_(project_ids))):
+            if project.channel_id:
+                channels.add(project.channel_id)
+        db.commit()
+        live = {c.channel_id for c in ch.list_channels()}
+        return Renamed(old=old, new=new, channels=sorted(channels & live))

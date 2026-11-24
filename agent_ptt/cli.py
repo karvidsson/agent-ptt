@@ -727,10 +727,38 @@ def handles_command(
     release: str = typer.Option(
         None, "--release", metavar="NAME", help="Release this name now (admin; needs the API key)"
     ),
+    rename: str = typer.Option(
+        None,
+        "--rename",
+        metavar="NAME",
+        help="Rename this holder's name (admin; needs the API key), e.g. Oscar2 -> Oscar",
+    ),
+    to: str = typer.Option(
+        None, "--to", metavar="NEW", help="With --rename: the new name (default: drop the digits)"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print the raw result as JSON"),
 ):
-    """List the server-wide names and who holds them, or release one."""
+    """List the server-wide names and who holds them, or release or rename one."""
     base = _get_base_url()
+    if to and not rename:
+        rprint("[bold red]❌ --to needs --rename[/]")
+        raise typer.Exit(1)
+    if rename:
+        resp = httpx.post(
+            f"{base}/handles/{quote(rename, safe='')}/rename",
+            json={"to": to} if to else {},
+            headers=_auth_headers(),
+            timeout=30.0,
+        )
+        if resp.status_code == 200:
+            body = resp.json()
+            if as_json:
+                print(json.dumps(body, indent=2))
+                return
+            rprint(f"[bold green]✅ {escape(body['renamed'])} is now {escape(body['to'])}[/]")
+            return
+        rprint(f"[bold red]❌ Error:[/bold red] {escape(resp.text)}")
+        raise typer.Exit(1)
     if release:
         resp = httpx.delete(
             f"{base}/handles/{quote(release, safe='')}", headers=_auth_headers(), timeout=30.0

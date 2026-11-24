@@ -226,6 +226,25 @@ it, so `@Theo` is one agent everywhere.
   machine and folder quiet for 10 minutes: restart stickiness), the project
   join's wish if free, then the allocator (plain names, then `Name2`, …; never
   claimed before expired, expired longest ago first).
+- **Free names.** A name is free when it has no live claim and no live seat.
+  The claims are the authority; a channel seat on its own blocks a name only
+  while it is plausibly alive (`handles.live_seat_handles`): in memory, in a
+  non-archived channel, seen since the last restart (not `offline`) and within
+  the 24 h name TTL. Dead seats (a hooked session gone for days, a seat
+  restored after a restart that never came back) don't hold names. When the
+  allocator hands a name out, seats still carrying it from earlier holders are
+  detached like a `leave` (`handles.evict_seats`: no ban, no notice), so a
+  roster never shows two of them and `@mentions` don't reach a dead one.
+- **Machine.** A claim without `machine`/`harness` (a 0.5.x plugin joins
+  channels without a machine) learns them from the holder's next compatible
+  join, such as its session-less project join; a known value is never
+  overwritten.
+- **Admin rename.** `POST /handles/{handle}/rename` moves a session's name
+  (`Oscar2` to a freed-up `Oscar`): identity, claim, project members and the
+  session's seats, in the DB and in memory, with a notice in each affected
+  channel. Refused (409) when the target has a live claim or live seat, or the
+  holder can't follow a rename: no session, pinned, or a member on a plugin
+  older than 0.6.0 (it would claim its cached name again).
 - **Pins** (`pin_handle`, `AGENT_PTT_HANDLE`) belong to harness + machine. The
   same harness on the same machine takes a pin over; anyone else gets 409
   `handle_taken` naming the holder.

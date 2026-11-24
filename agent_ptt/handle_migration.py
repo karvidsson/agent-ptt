@@ -221,6 +221,7 @@ def migrate(db: Session, now: datetime | None = None) -> list[Rename]:
     for name, winner, loser in losers:
         old = loser.handle
         new = handles.allocate(db, now)
+        handles.evict_seats(db, new)  # Seats of the name's dead former holders.
         for stale in db.scalars(select(SessionIdentityDB)):
             if handles.ci(stale.handle) == handles.ci(new):
                 db.delete(stale)
