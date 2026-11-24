@@ -389,7 +389,7 @@ def test_away_reap_zero_means_never(client, monkeypatch):
     assert ch.get_participant(agent["key_id"]).state == "away"
 
 
-@pytest.mark.parametrize(("raw", "expected"), [("", 604800), ("0", 0), ("60", 60), ("x", 604800)])
+@pytest.mark.parametrize(("raw", "expected"), [("", 86400), ("0", 0), ("60", 60), ("x", 86400)])
 def test_away_reap_seconds_env(monkeypatch, raw, expected):
     monkeypatch.setenv("AGENT_PTT_AWAY_REAP_SECONDS", raw)
     assert ch.away_reap_seconds() == expected

@@ -45,7 +45,7 @@ Every table, by module. All of them are created by `init_db()`; the
 The `workspace_*` tables are described in [Organization workspaces](workspaces.md);
 the rest of this page covers the local (legacy) tables.
 
-A restart is invisible to participants: the server reloads its channels, their participants and their transcripts on startup, so a key issued before the restart still posts afterwards. Presence is not stored: restored participants show as `offline` until they are seen again, and ones that stay silent for the idle grace period (`AGENT_PTT_IDLE_REAP_SECONDS`, default 600 s) are removed like a leave — except mention receivers (hooked agent sessions), which turn `away` and are removed only after `AGENT_PTT_AWAY_REAP_SECONDS` more (default 7 days, `0` = never).
+A restart is invisible to participants: the server reloads its channels, their participants and their transcripts on startup, so a key issued before the restart still posts afterwards. Presence is not stored: restored participants show as `offline` until they are seen again, and ones that stay silent for the idle grace period (`AGENT_PTT_IDLE_REAP_SECONDS`, default 600 s) are removed like a leave — except mention receivers (hooked agent sessions), which turn `away` and are removed only after `AGENT_PTT_AWAY_REAP_SECONDS` more (default the gone window, `AGENT_PTT_GONE_HOURS` = 24 h; `0` = never). Their last sign of life is stored (`participant_keys.last_seen`), so they come back with their real age and a restart doesn't restart that window.
 
 Only live connections are lost — WebSocket spectators reconnect, and audio already queued for playback is dropped.
 
@@ -78,6 +78,7 @@ Only live connections are lost — WebSocket spectators reconnect, and audio alr
 | `voice_id` | TEXT | Associated voice profile (nullable) |
 | `channel_id` | TEXT | Current channel (nullable; cleared when the participant leaves, is reaped as idle, is kicked or the channel is archived, so `restore_channels()` skips it) |
 | `created_at` | DATETIME | Creation timestamp |
+| `last_seen` | DATETIME (nullable) | Last sign of life, written at most once a minute (`channel.flush_seen`); a restored hooked seat keeps this age. NULL on rows from before the column: they count from the restart. Added to older databases by an idempotent `ALTER TABLE` in `init_db()` |
 
 ### `pinned_voices`
 
@@ -240,7 +241,7 @@ delivery time, and creation time for bounded pending-inbox reads. See
 Five additive tables back [projects and the project inbox](projects.md). Like
 the other legacy tables they have no Alembic revision: `init_db()` creates
 them on new and existing databases (`create_all`); the presence columns
-`project_members.machine`, `doing`, `doing_at` and `plugin_version` came later and are added to
+`project_members.machine`, `doing`, `doing_at`, `plugin_version` and `gone_at` came later and are added to
 older databases by idempotent `ALTER TABLE ... ADD COLUMN`s in `init_db()`.
 Hosted mode never uses them.
 
@@ -270,6 +271,7 @@ Hosted mode never uses them.
 | `doing_at` | DATETIME (nullable) | When `doing` was last set |
 | `plugin_version` | VARCHAR(20) (nullable) | Announcer plugin version it last joined with (stale installs show in `ptt who`) |
 | `created_at`, `last_seen` | DATETIME | Join time and last member request |
+| `gone_at` | DATETIME (nullable) | Set when the server marked the member gone ([member lifecycle](projects.md#member-lifecycle)): its key stops working and it leaves the roster, but the row stays for history |
 
 ### `work_items`
 

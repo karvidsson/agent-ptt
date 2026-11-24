@@ -452,7 +452,7 @@ def list_claims(db: Session) -> list[dict[str, Any]]:
             channels.setdefault(ci(participant.handle), set()).add(live.name)
     projects: dict[str, set[str]] = {}
     names = {p.project_id: p.name for p in db.scalars(select(ProjectDB))}
-    for member in db.scalars(select(ProjectMemberDB)):
+    for member in db.scalars(select(ProjectMemberDB).where(ProjectMemberDB.gone_at.is_(None))):
         if member.project_id in names:
             projects.setdefault(ci(member.handle), set()).add(names[member.project_id])
     out = []
@@ -620,8 +620,10 @@ def rename_handle(db: Session, handle: str, to: str | None = None) -> Renamed:
             )
         if claim.pinned:
             raise RenameRefused(409, f"{old} is pinned (AGENT_PTT_HANDLE); change the pin instead")
-        members = [
-            m for m in db.scalars(select(ProjectMemberDB)) if ci(m.handle) == claim.handle_ci
+        members = [  # Gone members keep the name they had in history.
+            m
+            for m in db.scalars(select(ProjectMemberDB).where(ProjectMemberDB.gone_at.is_(None)))
+            if ci(m.handle) == claim.handle_ci
         ]
         for member in members:
             version = _version(member.plugin_version)

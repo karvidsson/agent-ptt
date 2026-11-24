@@ -178,6 +178,28 @@ def listening(member_id: str, now: datetime | None = None) -> bool:
     return last is not None and ((now or now_utc()) - last).total_seconds() < LISTENING_SECONDS
 
 
+def waiting_member_ids() -> set[str]:
+    """Members with an open inbox long-poll right now."""
+    return {member_id for member_id, count in _active_waits.items() if count}
+
+
+def listening_seats(db: Session, member_ids: Iterable[str]) -> set[tuple[str, str]]:
+    """``(channel_id, casefolded handle)`` of these members' project channels.
+
+    The seat reaper keeps a channel seat whose agent waits on its project inbox.
+    """
+    ids = list(member_ids)
+    if not ids:
+        return set()
+    rows = (
+        db.query(ProjectMemberDB.handle, ProjectDB.channel_id)
+        .join(ProjectDB, ProjectDB.project_id == ProjectMemberDB.project_id)
+        .filter(ProjectMemberDB.member_id.in_(ids), ProjectMemberDB.gone_at.is_(None))
+        .all()
+    )
+    return {(channel_id, handles.ci(handle)) for handle, channel_id in rows if channel_id}
+
+
 def reset_runtime_state() -> None:
     from agent_ptt import usage
 
@@ -243,7 +265,12 @@ def _ensure_channel(db: Session, project: ProjectDB) -> bool:
 def member_by_key(db: Session, member_key: str | None) -> ProjectMemberDB | None:
     if not member_key:
         return None
-    return db.query(ProjectMemberDB).filter_by(member_key=member_key).first()
+    # A gone member's key stops working (401), so a returning plugin rejoins fresh.
+    return (
+        db.query(ProjectMemberDB)
+        .filter(ProjectMemberDB.member_key == member_key, ProjectMemberDB.gone_at.is_(None))
+        .first()
+    )
 
 
 def get_project(db: Session, project_id: str) -> ProjectDB | None:
@@ -405,12 +432,121 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
 
 
 def project_members(db: Session, project_id: str) -> list[ProjectMemberDB]:
+    """The project's current members (gone ones left out; see ``reap_gone_members``)."""
     return (
         db.query(ProjectMemberDB)
-        .filter_by(project_id=project_id)
+        .filter(ProjectMemberDB.project_id == project_id, ProjectMemberDB.gone_at.is_(None))
         .order_by(ProjectMemberDB.created_at)
         .all()
     )
+
+
+# ---------------------------------------------------------------------------
+# Gone members (the server's periodic cleanup)
+# ---------------------------------------------------------------------------
+
+
+def _known_match(a: str | None, b: str | None) -> bool:
+    """Equal (casefold) when both are known; an unknown side matches anything."""
+    return not (a and a.strip()) or not (b and b.strip()) or handles.same(a, b)
+
+
+def _claim_is_members(claim, member: ProjectMemberDB) -> bool:
+    """Whether ``claim`` is plausibly held by the agent behind ``member``.
+
+    Same harness and same machine, where an unknown side matches (older
+    plugins send no machine; channel-only claims may lack a harness), and
+    claimed by its current owner before the member's last sign of life: a
+    claim taken later is a new session that reused the name.
+    """
+    claimed = as_utc(claim.claimed_at)
+    seen = as_utc(member.last_seen)
+    if claimed is not None and seen is not None and claimed > seen:
+        return False
+    return _known_match(claim.harness, member.harness) and _known_match(
+        claim.machine, member.machine
+    )
+
+
+@dataclass
+class GoneMember:
+    member_id: str
+    project_id: str
+    project: str | None
+    handle: str
+    last_seen: datetime | None
+
+
+@dataclass
+class GonePass:
+    members: list[GoneMember] = field(default_factory=list)
+    claims_released: list[str] = field(default_factory=list)
+
+
+def reap_gone_members(
+    db: Session, now: datetime | None = None, window: float | None = None
+) -> GonePass:
+    """Mark members unseen for the gone window as gone (a soft remove).
+
+    ``window`` defaults to ``channel.gone_seconds()`` (``AGENT_PTT_GONE_HOURS``,
+    24 h; 0 = off). A member is kept while it long-polls its inbox or read it
+    recently (``listening``), or while a live handle claim of the same agent
+    (harness and machine) holds its name and it is the project's most recently
+    seen member with that name. A gone member keeps its row (work items,
+    events and usage still name it) but leaves the roster and every address
+    lookup, and its ``member_key`` answers 401. Its name claim is released
+    when it is expired and still this agent's. Open items addressed to it are
+    left alone. Nothing is posted.
+    """
+    result = GonePass()
+    window = ch.gone_seconds() if window is None else window
+    if window <= 0:
+        return result
+    now = now or now_utc()
+    cutoff = now - timedelta(seconds=window)
+    with handles.lock:
+        handles.flush(db)
+        members = db.query(ProjectMemberDB).filter(ProjectMemberDB.gone_at.is_(None)).all()
+        never = datetime.min.replace(tzinfo=UTC)
+
+        def seen(member: ProjectMemberDB) -> datetime:
+            return as_utc(member.last_seen) or as_utc(member.created_at) or never
+
+        newest: dict[tuple[str, str], ProjectMemberDB] = {}
+        for member in members:
+            key = (member.project_id, handles.ci(member.handle))
+            if key not in newest or seen(member) > seen(newest[key]):
+                newest[key] = member
+        names = {p.project_id: p.name for p in db.query(ProjectDB)}
+        gone: list[ProjectMemberDB] = []
+        for member in members:
+            if seen(member) > cutoff or listening(member.member_id, now):
+                continue
+            claim = handles.get_claim(db, member.handle)
+            mine = claim is not None and _claim_is_members(claim, member)
+            if mine and handles.is_live(claim, now):
+                if newest[(member.project_id, handles.ci(member.handle))] is member:
+                    continue  # The agent is alive elsewhere (a channel, another project).
+                mine = False  # The claim keeps the newer member with this name.
+            member.gone_at = now
+            gone.append(member)
+            result.members.append(
+                GoneMember(
+                    member_id=member.member_id,
+                    project_id=member.project_id,
+                    project=names.get(member.project_id),
+                    handle=member.handle,
+                    last_seen=as_utc(member.last_seen),
+                )
+            )
+            if mine and claim.handle not in result.claims_released:
+                handles.release(db, claim.handle)
+                result.claims_released.append(claim.handle)
+        db.commit()
+    for member in gone:
+        _member_events.pop(member.member_id, None)
+        _last_inbox_read.pop(member.member_id, None)
+    return result
 
 
 def touch_member(member: ProjectMemberDB) -> None:
@@ -1150,7 +1286,7 @@ async def wait_for_inbox(
             with SessionLocal() as db:
                 await expire_and_publish(db)
                 member = db.get(ProjectMemberDB, member_id)
-                if member is None:
+                if member is None or member.gone_at is not None:
                     raise ProjectError(401, "Unknown member")
                 entries, fresh = read_inbox(db, member, after, limit, wake_only)
                 remaining = deadline - loop.time()

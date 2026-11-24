@@ -110,6 +110,9 @@ class ParticipantKeyDB(Base):
     voice_id = Column(String, nullable=True)
     channel_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    # Last sign of life (debounced, ``channel.flush_seen``), so a restored seat
+    # keeps its real age. NULL on rows from before it existed.
+    last_seen = Column(DateTime, nullable=True)
 
 
 class PinnedVoiceDB(Base):
@@ -228,6 +231,10 @@ class ProjectMemberDB(Base):
     plugin_version = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     last_seen = Column(DateTime, default=lambda: datetime.now(UTC))
+    # Set when the member was unseen for the gone window (projects.reap_gone_members):
+    # its member_key stops working and it leaves the roster, but the row stays so
+    # work items, events and usage keep its name.
+    gone_at = Column(DateTime, nullable=True)
 
 
 class WorkItemDB(Base):
@@ -425,6 +432,12 @@ class ParticipantKey(BaseModel):
     idle_away: bool = Field(default=False, exclude=True)
 
     model_config = {"from_attributes": True}
+
+    @field_validator("last_seen", mode="before")
+    @classmethod
+    def _unknown_is_now(cls, value: Any) -> Any:
+        # participant_keys.last_seen is NULL on rows older than the column.
+        return datetime.now(UTC) if value is None else value
 
     @computed_field
     @property

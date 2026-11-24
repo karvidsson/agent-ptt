@@ -67,8 +67,16 @@ back to the default with a warning; the mode is logged at startup
 (`Idle participant reaping: ...`). A hooked agent session (one that registered
 a mention receiver) is not removed after that grace: it turns `away` and keeps
 receiving mentions, and is removed only when it leaves or after a further
-`AGENT_PTT_AWAY_REAP_SECONDS` (default `604800` = 7 days, `0` = never). See
+`AGENT_PTT_AWAY_REAP_SECONDS` (default: the gone window, `0` = never). See
 [Idle reaping](api-reference.md#idle-reaping).
+
+`AGENT_PTT_GONE_HOURS` (default `24`, the automatic name TTL; `0` = off) is
+the gone window: hooked seats unseen that long are left (unless
+`AGENT_PTT_AWAY_REAP_SECONDS` is set), and project members unseen that long
+are marked gone, so they drop off the roster and their `member_key` stops
+working ([member lifecycle](projects.md#member-lifecycle)). Logged at startup
+(`Gone agents: ...`); `GET /reaper` shows the windows and `POST /reap` runs a
+pass now.
 
 **Example:**
 ```bash

@@ -61,16 +61,32 @@ Key functions:
 time) until they show a sign of life: join, say, command, inbox read/ack,
 heartbeat or an agent WebSocket connecting or closing. Each refreshes the
 participant's in-memory `last_seen`; only say and commands move `last_active`.
+`last_seen` also reaches `participant_keys.last_seen`, debounced (`channel.flush_seen`,
+once a minute and at shutdown), so a restored hooked seat keeps its real age
+instead of starting the gone window again; rows from before the column (NULL)
+count from the restart, and plain seats get the idle grace to come back.
 The idle reaper in `server.py` (a background task started in `lifespan`,
-skipped in hosted mode) removes every participant that has no live agent
-WebSocket and was not seen for `AGENT_PTT_IDLE_REAP_SECONDS` (default 600, `0` =
-off). Removal is an ordinary `leave_channel()`: persistent, no ban, so a rejoin
+skipped in hosted mode) removes every participant that is not live and was not
+seen for `AGENT_PTT_IDLE_REAP_SECONDS` (default 600, `0` = off). Live means an
+open agent WebSocket, an open channel inbox long-poll (`channel.waiting`), or a
+project member of the same handle waiting on the project inbox of this channel's
+project; a live seat is never reaped nor marked away. Removal is an ordinary `leave_channel()`: persistent, no ban, so a rejoin
 (also by `session_id`) works. This clears ghosts left by sessions that died
 without leaving, e.g. a killed terminal that never ran its SessionEnd hook.
 A participant with a mention receiver (a hooked agent session, often idle at
 its prompt) is not removed at the grace: it is marked `away` (`idle_away`,
 reason `idle`), keeps receiving mentions, and is reaped only after a further
-`AGENT_PTT_AWAY_REAP_SECONDS` (default 7 days, `0` = never).
+`AGENT_PTT_AWAY_REAP_SECONDS` (default: the gone window, below; `0` = never).
+
+**The gone window** (`AGENT_PTT_GONE_HOURS`, default 24, the same as the
+automatic name TTL; `0` = off) is how long the server keeps an agent that shows
+no sign of life. Hooked seats are left after it (on top of the idle grace,
+unless `AGENT_PTT_AWAY_REAP_SECONDS` is set explicitly), and a second lifespan
+loop (`_gone_reaper`, every 5 minutes) marks project members gone
+(`projects.reap_gone_members`, see [projects](projects.md#member-lifecycle)).
+The startup log describes the windows; `GET /reaper` returns them and
+`POST /reap` runs one pass of both now and returns what it removed. A pass
+posts nothing; the member pass logs one line when it marked anyone gone.
 - `send_message()` — broadcasts text + queues for TTS
 - `get_history()` — returns in-memory message list
 
@@ -255,7 +271,11 @@ it, so `@Theo` is one agent everywhere.
   Touches are kept in memory and flushed by a lifespan task once a minute (and
   before every registry decision). A name is freed after 24 h without a sign
   of life (30 days if pinned), or by `DELETE /handles/{handle}`. Leaving a
-  channel frees nothing.
+  channel frees nothing. A project member marked gone releases its claim
+  when the claim is expired and still its agent's (same harness and machine);
+  a live claim of the same agent, claimed before the member went quiet, keeps
+  the member (the newest member with that name in the project, if there are
+  several).
 - **Project members.** A project join with `session_id` takes the session's
   name; a rejoining member whose name was claimed without a session hands it to
   the session (`adopt_handle`), renaming the session's live participants.

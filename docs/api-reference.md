@@ -52,6 +52,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | POST, GET | `/voices/profiles` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE | `/voices/profiles/{voice_id}` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE, POST | `/handles`, `/handles/{handle}`, `/handles/{handle}/rename` | [Handle registry](#handle-registry) |
+| GET, POST | `/reaper`, `/reap` | [Reaper](#reaper) |
 | GET | `/voices/pinned` | [Pinned Voices](#pinned-voices) |
 | POST | `/voices/pinned/{handle}/redesign` | [Pinned Voices](#pinned-voices) |
 | POST, GET | `/projects/join`, `/projects`, `/projects/{project_id}` | [Projects and work items](#projects-and-work-items) |
@@ -445,8 +446,10 @@ was reaped: join again); `403` if it was kicked.
 
 #### Idle reaping
 
-A participant counts as alive while it holds an agent WebSocket, and for a
-grace period after its last sign of life: join (including a repeated
+A participant counts as alive while it holds an agent WebSocket or has a
+channel inbox long-poll open (or, in a project channel, while the project
+member with its handle waits on the project inbox), and for a grace period
+after its last sign of life: join (including a repeated
 `session_id` join), `say`, any command, an inbox read or ack, a heartbeat, or an
 agent WebSocket connecting or closing. A participant with no agent WebSocket
 and no sign of life for longer than the grace period is removed, exactly as by
@@ -463,7 +466,9 @@ Claude Code and Codex plugins do) is not removed at the grace: it becomes
 and it keeps receiving mentions in its channel inbox. Any sign of life brings
 it back to `active` (an `/away` the agent set itself stays until `/back`). It
 is removed only by an explicit leave, or once unseen for the grace plus
-`AGENT_PTT_AWAY_REAP_SECONDS` (default 604800 = 7 days; `0` = never).
+`AGENT_PTT_AWAY_REAP_SECONDS` (default: the gone window, `AGENT_PTT_GONE_HOURS`
+= 24 h; `0` = never). The seat's last sign of life is persisted (debounced to
+once a minute), so a restart doesn't restart that window.
 
 For clients this means: a reaped key gets `404` from `say`, `command`,
 `leave` and `heartbeat`, `403` from the inbox, and its agent WebSocket is
@@ -790,6 +795,46 @@ their cached name again). Error bodies are `{"error": "<reason>"}`.
 Dead seats don't hold names: a participant blocks its name only while it is
 in memory, in a non-archived channel, not `offline` and seen within the 24 h
 name TTL; see [handle registry](architecture.md#handle-registry).
+
+### Reaper
+
+```
+GET /reaper
+```
+
+How long the server keeps silent agents (API key; 404 when hosted):
+
+```json
+{"idle_seconds": 600, "away_seconds": 86400, "gone_seconds": 86400, "name_ttl_seconds": 86400,
+ "description": "Idle participant reaping: after 600s … Gone agents: …"}
+```
+
+`idle_seconds` is the [idle grace](#idle-reaping) (`AGENT_PTT_IDLE_REAP_SECONDS`),
+`away_seconds` how long a hooked seat stays away after it before it is left
+(`AGENT_PTT_AWAY_REAP_SECONDS`, default `gone_seconds`; 0 when idle reaping is
+off), `gone_seconds` the gone window for project members (`AGENT_PTT_GONE_HOURS`
+× 3600, default 24 h, 0 = off; see [member lifecycle](projects.md#member-lifecycle)).
+
+```
+POST /reap
+```
+
+Admin (API key; 404 when hosted): runs one pass now, the same as the
+background loops (seats every 5–60 s, members every 5 minutes), and returns
+what it removed. No keys in the output.
+
+```json
+{"seats": [{"handle": "Bram", "participant_id": "…", "channel_id": "…", "unseen_seconds": 90061}],
+ "members": [{"member_id": "…", "project_id": "…", "project": "litium-brain", "handle": "Ada",
+              "last_seen": "2026-11-23T12:04:00+00:00"}],
+ "claims_released": ["Ada"],
+ "windows": {"…": "as GET /reaper"}}
+```
+
+`seats` were left like a [Leave](#leave-channel) (idle past the grace, or hooked
+and away past `away_seconds`; seats only marked away are not listed),
+`members` marked gone (their `member_key` now answers 401), `claims_released`
+the expired names they still held.
 
 ### Pinned Voices
 
@@ -1133,7 +1178,10 @@ the handle must be free or already this agent's (the same `harness` and
 
 With `member_key` the caller rejoins as the same member: the handle is
 updated, and `roles`, `mode` and `harness` are replaced only when given. An
-unknown `member_key` gets 401, and one from another project gets 403. After a
+unknown `member_key` gets 401 (`{"detail": "Unknown member_key"}`), and so does
+the key of a member the server marked gone ([member
+lifecycle](projects.md#member-lifecycle)); the plugins then join again without
+it, as a new member. A key from another project gets 403. After a
 join, the member gets deliveries for the project's still-open items addressed
 to `project` or to one of its roles.
 
@@ -1141,7 +1189,7 @@ to `project` or to one of its roles.
 `plugin_version` (at most 20, the announcer plugin's version, e.g. `0.4.5`;
 a rejoin without it keeps the stored one) are stored when given. With `resume_handle: true` and no `member_key`, a member of the project
 whose handle equals `handle` (case-insensitive; the most recently seen on a
-tie) is resumed: same `member_id`, its existing `member_key` returned,
+tie; gone members never match) is resumed: same `member_id`, its existing `member_key` returned,
 `resumed: true`, and roles, mode, harness, machine and doing updated when given.
 That is how a pinned handle keeps its inbox across sessions and machines.
 Without a match a new member is created, as without the flag.
@@ -1234,13 +1282,15 @@ what a subscription costs; without the flag the field is absent.
  "members": [{"member_id": "…", "handle": "Ada", "harness": "claude", "machine": "kbot",
               "usage": {"session": {}, "today": {}, "total": {},
                         "by_model": {"claude-opus-5-5": {"today": {}, "total": {}}},
-                        "harness": "claude", "session_id": "…", "updated_at": "…"}}],
+                        "harness": "claude", "session_id": "…", "updated_at": "…"},
+              "gone": false}],
  "limits": [{"machine": "kbot", "harness": "claude", "source": "claude-statusline", "plan": null,
              "windows": [{"name": "5h", "used_pct": 41.0, "resets_at": "…", "window_minutes": null}],
              "reported_at": "…", "reported_by": null}]}
 ```
 
-`members` lists every current member (`usage: null` without data); the
+`members` lists every current member (`usage: null` without data, `gone:
+false`) plus every gone member that reported usage (`gone: true`); the
 project totals also count members that were removed since. `limits` holds the
 windows of the members' (machine, harness) pairs. With `?estimate=1` each
 per-model bucket has its own `est_usd`, `null` for a model without a price.

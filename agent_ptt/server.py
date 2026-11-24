@@ -164,19 +164,48 @@ def _reap_interval(grace: float) -> float:
     return min(60.0, max(5.0, grace / 4))
 
 
+def _live_keys() -> set[str]:
+    """Keys the reaper must never touch: an open agent WebSocket, an open channel
+    inbox long-poll, or a seat whose project member is in a project inbox wait."""
+    live = set(_live_agent_sockets) | ch.waiting_keys()
+    waiting = projects.waiting_member_ids()
+    if not waiting:
+        return live
+    with SessionLocal() as db:
+        seats = projects.listening_seats(db, waiting)
+    for channel_id, handle_ci in seats:
+        channel = ch.get_channel(channel_id)
+        if channel is None:
+            continue
+        for key_id, participant in channel.participants.items():
+            if handles.ci(participant.handle) == handle_ci:
+                live.add(key_id)
+    return live
+
+
 async def _reap_idle_once(grace: float, now: datetime | None = None) -> list[str]:
     """One reaper pass: leave every idle participant and announce it.
 
-    Returns the reaped handles. A participant is idle when it holds no agent
-    WebSocket and hasn't been seen (join, say, command, inbox, heartbeat) for
-    more than ``grace`` seconds. A hooked participant (with a mention
-    receiver) goes ``away`` instead and is reaped only after a further
-    ``AGENT_PTT_AWAY_REAP_SECONDS`` (default 7 days, 0 = never). Reaping is an
+    Returns the reaped handles (see ``_reap_seats``).
+    """
+    return [seat["handle"] for seat in await _reap_seats(grace, now)]
+
+
+async def _reap_seats(grace: float, now: datetime | None = None) -> list[dict]:
+    """One seat pass; returns ``{handle, participant_id, channel_id, unseen_seconds}``.
+
+    A participant is idle when it is not live (``_live_keys``: agent WebSocket,
+    channel inbox long-poll, project inbox wait) and hasn't been seen (join,
+    say, command, inbox, heartbeat) for more than ``grace`` seconds. A hooked
+    participant (with a mention receiver) goes ``away`` instead and is reaped
+    only after a further ``AGENT_PTT_AWAY_REAP_SECONDS`` (default: the gone
+    window, ``AGENT_PTT_GONE_HOURS`` = 24 h; 0 = never). Reaping is an
     ordinary leave: no ban, and a rejoin (including a session_id rejoin)
     works as usual.
     """
     now = now or datetime.now(UTC)
-    for participant in ch.idle_receivers(now, grace, _live_agent_sockets.keys()):
+    live = _live_keys()
+    for participant in ch.idle_receivers(now, grace, live):
         # A hooked session idles at its prompt: keep its seat, show it away.
         ch.mark_idle_away(participant, now)
         logger.info(
@@ -193,17 +222,24 @@ async def _reap_idle_once(grace: float, now: datetime | None = None) -> list[str
                     "reason": "idle",
                 },
             )
-    stale = ch.idle_participants(now, grace, _live_agent_sockets.keys())
+    stale = ch.idle_participants(now, grace, live)
     if not stale:
         return []
-    reaped: list[str] = []
+    reaped: list[dict] = []
     with SessionLocal() as db:
         for participant in stale:
             channel_id = participant.channel_id
             if channel_id is None or not ch.leave_channel(channel_id, participant.key_id, db):
                 continue
-            reaped.append(participant.handle)
             idle_for = int((now - participant.last_seen).total_seconds())
+            reaped.append(
+                {
+                    "handle": participant.handle,
+                    "participant_id": participant.participant_id,
+                    "channel_id": channel_id,
+                    "unseen_seconds": idle_for,
+                }
+            )
             logger.info(
                 f"🧹 Reaped idle participant {participant.handle} "
                 f"({participant.participant_id}) from {channel_id} after {idle_for}s"
@@ -213,6 +249,35 @@ async def _reap_idle_once(grace: float, now: datetime | None = None) -> list[str
                 {"type": "system", "text": f"{participant.handle} left the channel (idle)"},
             )
     return reaped
+
+
+def _reap_gone_members_once(now: datetime | None = None) -> projects.GonePass:
+    """One project-member pass (``projects.reap_gone_members``); one log line if any."""
+    with SessionLocal() as db:
+        result = projects.reap_gone_members(db, now)
+    if result.members:
+        names = ", ".join(f"{m.handle} ({m.project or m.project_id})" for m in result.members)
+        logger.info(
+            f"🧹 Gone: {len(result.members)} project member(s) unseen for "
+            f"{ch.gone_seconds() // 3600} h: {names}; "
+            f"{len(result.claims_released)} name claim(s) released"
+        )
+    return result
+
+
+GONE_INTERVAL_SECONDS = 300
+
+
+async def _gone_reaper(interval: float = GONE_INTERVAL_SECONDS) -> None:
+    """Background loop around ``_reap_gone_members_once``; cancelled on shutdown."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(_reap_gone_members_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"Gone-member reaper error: {exc}")
 
 
 async def _idle_reaper(grace: float) -> None:
@@ -234,6 +299,7 @@ async def _flush_handle_touches() -> None:
         await asyncio.sleep(handles.FLUSH_SECONDS)
         try:
             await asyncio.to_thread(handles.flush_now)
+            await asyncio.to_thread(ch.flush_seen_now)  # Seat ages, for restores.
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -264,21 +330,18 @@ async def lifespan(app: FastAPI):
     if not hosted():
         grace = ch.idle_reap_seconds()
         logger.info(f"🧹 {ch.idle_reap_message(grace)}")
+        # Hooked sessions go away instead; the gone line says when they are left.
+        logger.info(f"🧹 {ch.gone_message(grace)}")
         if grace > 0:
-            away = ch.away_reap_seconds()
-            logger.info(
-                "💤 Hooked sessions go away instead; removed after "
-                + (f"{away}s more" if away else "never")
-                + " (AGENT_PTT_AWAY_REAP_SECONDS)"
-            )
             reaper = asyncio.create_task(_idle_reaper(grace))
+    gone = None if hosted() or ch.gone_seconds() <= 0 else asyncio.create_task(_gone_reaper())
     # Claim leases on project work items (projects.py) expire in the background too.
     leases = None if hosted() else asyncio.create_task(projects.lease_expiry_loop())
     # Signs of life keep handle claims alive; they reach the DB once a minute.
     touches = None if hosted() else asyncio.create_task(_flush_handle_touches())
     yield
     # Cleanup
-    for task in (reaper, leases, touches):
+    for task in (reaper, gone, leases, touches):
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -288,6 +351,8 @@ async def lifespan(app: FastAPI):
     if not hosted():
         with contextlib.suppress(Exception):
             handles.flush_now()
+        with contextlib.suppress(Exception):
+            ch.flush_seen_now()
     logger.info("🎙️  Agent PTT server stopped")
 
 
@@ -380,8 +445,10 @@ Full API schema: {base}/openapi.json (Swagger: {base}/docs).
 Idle participants are removed: no agent WebSocket and no say, command, inbox
 poll or heartbeat for 10 minutes. If your key then gets 404, join again.
 A participant that joined with "session_id" and "receive_mentions": true
-(the Claude Code / Codex plugins do) is not removed: it shows as away and
-keeps receiving @mentions; any request brings it back.
+(the Claude Code / Codex plugins do) is not removed then: it shows as away and
+keeps receiving @mentions; any request brings it back. After 24 hours without
+one it is removed too, and a project member_key unused that long stops working
+(401): join again without it.
 
 Keep lines short and spoken-friendly: no code, paths or markdown.
 Add "fyi": true to say (or to a project item) for status, acknowledgements
@@ -1127,7 +1194,8 @@ async def get_inbox(
     hooked participant comes back ``active``). No DB session is held while
     waiting.
     """
-    rows = await mentions.wait_pending(channel_id, recipient_id, limit, wait, wake_only)
+    with ch.waiting(x_participant_key):  # A seat in a live wait is never reaped.
+        rows = await mentions.wait_pending(channel_id, recipient_id, limit, wait, wake_only)
     participant = ch.get_participant(x_participant_key)
     if participant is not None:
         ch.mark_seen(participant)
@@ -1209,6 +1277,56 @@ async def rename_handle(
         await ch.post_notice(channel_id, "agent-ptt", renamed.notice, "project-server", db)
     logger.info(f"🏷️  Handle {renamed.old} renamed to {renamed.new}")
     return {"renamed": renamed.old, "to": renamed.new, "channels": renamed.channels}
+
+
+def _reaper_windows() -> dict:
+    grace = ch.idle_reap_seconds()
+    return {
+        "idle_seconds": grace,
+        "away_seconds": ch.away_reap_seconds() if grace > 0 else 0,
+        "gone_seconds": ch.gone_seconds(),
+        "name_ttl_seconds": int(handles.auto_ttl().total_seconds()),
+        "description": f"{ch.idle_reap_message(grace)}. {ch.gone_message(grace)}",
+    }
+
+
+@api.get("/reaper", tags=["Reaper"])
+async def reaper_settings():
+    """How long the server keeps silent agents: idle seats, away seats, gone members."""
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    return _reaper_windows()
+
+
+@api.post("/reap", tags=["Reaper"])
+async def reap_now():
+    """Admin: run one reaper pass now (seats, then project members); returns what it removed.
+
+    Same rules as the background loops: ``seats`` were left (idle or gone
+    past the away window), ``members`` marked gone (their member_key now
+    answers 401), ``claims_released`` the expired names they still held.
+    A window set to 0 skips its part.
+    """
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    grace = ch.idle_reap_seconds()
+    seats = await _reap_seats(grace) if grace > 0 else []
+    gone = await asyncio.to_thread(_reap_gone_members_once)
+    return {
+        "seats": seats,
+        "members": [
+            {
+                "member_id": m.member_id,
+                "project_id": m.project_id,
+                "project": m.project,
+                "handle": m.handle,
+                "last_seen": m.last_seen.isoformat() if m.last_seen else None,
+            }
+            for m in gone.members
+        ],
+        "claims_released": gone.claims_released,
+        "windows": _reaper_windows(),
+    }
 
 
 @api.get("/voices", tags=["Voices"])

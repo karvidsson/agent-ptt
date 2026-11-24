@@ -9,9 +9,10 @@ the keys agents are already holding keep working.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,6 +42,17 @@ logger = logging.getLogger(__name__)
 
 _channels: dict[str, Channel] = {}
 _message_queues: dict[str, asyncio.Queue[Message]] = {}
+# Seat signs of life not yet written to ``participant_keys.last_seen`` (key_id ->
+# when); ``flush_seen`` writes them, the server once a minute (like handles.touch).
+_seen_keys: dict[str, datetime] = {}
+# Keys in a channel inbox long-poll right now (key_id -> open waits): live seats.
+_waiting_keys: dict[str, int] = {}
+
+
+def reset_runtime_state() -> None:
+    """Forget unflushed seat touches and open waits (tests)."""
+    _seen_keys.clear()
+    _waiting_keys.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +117,7 @@ def restore_channels(db: Session) -> list[Channel]:
     """
     restored: list[Channel] = []
     now = datetime.now(UTC)
+    stored_seen: dict[str, datetime] = {}
 
     for row in db.query(ChannelDB).order_by(ChannelDB.created_at).all():
         if row.channel_id in _channels:
@@ -130,6 +143,8 @@ def restore_channels(db: Session) -> list[Channel]:
                 since=now,
                 last_seen=now,
             )
+            if key_row.last_seen is not None:
+                stored_seen[key_row.key_id] = _as_utc(key_row.last_seen)
 
         for msg_row in (
             db.query(MessageDB)
@@ -159,6 +174,10 @@ def restore_channels(db: Session) -> list[Channel]:
             participant = channel.participants.get(receiver.key_id)
             if participant:
                 participant.mention_id = receiver.recipient_id
+                # A hooked seat keeps its real age, so the gone window doesn't
+                # restart with every restart. Legacy rows (NULL) count from now;
+                # plain seats get the usual idle grace to come back.
+                participant.last_seen = min(now, stored_seen.get(receiver.key_id, now))
         from agent_ptt.mentions import attach_receipts
 
         attach_receipts(channel.messages, channel.channel_id, db)
@@ -211,6 +230,7 @@ def join_channel(
             voice_id=key.voice_id,
             channel_id=key.channel_id,
             created_at=key.created_at,
+            last_seen=key.last_seen,
         )
         db.merge(db_key)
         db.commit()
@@ -226,12 +246,61 @@ def mark_seen(participant: ParticipantKey) -> None:
     """
     now = datetime.now(UTC)
     participant.last_seen = now
+    _seen_keys[participant.key_id] = now  # Reaches the DB at the next flush_seen.
     handles.touch(participant.handle)  # Keeps the server-wide name claimed.
     if participant.state == "offline" or (participant.state == "away" and participant.idle_away):
         participant.state = "active"
         participant.away_reason = None
         participant.idle_away = False
         participant.since = now
+
+
+def flush_seen(db: Session) -> int:
+    """Write pending seat signs of life to ``participant_keys.last_seen``.
+
+    Returns the rows changed. A busy seat costs at most one write per flush
+    (the server flushes once a minute and at shutdown).
+    """
+    if not _seen_keys:
+        return 0
+    pending = dict(_seen_keys)
+    changed = 0
+    for row in db.query(ParticipantKeyDB).filter(ParticipantKeyDB.key_id.in_(pending)):
+        when = pending[row.key_id]
+        if row.last_seen is None or _as_utc(row.last_seen) < when:
+            row.last_seen = when
+            changed += 1
+    db.commit()
+    for key_id, when in pending.items():
+        if _seen_keys.get(key_id) == when:
+            _seen_keys.pop(key_id, None)
+    return changed
+
+
+def flush_seen_now() -> None:
+    from agent_ptt.db import SessionLocal
+
+    with SessionLocal() as db:
+        flush_seen(db)
+
+
+@contextlib.contextmanager
+def waiting(key_id: str) -> Iterator[None]:
+    """Mark ``key_id`` as in a channel inbox long-poll while the block runs."""
+    _waiting_keys[key_id] = _waiting_keys.get(key_id, 0) + 1
+    try:
+        yield
+    finally:
+        left = _waiting_keys.get(key_id, 1) - 1
+        if left > 0:
+            _waiting_keys[key_id] = left
+        else:
+            _waiting_keys.pop(key_id, None)
+
+
+def waiting_keys() -> set[str]:
+    """Keys with an open channel inbox long-poll; the reaper treats them as live."""
+    return set(_waiting_keys)
 
 
 DEFAULT_IDLE_REAP_SECONDS = 600
@@ -270,30 +339,83 @@ def idle_reap_message(grace: int) -> str:
     )
 
 
-DEFAULT_AWAY_REAP_SECONDS = 604800
+DEFAULT_GONE_HOURS = 24.0
+
+
+def gone_seconds() -> int:
+    """The "gone" window in seconds: an agent unseen this long is cleared out; 0 = off.
+
+    Read from ``AGENT_PTT_GONE_HOURS`` (default 24, aligned with the automatic
+    name TTL). Covers hooked channel seats (unless ``AGENT_PTT_AWAY_REAP_SECONDS``
+    is set) and project members (``projects.reap_gone_members``). A value that
+    isn't a non-negative number falls back to the default with a warning.
+    """
+    raw = os.environ.get("AGENT_PTT_GONE_HOURS", "").strip()
+    if not raw:
+        return int(DEFAULT_GONE_HOURS * 3600)
+    try:
+        value = float(raw)
+    except ValueError:
+        value = -1
+    if not value >= 0:  # Also rejects NaN.
+        logger.warning(
+            "Ignoring AGENT_PTT_GONE_HOURS=%r (not a non-negative number); using %g",
+            raw,
+            DEFAULT_GONE_HOURS,
+        )
+        value = DEFAULT_GONE_HOURS
+    return int(value * 3600)
 
 
 def away_reap_seconds() -> int:
     """How long a hooked participant may stay away before it is removed; 0 = never.
 
-    Read from ``AGENT_PTT_AWAY_REAP_SECONDS`` (default 604800, 7 days); counted
-    on top of the idle grace. A bad value falls back to the default.
+    ``AGENT_PTT_AWAY_REAP_SECONDS`` when set explicitly, else the gone window
+    (``gone_seconds``, 24 h); counted on top of the idle grace. A bad value
+    falls back to the gone window.
     """
     raw = os.environ.get("AGENT_PTT_AWAY_REAP_SECONDS", "").strip()
     if not raw:
-        return DEFAULT_AWAY_REAP_SECONDS
+        return gone_seconds()
     try:
         value = int(raw)
     except ValueError:
         value = -1
     if value < 0:
+        fallback = gone_seconds()
         logger.warning(
             "Ignoring AGENT_PTT_AWAY_REAP_SECONDS=%r (not a non-negative integer); using %d",
             raw,
-            DEFAULT_AWAY_REAP_SECONDS,
+            fallback,
         )
-        return DEFAULT_AWAY_REAP_SECONDS
+        return fallback
     return value
+
+
+def gone_message(grace: int) -> str:
+    """One-line description of the gone windows, logged at server startup."""
+    gone = gone_seconds()
+    away = away_reap_seconds()
+    if grace <= 0:
+        seats = "hooked seats are never removed (idle reaping is off)"
+    elif away:
+        seats = f"hooked seats are left {_duration(away)} after going away"
+    else:
+        seats = "hooked seats stay away forever"
+    if os.environ.get("AGENT_PTT_AWAY_REAP_SECONDS", "").strip():
+        seats += " (AGENT_PTT_AWAY_REAP_SECONDS)"
+    members = (
+        f"project members unseen for {_duration(gone)} are marked gone"
+        if gone
+        else "project members are never marked gone"
+    )
+    return f"Gone agents: {seats}; {members} (AGENT_PTT_GONE_HOURS, 0 = off)"
+
+
+def _duration(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} h"
+    return f"{seconds}s"
 
 
 def idle_participants(

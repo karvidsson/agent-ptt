@@ -111,6 +111,7 @@ def clean_state():
     yield
     channel._channels.clear()
     channel._message_queues.clear()
+    channel.reset_runtime_state()
     mentions.reset_runtime_state()
     handles.reset_runtime_state()
     server._ws_clients.clear()
