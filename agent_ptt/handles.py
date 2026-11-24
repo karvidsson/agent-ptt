@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import count
 from secrets import choice
 from threading import Lock
 from typing import Any
@@ -336,14 +338,24 @@ def evict_seats(db: Session, handle: str, keep_recipients: set[str] = frozenset(
 
 
 def tier(suffix: int) -> list[str]:
+    """Numbered tier ``suffix`` over the plain names (1 is the plain names)."""
     from agent_ptt.session_identity import NAMES
 
     # No space ("Pearl2", not "Pearl 2"): a plain @Pearl2 mention needs no quotes.
     return list(NAMES) if suffix == 1 else [f"{name}{suffix}" for name in NAMES]
 
 
+def tiers() -> Iterator[list[str]]:
+    """The allocation order: plain names, the compounds, then ``Name2``, ``Name3``, …."""
+    from agent_ptt.compound_names import COMPOUNDS
+
+    yield tier(1)
+    yield list(COMPOUNDS)
+    yield from (tier(suffix) for suffix in count(2))
+
+
 def allocate(db: Session, now: datetime | None = None, exclude: set[str] = frozenset()) -> str:
-    """A free name: plain names first, then ``Name2``, ``Name3``, ….
+    """A free name: plain names first, then compounds (``Fernwick``), then ``Name2``, ….
 
     Free means no live claim and no live seat using it (``live_seat_handles``).
     Within the first tier with a free name, one never claimed wins (random);
@@ -352,16 +364,14 @@ def allocate(db: Session, now: datetime | None = None, exclude: set[str] = froze
     now = now or now_utc()
     claims = {claim.handle_ci: claim for claim in db.scalars(select(HandleClaimDB))}
     busy = live_seat_handles(now) | {ci(name) for name in exclude}
-    suffix = 1
-    while True:
+    for names in tiers():
         free = [
             name
-            for name in tier(suffix)
+            for name in names
             if ci(name) not in busy and not is_live(claims.get(ci(name)), now)
         ]
         if free:
             break
-        suffix += 1
     never = [name for name in free if ci(name) not in claims]
     if never:
         return choice(never)

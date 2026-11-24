@@ -224,8 +224,10 @@ it, so `@Theo` is one agent everywhere.
 - **Lookup order** (`session_identity.get_session_identity`): a pin, the
   session's own claim, its predecessor's (a session of the same harness,
   machine and folder quiet for 10 minutes: restart stickiness), the project
-  join's wish if free, then the allocator (plain names, then `Name2`, …; never
-  claimed before expired, expired longest ago first).
+  join's wish if free, then the allocator: the 100 plain names, then the 246 reviewed two-part
+  compounds (`Fernwick`, `Moonglow`; `compound_names.py`), then `Name2`,
+  `Name3`, …; within a tier never claimed before expired, expired longest ago
+  first.
 - **Free names.** A name is free when it has no live claim and no live seat.
   The claims are the authority; a channel seat on its own blocks a name only
   while it is plausibly alive (`handles.live_seat_handles`): in memory, in a

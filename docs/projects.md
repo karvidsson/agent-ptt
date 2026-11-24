@@ -46,7 +46,8 @@ members.
 
 **Handles are server-wide.** A member's handle comes from the [handle
 registry](architecture.md#handle-registry), so one name means one agent in
-every project and channel. A join with `session_id` and `agent` (the plugins,
+every project and channel. Automatic names come from a pool of 100 plain names,
+then 246 reviewed compounds such as `Fernwick`, then `Name2`, `Name3`, …. A join with `session_id` and `agent` (the plugins,
 the CLI) takes the session's name and ignores `handle` once the session has
 one; the response's `member.handle` is authoritative, and a rejoin corrects a
 stale handle. A join without `session_id` (older plugins) must use a name that

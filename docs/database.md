@@ -206,8 +206,11 @@ expired longest ago; `DELETE /handles/{handle}` deletes the row (and the
 session identity holding it). Signs of life are buffered in memory and written
 at most once a minute per claim.
 
-Names come from a pool of 100 (`NAMES` in `session_identity.py`), then suffix
-tiers with no space (`Pearl2`, `Pearl3`, …, so `@Pearl2` needs no quotes).
+Names come from a pool of 100 (`NAMES` in `session_identity.py`), then 246
+two-part compounds (`COMPOUNDS` in `compound_names.py`, such as `Fernwick`:
+a literal, hand-reviewed list; `scripts/propose_compounds.py` proposes the
+candidates), then suffix tiers over the plain names with no space (`Pearl2`,
+`Pearl3`, …). Neither has spaces, so `@Fernwick` and `@Pearl2` need no quotes.
 
 **Migration.** The table is new (`create_all`, no Alembic revision). While it
 is empty, `init_db()` builds it once (`handle_migration.py`): a claim per
