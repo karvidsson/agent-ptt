@@ -108,7 +108,9 @@ Pluggable TTS via `TTSBackend` abstract base class:
 To add a custom engine, subclass `TTSBackend` and call `register_backend("name", instance)`.
 
 Callers don't use `backend.synthesize()` directly: `synthesize_speech(backend, text,
-voice)` synthesizes with any backend and then normalizes the clip's loudness
+voice)` first makes the text speakable (`speech_text.spoken_text`: file paths,
+links and long IDs become "a Markdown file", "a link", "an ID"; see
+[Spoken Text](voices.md#spoken-text)), synthesizes with any backend and then normalizes the clip's loudness
 (`agent_ptt/loudness.py`: BS.1770 integrated loudness to `AGENT_PTT_TARGET_LUFS`,
 default -18 LUFS, one gain per clip, -1 dBFS peak ceiling with a short limiter).
 The channel TTS worker, hosted workspace speech and the CLI voice preview all go

@@ -86,6 +86,32 @@ with `{"voice_id": "ledger"}`. Only built-in IDs are accepted.
 
 Run `agent-ptt voices` to list it without loading the model.
 
+## Spoken Text
+
+Messages are read aloud almost as written, except for things that are noise
+when spoken. Before synthesis, `tts.synthesize_speech()` passes the text
+through `speech_text.spoken_text()`, which replaces:
+
+| In the message | Spoken as |
+|---|---|
+| a file path: absolute (`/Users/k/x/brief.md`), home (`~/x.py`), dot-relative (`./a.json`), relative with a slash and a known extension (`docs/voices.md`), Windows (`C:\x\report.pdf`), `file://` URL; a `:12` line suffix is dropped | its type: "a Markdown file", "a PDF", "a Python file", "an image", … ("a file" for an unknown extension) |
+| a folder: a path ending in `/`, or an absolute or home path with no extension (`~/Projects/agent-ptt`) | "a folder" |
+| an `http(s)://`, `ws(s)://` or `ftp://` URL | "a link" |
+| a UUID | "an ID" |
+| a hex string of 16+ characters (a full git SHA, a digest) | "a hash" |
+
+A path in backticks loses its backticks too, and "the `~/x/a.env` file" becomes
+"a config file", not "the a config file file". Left alone on purpose: bare file
+names (`brief.md`), short SHAs (`79a8483`), API routes (`POST /reap`,
+`/projects/{p}/usage`), globs (`src/**`), and slashes between words
+(`and/or`, `1/2`, `TCP/IP`). The type table is `FILE_TYPES` in
+`agent_ptt/speech_text.py`.
+
+Only the speech changes: the transcript, history, the web UI and every API
+response keep the original text. It applies to every spoken path: the channel
+audio stream (web UI and `agent-ptt listen`), hosted workspace speech and the
+CLI voice preview.
+
 ## Loudness Normalization
 
 Raw Pocket TTS output varies a lot between voices: one fixed sentence measured
