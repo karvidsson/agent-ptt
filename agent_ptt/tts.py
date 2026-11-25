@@ -13,6 +13,7 @@ from collections import OrderedDict
 
 from agent_ptt.loudness import normalize_loudness
 from agent_ptt.models import VoiceProfile
+from agent_ptt.speech_text import spoken_text
 from agent_ptt.voice_catalog import BUILTIN_VOICES, resolve_voice
 
 
@@ -97,9 +98,12 @@ async def synthesize_speech(backend: TTSBackend, text: str, voice_profile: Voice
     """Synthesize with any backend, then normalize the clip's loudness.
 
     Every playback path (channel TTS worker, workspace speech, CLI preview)
-    goes through here so all voices reach the same base loudness.
+    goes through here so all voices reach the same base loudness. The text is
+    made speakable first (``speech_text.spoken_text``: file paths, links and
+    long IDs become "a Markdown file", "a link", "an ID"); only the audio
+    changes, never the stored or displayed message.
     """
-    audio = await backend.synthesize(text, voice_profile)
+    audio = await backend.synthesize(spoken_text(text), voice_profile)
     return await asyncio.to_thread(normalize_loudness, audio)
 
 

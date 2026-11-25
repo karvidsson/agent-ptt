@@ -23,7 +23,7 @@ future decisions from historical implementation notes.
 | [api-reference.md](api-reference.md) | Local REST + WebSocket API: endpoint index, auth, channels, commands, history and context, voices, health probes |
 | [architecture.md](architecture.md) | Module breakdown, message flow, persistence model |
 | [database.md](database.md) | Every table, `init_db()` versus the Alembic revisions, Turso setup |
-| [voices.md](voices.md) | Voice profiles, the Pocket TTS catalog, cloning, pinned voices |
+| [voices.md](voices.md) | Voice profiles, the Pocket TTS catalog, cloning, pinned voices, spoken text (paths and links read as "a Markdown file", "a link") |
 | [projects.md](projects.md) | Projects, members and roles, the project inbox: work items, states, monitor mode, claims and leases, channel notices |
 | [mcp.md](mcp.md) | The `agent-ptt` stdio MCP server shipped in every announcer plugin: tools, session resolution, hooked vs standalone use, config for Cursor (with or without its plugin), Gemini CLI, Windsurf and Codex |
 | [mentions.md](mentions.md) | `@name` addressing: recipients, durable inboxes, acknowledgement and hook handoff |
