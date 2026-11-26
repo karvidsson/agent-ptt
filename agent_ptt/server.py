@@ -29,7 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from agent_ptt import channel as ch
-from agent_ptt import handles, mentions, projects, workspace
+from agent_ptt import handles, mentions, plugin_updates, projects, workspace
 from agent_ptt.audio import get_mixer, remove_mixer, speaker_mode_message
 from agent_ptt.auth import (
     WS_CLOSE_UNAUTHORIZED,
@@ -325,6 +325,9 @@ async def lifespan(app: FastAPI):
     if hosted():
         public_origin()  # Validate deployment origin before accepting traffic.
     init_db()
+    if not hosted():
+        plugin_updates.load_manifests()
+        logger.info(f"🧩 {plugin_updates.startup_message()}")
     with SessionLocal() as db:
         restored = [] if hosted() else ch.restore_channels(db)
     for channel in restored:
@@ -1263,6 +1266,10 @@ async def release_handle(handle: str, db: Session = Depends(get_db)):
     return {"released": claim.handle}
 
 
+class AnnounceUpdateRequest(BaseModel):
+    force: bool = Field(default=False, description="Nudge again members already told")
+
+
 class RenameHandleRequest(BaseModel):
     to: str | None = Field(
         default=None, max_length=64, description="New name; default: the old one without digits"
@@ -1360,6 +1367,34 @@ async def reap_now():
         ],
         "windows": _reaper_windows(),
     }
+
+
+@api.get("/plugins/latest", tags=["Reaper"])
+async def plugins_latest():
+    """The latest Agent PTT plugin version per harness (``claude``, ``codex``,
+    ``antigravity``, ``cursor``), from this server's checkout or
+    ``AGENT_PTT_PLUGIN_LATEST``. Members below it get an update FYI."""
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    return {"latest": plugin_updates.latest_versions(), "source": plugin_updates.source()}
+
+
+@api.post("/announce-update", tags=["Reaper"])
+async def announce_update(
+    req: AnnounceUpdateRequest | None = None,
+    dry_run: bool = Query(default=False, description="List who would be nudged; send nothing"),
+):
+    """Admin: send the plugin update FYI to every current member that is behind
+    the latest version for its harness and wasn't told about this version yet
+    (``force: true`` tells them again). Per-project counts; with ``dry_run``
+    also the members (handles and versions, never keys)."""
+    if hosted():
+        raise HTTPException(404, "Not Found")
+    force = bool(req and req.force)
+    with SessionLocal() as db:
+        body = plugin_updates.announce(db, dry_run=dry_run, force=force)
+    projects.wake(body.pop("woken", []))
+    return body
 
 
 @api.get("/voices", tags=["Voices"])

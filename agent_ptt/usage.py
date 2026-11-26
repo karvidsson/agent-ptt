@@ -30,7 +30,7 @@ from typing import Any
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from agent_ptt import pricing
+from agent_ptt import plugin_updates, pricing
 from agent_ptt.models import (
     AccountLimitsDB,
     MemberUsageDB,
@@ -385,6 +385,7 @@ def project_usage(
         db, today, estimate, filters=(MemberUsageDB.project_id == project.project_id,)
     ).get((), _no_usage(estimate))
     member_rows = []
+    latest_versions = plugin_updates.latest_versions()
     seen_limits: dict[tuple[str, str], dict[str, Any]] = {}
     for member in members:
         summary = summaries.get(member.member_id)
@@ -392,6 +393,7 @@ def project_usage(
         if gone and summary is None:
             continue  # A gone member stays listed only for the usage it reported.
         harness = (summary or {}).get("harness") or member.harness
+        latest = None if gone else plugin_updates.outdated(member, latest_versions)
         member_rows.append(
             {
                 "member_id": member.member_id,
@@ -400,6 +402,9 @@ def project_usage(
                 "machine": member.machine,
                 "usage": summary,
                 "gone": gone,
+                "plugin_version": member.plugin_version,
+                "plugin_latest": latest,
+                "outdated": latest is not None,
             }
         )
         limits = limits_for(db, member.machine, harness)

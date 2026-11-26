@@ -65,6 +65,9 @@ DEFAULT_BOARD_DONE_DAYS = 3.0
 LEASE_CHECK_SECONDS = 30.0
 LISTENING_SECONDS = 90.0
 SERVER_HANDLE = "agent-ptt"
+# Sender of server-made items (plugin update FYIs); no member row has this id.
+SERVER_MEMBER_ID = "server"
+SERVER_REF = MemberRef(member_id=SERVER_MEMBER_ID, handle=SERVER_HANDLE)
 
 
 class ProjectError(Exception):
@@ -460,8 +463,17 @@ def join_project(db: Session, req: ProjectJoinRequest) -> JoinResult:
     db.flush()
     effects = Effects()
     _deliver_open_items_to(db, member, effects)
+    _nudge_outdated(db, member, effects)
     db.commit()
     return JoinResult(project, member, channel_created, effects, resumed)
+
+
+def _nudge_outdated(db: Session, member: ProjectMemberDB, effects: Effects) -> None:
+    """An outdated plugin gets one private update FYI per latest version (plugin_updates)."""
+    from agent_ptt import plugin_updates
+
+    if plugin_updates.nudge(db, member) is not None:
+        effects.wake.add(member.member_id)
 
 
 def project_members(db: Session, project_id: str) -> list[ProjectMemberDB]:
@@ -633,6 +645,7 @@ def update_member(db: Session, member: ProjectMemberDB, patch: MemberPatch) -> E
         usage.apply_report(db, member, patch.usage, now)
     member.last_seen = now
     handles.touch(member.handle)
+    _nudge_outdated(db, member, effects)
     db.commit()
     return effects
 
@@ -1610,7 +1623,8 @@ def serialize_items(db: Session, items: list[WorkItemDB]) -> list[dict[str, Any]
             kind=item.kind,
             to=to,
             to_label=to_label,
-            from_=_member_ref(members.get(item.from_member_id)),
+            from_=_member_ref(members.get(item.from_member_id))
+            or (SERVER_REF if item.from_member_id == SERVER_MEMBER_ID else None),
             title=item.title,
             body=item.body,
             context=item.context,
@@ -1723,7 +1737,8 @@ def board_items(
 ) -> list[WorkItemDB]:
     """Items for the board: all open ones, final ones (done, declined, expired)
     changed in the last N days; ``None`` = every final item too."""
-    query = db.query(WorkItemDB)
+    # Server-made items (plugin update FYIs) are private notes, not project work.
+    query = db.query(WorkItemDB).filter(WorkItemDB.from_member_id != SERVER_MEMBER_ID)
     if include_done_days is not None:
         cutoff = now_utc() - timedelta(days=include_done_days)
         query = query.filter(

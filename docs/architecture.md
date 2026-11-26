@@ -326,6 +326,14 @@ folded into daily rows once a day on write. `pricing.py` is the editable
 list-price table behind the optional `?estimate=1`. The web pages format it
 with `static/usage.js`.
 
+`plugin_updates.py` reads the latest plugin version per harness from the
+checkout's plugin manifests at startup (or `AGENT_PTT_PLUGIN_LATEST`). Project
+join and `PATCH members/me` call it to give a member on an older plugin one
+private FYI note with its harness's update command (once per latest version,
+`project_members.update_nudged`); `POST /announce-update` does it for every
+current member. The web UI's dialog and outdated badge use `static/updates.js`.
+See [plugin update nudges](projects.md#plugin-update-nudges).
+
 ## Explicit mention delivery
 
 `mentions.py` resolves exact mentions or selected stable recipient IDs when a

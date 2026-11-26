@@ -241,7 +241,7 @@ delivery time, and creation time for bounded pending-inbox reads. See
 Five additive tables back [projects and the project inbox](projects.md). Like
 the other legacy tables they have no Alembic revision: `init_db()` creates
 them on new and existing databases (`create_all`); the presence columns
-`project_members.machine`, `doing`, `doing_at`, `plugin_version` and `gone_at` came later and are added to
+`project_members.machine`, `doing`, `doing_at`, `plugin_version`, `gone_at` and `update_nudged` came later and are added to
 older databases by idempotent `ALTER TABLE ... ADD COLUMN`s in `init_db()`.
 Hosted mode never uses them.
 
@@ -271,6 +271,7 @@ Hosted mode never uses them.
 | `doing_at` | DATETIME (nullable) | When `doing` was last set |
 | `plugin_version` | VARCHAR(20) (nullable) | Announcer plugin version it last joined with (stale installs show in `ptt who`) |
 | `created_at`, `last_seen` | DATETIME | Join time and last member request |
+| `update_nudged` | VARCHAR(20) (nullable) | The latest plugin version this member was sent an update FYI about ([plugin update nudges](projects.md#plugin-update-nudges)); it is told once per latest version |
 | `gone_at` | DATETIME (nullable) | Set when the server marked the member gone ([member lifecycle](projects.md#member-lifecycle)): its key stops working and it leaves the roster, but the row stays for history |
 
 ### `work_items`
