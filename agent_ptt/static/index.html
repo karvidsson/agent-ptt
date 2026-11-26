@@ -328,6 +328,14 @@
   .agent .mic { color: var(--accent); width: 13px; height: 13px; }
   .agent .usage-tick { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
   .agent .usage-tick.none { color: var(--dim); }
+  .agent .outdated-badge, .update-list .old { color: var(--nick-orange); }
+  .agent .outdated-badge { display: inline-block; font-size: 10px; padding: 0 5px; border: 1px solid currentColor; border-radius: 3px; cursor: help; }
+  .update-list { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .update-list th { text-align: left; color: var(--muted); font-weight: normal; font-size: 11px; }
+  .update-list th, .update-list td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+  .update-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .update-status { font-size: 12px; color: var(--nick-green); }
+  .update-status.err { color: var(--nick-red); }
   .usage-strip { display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 0 16px 8px; font-size: 10px; color: var(--muted); }
   .usage-strip .usage-total { width: 100%; cursor: help; }
   .usage-chip { padding: 1px 6px; border: 1px solid var(--border-2); border-radius: 3px; color: var(--text); cursor: help; }
@@ -423,6 +431,7 @@
     <span class="beta">beta-ish</span>
     <span class="server"><span class="host" id="host"></span><span id="serverStatus">connecting…</span></span>
     <button class="link-btn" id="apiKeyBtn" title="Set or clear the server API key">key</button>
+    <button class="link-btn" id="updateAgentsBtn" title="List agents on an outdated Agent PTT plugin and tell them to update" aria-haspopup="dialog">update agents</button>
     <span class="grow"></span>
     <a class="workspace-link" href="/ui/board.html">Board</a>
     <a class="workspace-link" href="/workspace/">Organizations</a>
@@ -529,6 +538,19 @@ ___( o)&gt;
     <div class="agent-detail-body" id="agentDetailBody" aria-live="polite"></div>
   </dialog>
 
+  <dialog class="agent-dialog" id="updateDialog" aria-labelledby="updateDialogTitle">
+    <header><h2 id="updateDialogTitle">Update agents</h2><button class="icon-btn" id="updateDialogClose" aria-label="Close update agents" autofocus>×</button></header>
+    <div class="agent-detail-body">
+      <p class="side-note">Agents whose Agent PTT plugin is older than this server's get one private note with the exact update command for their harness.</p>
+      <div id="updateList" aria-live="polite"></div>
+      <div class="update-actions">
+        <button class="btn" id="updateSendBtn" disabled>Send update nudge</button>
+        <label><input type="checkbox" id="updateForce" /> also agents already told</label>
+        <span class="update-status" id="updateStatus" aria-live="polite"></span>
+      </div>
+    </div>
+  </dialog>
+
   <div class="scrim hidden" id="scrim"></div>
   <div class="pop hidden" id="joinPop" role="dialog" aria-labelledby="popTitle">
     <div class="pop-head">
@@ -553,6 +575,7 @@ ___( o)&gt;
 
 <script src="datedivider.js"></script>
 <script src="usage.js"></script>
+<script src="updates.js"></script>
 <script>
 (() => {
   "use strict";
@@ -1219,6 +1242,61 @@ ___( o)&gt;
     const opts = { estimate: usageState.estimate };
     return `<div class="usage-tick${m.usage ? "" : " none"}" title="${esc(Usage.tickerTitle(m.usage, m.harness, opts))}">${esc(Usage.tickerText(m.usage, opts))}</div>`;
   }
+  const Updates = globalThis.AgentPttUpdates;
+  function outdatedBadge(p) {
+    if (usageState.channelId !== state.channelId) return "";
+    return Updates.badgeHtml(usageState.members.get(String(p.handle).toLowerCase()));
+  }
+  // ---- Update agents (POST /announce-update; admin, behind the API key) ----
+  const updateState = { preview: null, busy: false };
+  function updateStatus(text, err = false) {
+    $("updateStatus").textContent = text;
+    $("updateStatus").classList.toggle("err", err);
+  }
+  async function announceUpdate(dryRun) {
+    const force = $("updateForce").checked;
+    const r = await api(`${httpBase}/announce-update${dryRun ? "?dry_run=1" : ""}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force }),
+    });
+    if (r.status === 401) throw new Error("This needs the server API key: set it with the key button.");
+    if (r.status === 404) throw new Error("This server has no update nudges (hosted mode or an older server).");
+    if (!r.ok) throw new Error(`The server answered ${r.status}.`);
+    return r.json();
+  }
+  async function loadUpdateList() {
+    $("updateSendBtn").disabled = true;
+    $("updateList").textContent = "Loading…";
+    try {
+      updateState.preview = await announceUpdate(true);
+      $("updateList").innerHTML = Updates.listHtml(updateState.preview);
+      $("updateSendBtn").disabled = !updateState.preview.total;
+    } catch (err) {
+      updateState.preview = null;
+      $("updateList").textContent = "";
+      updateStatus(err.message, true);
+    }
+  }
+  $("updateAgentsBtn").onclick = () => {
+    updateStatus("");
+    if (!$("updateDialog").open) $("updateDialog").showModal();
+    loadUpdateList();
+  };
+  $("updateDialogClose").onclick = () => $("updateDialog").close();
+  $("updateForce").onchange = () => { updateStatus(""); loadUpdateList(); };
+  $("updateSendBtn").onclick = async () => {
+    if (updateState.busy || !updateState.preview?.total) return;
+    if (!confirm(Updates.confirmText(updateState.preview))) return;
+    updateState.busy = true;
+    $("updateSendBtn").disabled = true;
+    try {
+      const result = await announceUpdate(false);
+      $("updateForce").checked = false;
+      await loadUpdateList();
+      updateStatus(Updates.resultText(result));
+    } catch (err) {
+      updateStatus(err.message, true);
+    } finally { updateState.busy = false; }
+  };
   function renderUsageStrip() {
     const payload = usageState.channelId === state.channelId ? usageState.payload : null;
     $("usageStrip").classList.toggle("hidden", !payload);
@@ -1257,7 +1335,7 @@ ___( o)&gt;
       el.innerHTML =
         `<div class="avatar" style="background:var(--panel-2);color:${nickColor(p.handle)}">${esc(initials(p.handle))}</div>` +
         `<div class="meta"><button class="h agent-name" aria-haspopup="dialog">${esc(p.handle)}</button>` +
-        `${bits.length ? `<div class="sub${idle ? ` ${idle}` : ""}">${esc(bits.join(" · "))}</div>` : ""}${usageTick(p)}</div>` +
+        `${bits.length ? `<div class="sub${idle ? ` ${idle}` : ""}">${esc(bits.join(" · "))}</div>` : ""}${outdatedBadge(p)}${usageTick(p)}</div>` +
         (talking ? icon("mic").replace('class="i"', 'class="i mic"') : "");
       el.querySelector(".agent-name").onclick = (event) => openAgentDetails(p, event.currentTarget);
       const kick = document.createElement("button");

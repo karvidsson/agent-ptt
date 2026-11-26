@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from agent_ptt import plugin_updates
 from agent_ptt import projects as pj
 from agent_ptt import usage as usage_mod
 from agent_ptt.auth import require_api_key
@@ -93,6 +94,7 @@ def _public_member(
     now = now or pj.now_utc()
     harness = (usage or {}).get("harness") or member.harness
     limits = usage_mod.limits_for(db, member.machine, harness) if db is not None else None
+    latest = plugin_updates.outdated(member)
     return ProjectMemberOut(
         **_member_out(member).model_dump(),
         last_seen=pj.as_utc(member.last_seen),
@@ -101,6 +103,8 @@ def _public_member(
         doing=member.doing,
         doing_at=pj.as_utc(member.doing_at),
         plugin_version=member.plugin_version,
+        plugin_latest=latest,
+        outdated=latest is not None,
         presence=pj.presence(member, now),
         mention=pj.mention_text(member.handle),
         usage=_roster_usage(usage),

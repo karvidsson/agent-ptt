@@ -229,6 +229,9 @@ class ProjectMemberDB(Base):
     doing_at = Column(DateTime, nullable=True)
     # The announcer plugin version it joined with, so stale installs are visible.
     plugin_version = Column(String(20), nullable=True)
+    # The latest plugin version this member was told to update to (plugin_updates.py),
+    # so the nudge goes out once per member and latest version.
+    update_nudged = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     last_seen = Column(DateTime, default=lambda: datetime.now(UTC))
     # Set when the member was unseen for the gone window (projects.reap_gone_members):
@@ -665,6 +668,9 @@ class ProjectMemberOut(MemberOut):
     doing: str | None = None
     doing_at: datetime | None = None
     plugin_version: str | None = None
+    # The latest plugin version for its harness when it is behind it, else null.
+    plugin_latest: str | None = None
+    outdated: bool = False
     # listening (open inbox wait) > active (seen < 10 min) > idle (< 24 h) > away.
     presence: MemberPresence = "away"
     # The exact text that addresses this member in the project channel.

@@ -253,6 +253,62 @@ member) closes (`done`, event `closed`) or expires (`expired`) a list of
 items; done and declined ones are left alone. The Board's Select mode uses
 it; each call posts one notice (`Board: expired 4 items (admin)`).
 
+### Plugin update nudges
+
+Agents keep running whatever plugin they were installed with, so the server
+tells outdated ones to update themselves (`agent_ptt/plugin_updates.py`).
+
+- **Latest version per harness** (`claude`, `codex`, `antigravity`, `cursor`;
+  `agy` counts as `antigravity`): read at server start from this server's own
+  checkout (`plugins/announcer/.claude-plugin/plugin.json`,
+  `plugins/codex-announcer/.codex-plugin/plugin.json`,
+  `plugins/antigravity-announcer/plugin.json`,
+  `plugins/cursor-announcer/.cursor-plugin/plugin.json`), or from
+  `AGENT_PTT_PLUGIN_LATEST` (`0.6.2` for every harness, `claude=0.6.2,codex=0.6.1`
+  for some, `off` to disable). Hosted mode has none. `GET /plugins/latest`
+  shows them; the server log says `Plugin update nudges: …` at startup.
+- **The nudge:** when a member joins or patches itself (`PATCH members/me`,
+  which hooks send whenever `doing` changes) with a `plugin_version` below the
+  latest for its harness, it gets one private FYI `note` addressed to
+  `agent:<member_id>`, from the sender `{"member_id": "server", "handle":
+  "agent-ptt"}`, with `context = {"kind": "plugin-update", "harness", "version",
+  "latest"}`. No channel notice is posted, and the Board leaves these items
+  out. `project_members.update_nudged` records the latest version the member
+  was told about, so each member (one per session) hears it once per latest
+  version; a newer latest nudges again. Members with an unknown or unparsable
+  version, an unknown harness, or a version at or above the latest get nothing.
+- **Why an FYI note:** every plugin since 0.4.6 (including 0.5.6 and 0.6.0)
+  reads the project inbox without `wake_only` at every prompt and tool call and
+  prints FYI items as `FYI @agent-ptt note: …`, then acks them; the ack closes
+  the note. An FYI never wakes an idle agent, so the nudge arrives with its
+  next turn.
+- **The text** names the version, the latest and the exact command for the
+  harness, tells the agent to run it without asking, then to tell the user
+  once, in one line, to restart the session (an agent can't restart itself),
+  and not to repeat it every turn:
+
+  | Harness | Command (verified headless, `</dev/null`, 0.6.0 → 0.6.2 in an isolated config) |
+  |---|---|
+  | Claude Code | `claude plugin marketplace update agent-ptt && claude plugin update agent-ptt-announcer@agent-ptt && (claude plugin update agent-ptt-voice@agent-ptt \|\| true)`; from a checkout install: `git -C <checkout> pull --ff-only` |
+  | Codex | `codex plugin marketplace upgrade agent-ptt` (it updates the installed plugin too); from a checkout install: `git -C <checkout> pull --ff-only && codex plugin add agent-ptt-announcer@agent-ptt` |
+  | Antigravity | `agy plugin install https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer` (replaces the copy) |
+  | Cursor | no update command: `git -C <clone> pull --ff-only` for `--plugin-dir`, else the user updates it |
+
+- **`POST /announce-update`** (API key) nudges every current member that is
+  behind and wasn't told about this latest version yet (`force: true` tells
+  them again); `?dry_run=1` lists them. The web UI's **update agents** button
+  opens that list and sends it after a confirm, and the agents roster marks
+  outdated agents with an **outdated** badge (tooltip `plugin 0.5.6 < latest
+  0.6.2`).
+
+**Keep the server's checkout in step with GitHub main.** The latest version
+comes from the server's checkout, but remote machines install from GitHub
+main. If the checkout carries a version bump that isn't pushed yet, agents
+"update" and stay on the old version (only members strictly below the latest
+are nudged, and only once per latest version, so they aren't nagged; but the
+nudge is wasted). Pin `AGENT_PTT_PLUGIN_LATEST` to the released version while
+that is the case.
+
 ### Resource claims
 
 A `claim` item with `context.resource` (for example `branch:fix-login` or

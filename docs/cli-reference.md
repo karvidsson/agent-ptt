@@ -84,6 +84,13 @@ sender and recipients are all gone expire regardless); `AGENT_PTT_BOARD_DONE_DAY
 (default `3`) is how long the Board keeps done, declined and expired items. See
 [expiry](projects.md#expiry).
 
+`AGENT_PTT_PLUGIN_LATEST` overrides the latest Agent PTT plugin version the
+server reads from its checkout's plugin manifests: `0.6.2` (every harness),
+`claude=0.6.2,codex=0.6.1` (those harnesses; `agy` = `antigravity`) or `off`
+(no update nudges). Members on an older plugin get one private update FYI
+([plugin update nudges](projects.md#plugin-update-nudges)); logged at startup
+(`Plugin update nudges: ...`).
+
 **Example:**
 ```bash
 agent-ptt server start --port 8770

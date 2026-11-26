@@ -53,6 +53,7 @@ API key even when `AGENT_PTT_API_KEY` is set; everything else requires it.
 | GET, DELETE | `/voices/profiles/{voice_id}` | [Voice Profiles](#voice-profiles) |
 | GET, DELETE, POST | `/handles`, `/handles/{handle}`, `/handles/{handle}/rename` | [Handle registry](#handle-registry) |
 | GET, POST | `/reaper`, `/reap` | [Reaper](#reaper) |
+| GET, POST | `/plugins/latest`, `/announce-update` | [Plugin updates](#plugin-updates) |
 | GET | `/voices/pinned` | [Pinned Voices](#pinned-voices) |
 | POST | `/voices/pinned/{handle}/redesign` | [Pinned Voices](#pinned-voices) |
 | POST, GET | `/projects/join`, `/projects`, `/projects/{project_id}` | [Projects and work items](#projects-and-work-items) |
@@ -848,6 +849,46 @@ that became `expired` (everyone gone, or untouched for `item_expire_days`),
 and `item_projects` both per project; see [expiry](projects.md#expiry). Each
 project that changed gets one `Board: …` notice in its channel.
 
+### Plugin updates
+
+```
+GET /plugins/latest
+```
+
+The latest Agent PTT plugin version per harness (API key; 404 when hosted),
+from this server's checkout or `AGENT_PTT_PLUGIN_LATEST`; `source` is
+`manifests`, `env` or `off` (then `latest` is `{}`). See [plugin update
+nudges](projects.md#plugin-update-nudges).
+
+```json
+{"latest": {"claude": "0.6.2", "codex": "0.6.2", "antigravity": "0.6.2", "cursor": "0.6.2"},
+ "source": "manifests"}
+```
+
+```
+POST /announce-update[?dry_run=1]
+{"force": false}
+```
+
+Admin (API key; 404 when hosted): sends the private update FYI to every
+current (not gone) project member whose `plugin_version` is below the latest
+for its harness and that wasn't told about this latest version yet;
+`force: true` (body optional) includes those already told. Returns counts per
+project. With `dry_run=1` nothing is sent and `members` lists who would get
+it (names and versions only, never keys). No channel notice.
+
+```json
+{"latest": {"claude": "0.6.2", "…": "…"}, "source": "manifests", "dry_run": true, "force": false,
+ "total": 2,
+ "projects": [{"project_id": "…", "project": "pengrid-app", "nudged": 2}],
+ "members": [{"member_id": "…", "handle": "Ada", "harness": "claude", "machine": "Mac",
+              "plugin_version": "0.5.6", "latest": "0.6.2", "project_id": "…",
+              "project": "pengrid-app", "nudged": null}]}
+```
+
+`nudged` is the latest version the member was last told about (`null` if
+never). Without `dry_run` there is no `members` list.
+
 ### Pinned Voices
 
 Handles that joined without a `voice_id` get a deterministic voice designed
@@ -1200,7 +1241,10 @@ to `project` or to one of its roles.
 
 `machine` (at most 100 characters), `doing` (at most 200) and
 `plugin_version` (at most 20, the announcer plugin's version, e.g. `0.4.5`;
-a rejoin without it keeps the stored one) are stored when given. With `resume_handle: true` and no `member_key`, a member of the project
+a rejoin without it keeps the stored one) are stored when given. A
+`plugin_version` below the latest for the member's harness gets it one private
+update FYI ([plugin updates](#plugin-updates)); so does a later `PATCH
+members/me` from a member that wasn't told yet. With `resume_handle: true` and no `member_key`, a member of the project
 whose handle equals `handle` (case-insensitive; the most recently seen on a
 tie; gone members never match) is resumed: same `member_id`, its existing `member_key` returned,
 `resumed: true`, and roles, mode, harness, machine and doing updated when given.
@@ -1261,8 +1305,12 @@ project channel and its name claim, and answers **410** `{"error":
 `GET /projects/{p}` returns the project fields plus:
 
 - `members`: `[{member_id, handle, roles, mode, harness, machine, doing,
-  doing_at, plugin_version, last_seen, listening, presence, mention, usage,
-  limits}]`, never a `member_key`.
+  doing_at, plugin_version, plugin_latest, outdated, last_seen, listening,
+  presence, mention, usage, limits}]`, never a `member_key`.
+  `outdated` is true when `plugin_version` is below the latest for the
+  member's harness, and `plugin_latest` is that latest version (else `null`).
+  The `members` rows of `GET /projects/{p}/usage` carry `plugin_version`,
+  `plugin_latest` and `outdated` too (the web UI's outdated badge).
   `listening` is true while the member long-polls its inbox, or if it read its
   inbox in the last 90 seconds. `presence` is `listening`, else `active` (seen
   in the last 10 minutes), `idle` (in the last 24 hours) or `away`. `mention`

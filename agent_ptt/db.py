@@ -75,6 +75,7 @@ def init_db() -> None:
                 "doing_at": "DATETIME",
                 "plugin_version": "VARCHAR(20)",
                 "gone_at": "DATETIME",
+                "update_nudged": "VARCHAR(20)",
             }.items():
                 if name not in existing:
                     connection.execute(

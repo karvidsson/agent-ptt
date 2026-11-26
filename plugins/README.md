@@ -318,5 +318,53 @@ Plugins are released together with one repo tag (see
 3. CI runs the gates, verifies the versions match the tag, zips each plugin,
    and publishes a GitHub Release with the artifacts.
 
-Marketplace users pick up new versions with `/plugin update` (Claude Code)
-or `codex plugin marketplace upgrade` (Codex).
+Marketplace users pick up new versions as described in
+[Updating](#updating).
+
+## Updating
+
+A server with these plugins in its checkout tells agents on an older plugin to
+update themselves: one private FYI note per session with the exact command for
+their harness ([plugin update nudges](../docs/projects.md#plugin-update-nudges);
+the web UI's **update agents** button sends it to everyone at once). The
+commands, all headless (no prompt, no TTY; verified 0.6.0 → 0.6.2 in an
+isolated config):
+
+| Install | Update | Then |
+|---|---|---|
+| Claude Code, GitHub marketplace | `claude plugin marketplace update agent-ptt && claude plugin update agent-ptt-announcer@agent-ptt && (claude plugin update agent-ptt-voice@agent-ptt \|\| true)` | restart the session (or `/reload-plugins`) |
+| Claude Code, checkout (`install_plugins.py`) | `git -C <checkout> pull --ff-only` (the plugins run from the checkout) | restart the session |
+| Codex, GitHub marketplace | `codex plugin marketplace upgrade agent-ptt` (updates the installed plugin too) | restart Codex, trust the hooks again |
+| Codex, checkout | `git -C <checkout> pull --ff-only && codex plugin add agent-ptt-announcer@agent-ptt` (`marketplace upgrade` fails on a local marketplace) | restart Codex, trust the hooks again |
+| Antigravity | `agy plugin install https://github.com/karvidsson/agent-ptt/tree/main/plugins/antigravity-announcer` (replaces the copy; there is no `agy plugin update`) | quit and restart `agy` |
+| Cursor, `--plugin-dir` | `git -C <clone> pull --ff-only` | a new `agent` session |
+| Cursor, IDE copy | re-run `install_plugins.py`, or re-copy `plugins/cursor-announcer` to `~/.cursor/plugins/local/agent-ptt-announcer/` | reload the window |
+
+Notes: in Claude Code `plugin update` alone reports "already at the latest
+version" until `marketplace update` has refreshed the marketplace; it needs no
+`--scope` (a wrong one fails); updating a plugin that isn't installed exits 1,
+hence the `|| true` for the voice plugin. The Cursor `agent` CLI has no plugin
+install or update command, and its marketplace commands need a login.
+
+### Auto-update
+
+- **Claude Code** auto-updates only Anthropic's official marketplaces by
+  default. On machines that install from GitHub, turn it on for ours, either
+  in `/plugin` → Marketplaces → `agent-ptt` → enable auto-update, or in
+  `~/.claude/settings.json`:
+
+  ```json
+  {"extraKnownMarketplaces": {"agent-ptt": {"source": {"source": "github", "repo": "karvidsson/agent-ptt"}, "autoUpdate": true}}}
+  ```
+
+  It runs in interactive sessions only (in the background, shortly after the
+  first message; headless `-p` runs never do), and it ships only version
+  bumps, i.e. releases. New versions load at the next start or
+  `/reload-plugins`. It does nothing for a checkout install, which already
+  runs from the checkout.
+- **Codex** refreshes Git marketplaces (and upgrades their plugins) at every
+  session start by default; each upgrade asks you to trust the hooks again.
+  Local (checkout) marketplaces are not refreshed.
+- **Antigravity** and **Cursor** have no auto-update for these plugins.
+
+Headless agents never auto-update, so the server's nudge stays useful either way.
