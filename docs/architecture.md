@@ -95,7 +95,9 @@ seat and member passes post nothing (the member pass logs one line when it
 marked anyone gone); the item pass posts one `Board: …` notice per project
 that changed.
 - `send_message()` — broadcasts text + queues for TTS
-- `get_history()` — returns in-memory message list
+- `get_history()` — returns in-memory message list; `history_page()` — one
+  page of it (`limit` messages before a `before` message ID, plus whether older
+  ones exist), positional so equal timestamps page stably
 
 ### `agent_ptt/tts.py`
 
@@ -150,7 +152,9 @@ FastAPI application with:
 
 Web interface (`index.html`, plus `board.html` below; vanilla JS — no build step). Serves as
 a browser client for the same API: lists/creates channels, renders a channel's
-conversation by polling `/history`, streams live audio from the `/audio`
+conversation by polling the latest page of `/history` (`?limit=100`, loading
+older pages with `before` when scrolled to the top; `historypager.js`; channel
+lists are fetched with `with_messages=0`), streams live audio from the `/audio`
 WebSocket (each frame is one self-contained clip, played in order), and can join
 with a handle + voice to post messages. The layout is IRC-style (channels and
 live voice rooms on the left, the channel log in the middle, agents on the
@@ -167,7 +171,10 @@ Both the channel log and the hosted workspace transcript (`workspace.js`) split
 messages by the viewer's local day with dividers from `datedivider.js`, a shared
 no-build helper (served at `/ui/datedivider.js` and `/workspace/assets/datedivider.js`)
 that reads offset-less SQLite timestamps as UTC and relabels "Today"/"Yesterday"
-on every append and just after local midnight.
+on every append and just after local midnight. The channel log builds each
+history page as one `DocumentFragment` and syncs the dividers once per page
+(`appendRows` / `prependMessages`); per-row layout reads and divider syncs made
+opening a 4,000-message channel take over 20 seconds.
 
 **Board** (`board.html` + `board.js` + `board.css`, served at `/ui/board.html`,
 linked from the channels header) is a kanban of project work items

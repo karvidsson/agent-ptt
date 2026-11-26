@@ -449,6 +449,9 @@ Full API schema: {base}/openapi.json (Swagger: {base}/docs).
      POST {base}/channels/<channel_id>/say  {{"key_id": "<key_id>", "text": "Hello."}}
 4. Read the transcript:
      GET  {base}/channels/<channel_id>/history
+   (the whole transcript; ?limit=50 returns the latest 50 as
+   {{"messages": [...], "has_more": true}}, and &before=<oldest message_id>
+   pages back)
 5. Leave when done:
      POST {base}/channels/<channel_id>/leave  {{"key_id": "<key_id>"}}
 
@@ -712,10 +715,28 @@ async def create_channel(req: CreateChannelRequest, db: Session = Depends(get_db
     return channel.model_dump()
 
 
+def _channel_payload(channel, with_messages: bool) -> dict:
+    """A channel as the API returns it, with ``message_count`` always present.
+
+    ``with_messages=False`` leaves out the full transcript, which for a busy
+    channel is megabytes; the UI only needs the count.
+    """
+    payload = channel.model_dump(exclude=None if with_messages else {"messages"})
+    payload["message_count"] = len(channel.messages)
+    return payload
+
+
 @api.get("/channels", tags=["Channels"])
-async def list_channels(include_archived: bool = False):
-    """List all active channels."""
-    return [c.model_dump() for c in ch.list_channels(include_archived=include_archived)]
+async def list_channels(include_archived: bool = False, with_messages: bool = True):
+    """List all active channels.
+
+    Pass ``with_messages=0`` to leave out each channel's ``messages`` (every
+    entry still carries ``message_count``).
+    """
+    return [
+        _channel_payload(c, with_messages)
+        for c in ch.list_channels(include_archived=include_archived)
+    ]
 
 
 @api.delete("/channels", dependencies=[Depends(require_delete_all_confirmation)], tags=["Channels"])
@@ -919,12 +940,12 @@ async def reopen_channel(channel_id: str, db: Session = Depends(get_db)):
 
 
 @api.get("/channels/{channel_id}", tags=["Channels"])
-async def get_channel_detail(channel_id: str):
-    """Get a single channel by ID."""
+async def get_channel_detail(channel_id: str, with_messages: bool = True):
+    """Get a single channel by ID; ``with_messages=0`` leaves out the transcript."""
     channel = ch.get_channel(channel_id)
     if channel is None:
         return JSONResponse({"error": "Channel not found"}, status_code=404)
-    return channel.model_dump()
+    return _channel_payload(channel, with_messages)
 
 
 @api.post("/channels/{channel_id}/join", tags=["Channels"])
@@ -1117,6 +1138,10 @@ async def say_message(
     return payload
 
 
+# The largest page ``GET /channels/{id}/history?limit=`` serves.
+HISTORY_PAGE_MAX = 1000
+
+
 def _message_payload(msg: Message, with_context: bool) -> dict:
     """A message for history and single-message responses.
 
@@ -1135,16 +1160,34 @@ def _message_payload(msg: Message, with_context: bool) -> dict:
 async def get_history(
     channel_id: str,
     with_context: bool = False,
+    limit: int | None = Query(None, ge=1, le=HISTORY_PAGE_MAX),
+    before: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """Get message history for a channel.
+    """Get message history for a channel, oldest first.
 
     Each entry carries ``has_context`` and ``context_summary``; pass
     ``with_context=1`` to include every message's full ``context``.
+
+    Without ``limit`` or ``before`` the response is the whole transcript as a
+    list. With either, it is one page, ``{"messages": [...], "has_more": bool}``:
+    the ``limit`` messages just before message ``before`` (the latest ones
+    without it); ``has_more`` says whether older messages exist. A ``before``
+    that is not a message of this channel is a 404.
     """
-    messages = ch.get_history(channel_id)
+    if limit is None and before is None:
+        messages = ch.get_history(channel_id)
+        mentions.attach_receipts(messages, channel_id, db)
+        return [_message_payload(m, with_context=with_context) for m in messages]
+    try:
+        messages, has_more = ch.history_page(channel_id, limit=limit, before=before)
+    except ch.UnknownCursor:
+        return JSONResponse({"error": "Message not found in channel history"}, status_code=404)
     mentions.attach_receipts(messages, channel_id, db)
-    return [_message_payload(m, with_context=with_context) for m in messages]
+    return {
+        "messages": [_message_payload(m, with_context=with_context) for m in messages],
+        "has_more": has_more,
+    }
 
 
 @api.get("/channels/{channel_id}/messages/{message_id}", tags=["Channels"])

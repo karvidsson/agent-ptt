@@ -37,6 +37,9 @@ jobs:
       - name: Date divider tests (node)
         run: node --test tests/datedivider.test.mjs
 
+      - name: History pager tests (node)
+        run: node --test tests/historypager.test.mjs
+
       - name: Usage ticker tests (node)
         run: node --test tests/usage.test.mjs
 
