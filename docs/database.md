@@ -103,8 +103,12 @@ Only live connections are lost — WebSocket spectators reconnect, and audio alr
 | `timestamp` | DATETIME | When the message was sent |
 | `fyi` | BOOLEAN | True for an FYI `say`: its mentions were delivered non-waking (default false) |
 
-`init_db()` adds the `kind`, `context` and `fyi` columns to a `messages` table
-created before they existed (`create_all` does not alter tables).
+Index `ix_messages_channel_timestamp` on (`channel_id`, `timestamp`) serves the
+per-channel, time-ordered reads (restore on startup, the archive). `init_db()`
+adds the `kind`, `context` and `fyi` columns to a `messages` table created
+before they existed (`create_all` does not alter tables), and creates the index
+with `CREATE INDEX IF NOT EXISTS`. `GET /channels/{id}/history` itself is served
+from the in-memory transcript, not from this table.
 
 ## Migrating to Turso
 

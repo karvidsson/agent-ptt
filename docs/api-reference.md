@@ -185,8 +185,10 @@ The Board polls `GET /work-items` every 3 seconds and opens threads with
 The page lists channels, shows a channel's live conversation, streams the
 channel's audio, and lets you join with a handle + voice to post messages —
 all built on the REST and WebSocket endpoints below. It reads the transcript
-by polling `GET /channels/{id}/history` (side-effect-free spectating) and plays
-live audio from the `/audio` WebSocket.
+by polling `GET /channels/{id}/history?limit=100` (side-effect-free
+spectating), fetches older pages with `before` when you scroll to the top
+("loading older…", then "start of the conversation"), and plays live audio
+from the `/audio` WebSocket.
 
 Messages that carry [context](#get-one-message) show a small `⌄ 2 files · main`
 button after the text. Clicking it fetches
@@ -235,7 +237,13 @@ POST /channels
 
 ```
 GET /channels
+GET /channels?include_archived=1&with_messages=0
 ```
+
+| Query Param | Default | Description |
+|-------------|---------|-------------|
+| `include_archived` | `false` | Also list archived channels |
+| `with_messages` | `true` | `0` leaves out each channel's `messages` (the whole transcript, with full contexts: megabytes for a busy channel). `message_count` is always present |
 
 **Response (200):**
 ```json
@@ -245,10 +253,14 @@ GET /channels
     "name": "War Room",
     "participants": { ... },
     "messages": [ ... ],
+    "message_count": 42,
     "created_at": "2026-07-02T07:19:57.000Z"
   }
 ]
 ```
+
+The web UI always passes `with_messages=0` and reads transcripts through
+[history](#get-message-history) pages.
 
 ---
 
@@ -256,9 +268,11 @@ GET /channels
 
 ```
 GET /channels/{channel_id}
+GET /channels/{channel_id}?with_messages=0
 ```
 
-**Response (200):** Same shape as a single channel object.
+**Response (200):** Same shape as a single channel object; `with_messages=0`
+leaves out `messages` as for the list.
 
 **Response (404):**
 ```json
@@ -640,9 +654,32 @@ handle that set it).
 ```
 GET /channels/{channel_id}/history
 GET /channels/{channel_id}/history?with_context=1
+GET /channels/{channel_id}/history?limit=100
+GET /channels/{channel_id}/history?limit=100&before=<message_id>
 ```
 
-**Response (200):**
+| Query Param | Default | Description |
+|-------------|---------|-------------|
+| `with_context` | `false` | Include every message's full `context` |
+| `limit` | — | Page size, 1–1000: the latest `limit` messages, or the `limit` just before `before` |
+| `before` | — | A `message_id` of this channel: return only messages older than it |
+
+Without `limit` and `before` the response is the whole transcript as a list,
+oldest first (below). With either one it is a **page** instead:
+
+```json
+{"messages": [ ... ], "has_more": true}
+```
+
+`messages` is oldest first, with the same entries as the list; `has_more`
+says whether older messages exist. To page back, pass the first (oldest)
+`message_id` of the page as the next `before`. The cursor is a position in the
+server's transcript, so messages with equal timestamps never repeat or go
+missing across pages. A `before` that is not a message of this channel is a
+`404 {"error": "Message not found in channel history"}`; a `limit` out of
+range is a `422`.
+
+**Response (200), no paging params:**
 ```json
 [
   {

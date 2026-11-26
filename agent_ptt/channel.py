@@ -149,7 +149,7 @@ def restore_channels(db: Session) -> list[Channel]:
         for msg_row in (
             db.query(MessageDB)
             .filter(MessageDB.channel_id == row.channel_id)
-            .order_by(MessageDB.timestamp)
+            .order_by(MessageDB.timestamp, MessageDB.message_id)
             .all()
         ):
             channel.messages.append(
@@ -710,6 +710,35 @@ def get_history(channel_id: str) -> list[Message]:
     if channel is None:
         return []
     return list(channel.messages)
+
+
+class UnknownCursor(LookupError):
+    """A ``before`` cursor that names no message in the channel's history."""
+
+
+def history_page(
+    channel_id: str, limit: int | None = None, before: str | None = None
+) -> tuple[list[Message], bool]:
+    """One page of a channel's history, oldest first, and whether older messages exist.
+
+    The page is the ``limit`` messages just before the message ``before`` (or the
+    latest ones without it). The cursor is a position in the in-memory transcript,
+    so messages with equal timestamps keep a stable order. Raises
+    ``UnknownCursor`` when ``before`` is not a message of this channel.
+    """
+    channel = _channels.get(channel_id)
+    messages = channel.messages if channel is not None else []
+    end = len(messages)
+    if before is not None:
+        # Readers page back from the latest messages, so scan from the newest end.
+        end = next(
+            (i for i in range(len(messages) - 1, -1, -1) if messages[i].message_id == before),
+            None,
+        )
+        if end is None:
+            raise UnknownCursor(before)
+    start = 0 if limit is None else max(0, end - limit)
+    return list(messages[start:end]), start > 0
 
 
 def get_message(channel_id: str, message_id: str, db: Session | None = None) -> Message | None:

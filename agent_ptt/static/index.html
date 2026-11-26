@@ -194,6 +194,9 @@
   }
   .day-divider::before, .day-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border-2); }
   .day-divider + .row { margin-top: 0; }
+  /* Top of a paged transcript: "loading older…" / "start of the conversation". */
+  .history-edge { text-align: center; color: var(--dim); font-size: 11px; letter-spacing: .04em; padding: 6px 24px; min-height: 1em; }
+  .history-edge:empty { padding: 0; min-height: 0; }
   .row .ts { color: var(--dim); font-size: 12px; padding-top: 1px; }
   .row .nick { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .body { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -574,6 +577,7 @@ ___( o)&gt;
   </div>
 
 <script src="datedivider.js"></script>
+<script src="historypager.js"></script>
 <script src="usage.js"></script>
 <script src="updates.js"></script>
 <script>
@@ -646,6 +650,8 @@ ___( o)&gt;
     seen: new Set(),     // message_ids rendered
     contexts: new Map(), // message_id -> fetched context
     log: [],             // rendered messages, for export + fortune
+    pager: null,         // AgentPttHistory pager for the open channel's transcript
+    historyBusy: false,  // a latest-page poll is in flight
     pollTimer: null,
     audioWs: null,
     audioStartedAt: 0,
@@ -672,6 +678,7 @@ ___( o)&gt;
 
   // ---- small helpers --------------------------------------------------------
   const Dates = window.AgentPttDates;
+  const Pages = window.AgentPttHistory;
   // Re-place and relabel the transcript's day dividers (cheap; runs on every append).
   function syncDayDividers() {
     Dates.syncDividers($("messages"), { timeOf: (node) => node.dataset?.ts ?? null });
@@ -728,7 +735,7 @@ ___( o)&gt;
   async function checkServer() {
     const t0 = performance.now();
     try {
-      const r = await api(httpBase + "/channels?include_archived=true");
+      const r = await api(httpBase + "/channels?include_archived=true&with_messages=0");
       if (!r.ok) throw new Error();
       state.lagMs = Math.round(performance.now() - t0);
       state.online = true;
@@ -753,15 +760,20 @@ ___( o)&gt;
   }
 
   // ---- Channels list ------------------------------------------------------
+  // Channel lists are fetched without transcripts; older servers still send messages.
+  function messageCount(c) {
+    if (!c) return null;
+    return c.message_count ?? (c.messages || []).length;
+  }
   async function loadChannels() {
     let channels;
     try {
-      const r = await api(httpBase + "/channels?include_archived=true");
+      const r = await api(httpBase + "/channels?include_archived=true&with_messages=0");
       channels = await r.json();
     } catch { return; }
     state.channels = channels;
     const current = channels.find((c) => c.channel_id === state.channelId);
-    if (current) state.readCounts[current.channel_id] = (current.messages || []).length;
+    if (current) state.readCounts[current.channel_id] = messageCount(current);
     renderChannels();
     renderFooter();
     renderServer();
@@ -781,7 +793,7 @@ ___( o)&gt;
       return;
     }
     for (const c of channels) {
-      const count = (c.messages || []).length;
+      const count = messageCount(c);
       const unread = c.channel_id === state.channelId ? 0 : count - (state.readCounts[c.channel_id] || 0);
       const people = new Set(Object.values(c.participants || {}).map((p) => p.handle)).size;
       const el = document.createElement("div");
@@ -800,7 +812,7 @@ ___( o)&gt;
 
   function renderFooter() {
     const agents = state.channels.reduce((n, c) => n + new Set(Object.values(c.participants || {}).map((p) => p.handle)).size, 0);
-    const msgs = state.channels.reduce((n, c) => n + (c.messages || []).length, 0);
+    const msgs = state.channels.reduce((n, c) => n + messageCount(c), 0);
     $("footStats").textContent = `${agents} agent${agents === 1 ? "" : "s"} · ${msgs} message${msgs === 1 ? "" : "s"}`;
     const oldest = state.channels.map((c) => Date.parse(c.created_at)).filter(Boolean).sort()[0];
     $("footUptime").textContent = oldest ? `oldest channel up ${since(oldest)}` : "channels vanish on server restart";
@@ -839,6 +851,7 @@ ___( o)&gt;
     state.seen = new Set();
     state.contexts = new Map();
     state.log = [];
+    state.pager = null;
     state.participants = [];
     state.mentionSelections.clear();
     state.knownHandles = null;
@@ -884,7 +897,7 @@ ___( o)&gt;
   $("archiveFilter").onclick = () => { state.showArchived = !state.showArchived; renderChannels(); };
 
   async function clearChannels() {
-    const channels = await api(httpBase + "/channels?include_archived=true").then((r) => r.json());
+    const channels = await api(httpBase + "/channels?include_archived=true&with_messages=0").then((r) => r.json());
     if (!channels.length) return;
     if (!confirm(`Clear all ${channels.length} channel${channels.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
     const r = await api(httpBase + "/channels", { method: "DELETE", headers: { "X-Confirm-Delete-All": "yes" } });
@@ -930,7 +943,9 @@ ___( o)&gt;
     state.seen = new Set();
     state.contexts = new Map();
     state.log = [];
-    $("messages").innerHTML = "";
+    state.pager = Pages.createPager();
+    state.historyBusy = false;
+    $("messages").innerHTML = '<div class="history-edge" id="historyEdge" aria-live="polite"></div>';
     hint("");
     restoreJoin(id);
     location.hash = id;
@@ -958,7 +973,7 @@ ___( o)&gt;
       topicEl.title = state.topic;
     } else {
       topicEl.textContent = has
-        ? `${state.log.filter((m) => !m.system).length} messages · no topic`
+        ? `${messageCount(state.channels.find((c) => c.channel_id === state.channelId)) ?? state.log.filter((m) => !m.system).length} messages · no topic`
         : "pick a channel on the left, or make a new one";
       topicEl.title = "";
     }
@@ -999,37 +1014,86 @@ ___( o)&gt;
     refreshUsage(id);
     await Promise.all([pollHistory(id), refreshParticipants(id, true)]);
   }
+  async function fetchPage(id, opts) {
+    const r = await api(Pages.historyUrl(httpBase, id, opts));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+  // New messages: poll the latest page, append what is unseen, refresh recent receipts.
   async function pollHistory(id = state.channelId) {
-    if (!id) return;
-    let msgs;
+    if (!id || state.historyBusy) return;
+    const pager = state.pager;
+    state.historyBusy = true;
     try {
-      const r = await api(`${httpBase}/channels/${id}/history`);
-      if (!r.ok) return;
-      msgs = await r.json();
-    } catch { return; }
-    if (id !== state.channelId) return;
-    let added = false;
-    for (const m of msgs) {
-      if (state.seen.has(m.message_id)) {
-        updateReceipt(m);
-        continue;
+      let page;
+      try { page = await fetchPage(id); } catch { return; }
+      if (id !== state.channelId || pager !== state.pager) return;
+      const first = !pager.loaded;
+      for (const m of page.messages || []) if (state.seen.has(m.message_id)) updateReceipt(m);
+      let { fresh, gapBefore } = Pages.acceptLatest(pager, page, state.seen);
+      if (gapBefore) {
+        // More than a page arrived between polls: page back to what is already shown.
+        const pages = [];
+        try {
+          for (let before = gapBefore, i = 0; before && i < Pages.MAX_GAP_PAGES; i++) {
+            const older = await fetchPage(id, { before });
+            pages.push(older);
+            if (Pages.gapClosed(older, state.seen)) break;
+            before = older.messages?.[0]?.message_id;
+          }
+        } catch { /* show what we have; the next poll retries nothing older */ }
+        if (id !== state.channelId || pager !== state.pager) return;
+        fresh = Pages.fillGap(pages, fresh, state.seen);
       }
-      state.seen.add(m.message_id);
-      renderMessage(m);
-      // Notices are never synthesized, so they must not claim an audio clip.
-      if (state.audioWs && m.kind !== "notice" && Date.parse(m.timestamp) >= state.audioStartedAt - 2000) state.spokenQueue.push(m);
-      added = true;
-    }
-    if (added) {
+      if (!fresh.length) { if (first) renderHistoryEdge(); return; }
+      appendMessages(fresh);
+      for (const m of fresh) {
+        // Notices are never synthesized, so they must not claim an audio clip.
+        if (state.audioWs && m.kind !== "notice" && Date.parse(m.timestamp) >= state.audioStartedAt - 2000) state.spokenQueue.push(m);
+      }
+      renderHistoryEdge();
       renderChannelChrome();
       if (!$("fortune").dataset.shown) showFortune();
+      if (first) fillViewport();
+    } finally {
+      if (pager === state.pager) state.historyBusy = false;
     }
   }
+
+  // Older messages: one page before the oldest shown, prepended without moving the view.
+  async function loadOlder() {
+    const id = state.channelId, pager = state.pager;
+    if (!id || !pager || !pager.loaded || !pager.hasMore || pager.loading) return;
+    pager.loading = true;
+    renderHistoryEdge();
+    let page = null;
+    try { page = await fetchPage(id, { before: pager.oldestId }); } catch { /* retried on the next scroll */ }
+    if (id !== state.channelId || pager !== state.pager) return;
+    pager.loading = false;
+    if (page) {
+      const older = Pages.acceptOlder(pager, page, state.seen);
+      prependMessages(older);
+    }
+    renderHistoryEdge();
+    if (page) fillViewport();
+  }
+  // Keep loading older pages until the transcript can scroll (or the history ends).
+  function fillViewport() {
+    const box = $("messages");
+    if (state.pager?.hasMore && box.scrollHeight <= box.clientHeight + 120) loadOlder();
+  }
+  function renderHistoryEdge() {
+    const edge = $("historyEdge");
+    if (edge && state.pager) edge.textContent = Pages.edgeText(state.pager);
+  }
+  $("messages").addEventListener("scroll", () => {
+    if ($("messages").scrollTop < 200) loadOlder();
+  }, { passive: true });
 
   async function refreshParticipants(id = state.channelId, narrate = false) {
     if (!id) return;
     try {
-      const response = await api(`${httpBase}/channels/${id}`);
+      const response = await api(`${httpBase}/channels/${id}?with_messages=0`);
       if (!response.ok) return;
       const channel = await response.json();
       if (id !== state.channelId) return;
@@ -1061,19 +1125,43 @@ ___( o)&gt;
   }
 
   function appendRow(el) {
+    appendRows([el]);
+  }
+  // One DOM write and one divider pass per batch: reading the layout or re-syncing the
+  // dividers per row made opening a long transcript quadratic.
+  function appendRows(nodes) {
+    if (!nodes.length) return;
     const box = $("messages");
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     box.querySelector(".empty")?.remove();
-    box.appendChild(el);
+    const fragment = document.createDocumentFragment();
+    for (const node of nodes) fragment.appendChild(node);
+    box.appendChild(fragment);
     syncDayDividers();
     if (stick) box.scrollTop = box.scrollHeight;
+  }
+  function appendMessages(list) {
+    state.log.push(...list);
+    for (const m of list) state.seen.add(m.message_id);
+    appendRows(list.map(messageRow));
+  }
+  function prependMessages(list) {
+    if (!list.length) return;
+    state.log.unshift(...list);
+    for (const m of list) state.seen.add(m.message_id);
+    const box = $("messages");
+    box.querySelector(".empty")?.remove();
+    Pages.prependRows(box, list.map(messageRow), { after: $("historyEdge") });
+    // Re-place the dividers, then re-anchor: one may appear or move at the page seam.
+    const anchor = box.scrollHeight - box.scrollTop;
+    syncDayDividers();
+    box.scrollTop = box.scrollHeight - anchor;
   }
 
   // What the TTS worker says for a message: actions are spoken as "handle text".
   const spokenText = (m) => (m.kind === "action" ? `${m.handle} ${m.text}` : m.text);
 
-  function renderMessage(m) {
-    state.log.push(m);
+  function messageRow(m) {
     const kind = m.kind || "message";
     const mine = state.handle && m.handle === state.handle;
     const present = presentHandles().has(m.handle);
@@ -1105,8 +1193,8 @@ ___( o)&gt;
       btn.addEventListener("click", () => toggleContext(m, el, btn));
       el.querySelector(".body")?.appendChild(btn);
     }
-    appendRow(el);
-    updateReceipt(m);
+    fillReceipt(el.querySelector(".delivery-receipt"), m);
+    return el;
   }
 
   // Message context: the silent detail behind a spoken line, fetched on demand.
@@ -1174,11 +1262,15 @@ ___( o)&gt;
 
   function updateReceipt(m) {
     const row = document.getElementById(`message-${m.message_id}`);
-    const receipt = row?.querySelector(".delivery-receipt");
+    fillReceipt(row?.querySelector(".delivery-receipt"), m);
+  }
+  function fillReceipt(receipt, m) {
     if (!receipt) return;
-    receipt.textContent = (m.deliveries || []).map((d) =>
+    const text = (m.deliveries || []).map((d) =>
       `${d.handle}: ${d.status === "delivered" ? "delivered" : "pending"}`
     ).join(" · ");
+    if (receipt.textContent === text && receipt.title) return; // polled every second
+    receipt.textContent = text;
     receipt.title = "Delivered means handed to the agent hook, not completed. Idle agents pick up pending mentions at their next hook event.";
   }
 
@@ -1494,7 +1586,7 @@ ___( o)&gt;
     const idx = state.channels.findIndex((c) => c.channel_id === state.channelId);
     const act = state.channels
       .map((c, i) => [c, i + 1])
-      .filter(([c]) => c.channel_id !== state.channelId && (c.messages || []).length > (state.readCounts[c.channel_id] || 0))
+      .filter(([c]) => c.channel_id !== state.channelId && messageCount(c) > (state.readCounts[c.channel_id] || 0))
       .map(([, i]) => i);
     const me = state.handle ? `${state.handle}(+v)` : "you(+L)";
     const voice = state.speaking ? `${slug(state.channelName)} ▸ ${state.speaking.handle}` : state.audioWs ? `${slug(state.channelName)} ▸ quiet` : "off";
@@ -2045,12 +2137,27 @@ ___( o)&gt;
       : m.kind === "notice" ? `[${fmtTime(m.timestamp)}] -${m.handle}- ${m.text}`
       : `[${fmtTime(m.timestamp)}] <${m.handle}> ${m.text}`;
   }
-  function exportLog() {
+  async function exportLog() {
     if (!state.channelId) return;
+    const id = state.channelId;
+    // The view holds only the pages scrolled through; the export is the whole transcript.
+    let log = state.log;
+    if (state.pager?.hasMore) {
+      try {
+        const r = await api(`${httpBase}/channels/${id}/history`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const all = await r.json();
+        if (id !== state.channelId) return;
+        const shown = all.findIndex((m) => state.seen.has(m.message_id));
+        log = [...(shown < 0 ? all : all.slice(0, shown)), ...state.log];
+      } catch (e) {
+        hint(`export has only the loaded messages (${e.message || e})`);
+      }
+    }
     // A "--- Wed 12 Nov 2026 ---" line opens each local day, IRC-log style.
     const lines = [];
     let previous = null;
-    for (const m of state.log) {
+    for (const m of log) {
       if (Dates.needsDivider(previous, m.timestamp)) lines.push(`--- ${Dates.dayLabel(m.timestamp, new Date(), { relative: false, year: true })} ---`);
       if (Dates.dayKey(m.timestamp)) previous = m.timestamp;
       lines.push(exportLine(m));

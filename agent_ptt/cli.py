@@ -232,12 +232,16 @@ def channel_history(
 ):
     """View what has been said in a channel."""
     base = _get_base_url()
-    params = {"with_context": 1} if context else {}
+    params: dict[str, int] = {"with_context": 1} if context else {}
+    if limit and 0 < limit <= 1000:
+        params["limit"] = limit  # one page from the server, not the whole transcript
     resp = httpx.get(
         f"{base}/channels/{channel_id}/history", params=params, headers=_auth_headers()
     )
     if resp.status_code == 200:
-        messages = resp.json()
+        body = resp.json()
+        # A page is {"messages", "has_more"}; servers before paging return the list.
+        messages = body["messages"] if isinstance(body, dict) else body
         if limit:
             messages = messages[-limit:]
         if not messages:

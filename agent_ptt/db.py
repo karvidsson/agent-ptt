@@ -50,6 +50,13 @@ def init_db() -> None:
             )
         if "context" not in columns:
             connection.execute(text("ALTER TABLE messages ADD COLUMN context JSON"))
+        # create_all adds no index to an existing table; history is read per channel in time order.
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_messages_channel_timestamp "
+                "ON messages (channel_id, timestamp)"
+            )
+        )
         # FYI messages and items (legacy tables; no Alembic revision).
         for table, name, definition in (
             ("messages", "fyi", "BOOLEAN NOT NULL DEFAULT FALSE"),

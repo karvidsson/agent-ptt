@@ -206,7 +206,10 @@ def attach_receipts(messages: list[Message], channel_id: str, db: Session) -> No
     by_id = {msg.message_id: msg for msg in messages}
     for msg in messages:
         msg.deliveries = []
-    for row in db.query(MessageDeliveryDB).filter_by(channel_id=channel_id):
+    query = db.query(MessageDeliveryDB).filter_by(channel_id=channel_id)
+    if len(by_id) <= 1000:  # a page: read only its receipts
+        query = query.filter(MessageDeliveryDB.message_id.in_(list(by_id)))
+    for row in query:
         if row.message_id in by_id:
             by_id[row.message_id].deliveries.append(
                 {

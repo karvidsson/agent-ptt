@@ -156,6 +156,8 @@ class MessageDB(Base):
     """Optional message archive — for history retrieval after restart."""
 
     __tablename__ = "messages"
+    # Restore and the archive read a channel's messages in time order.
+    __table_args__ = (Index("ix_messages_channel_timestamp", "channel_id", "timestamp"),)
 
     message_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     channel_id = Column(String, nullable=False, index=True)
