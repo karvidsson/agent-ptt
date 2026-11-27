@@ -133,7 +133,11 @@
   // Case-insensitive handle -> member usage entry, for matching channel participants.
   function byHandle(payload) {
     const map = new Map();
-    for (const m of payload?.members || []) map.set(String(m.handle).toLowerCase(), m);
+    for (const m of payload?.members || []) {
+      const key = String(m.handle).toLowerCase();
+      if (m.gone && map.has(key)) continue; // a current member wins over a gone namesake
+      map.set(key, m);
+    }
     return map;
   }
 

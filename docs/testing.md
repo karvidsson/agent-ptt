@@ -12,6 +12,7 @@ python3 scripts/validate_plugins.py      # plugin manifests and the marketplace 
 node --test tests/workspace-ui.test.mjs tests/workspace-speech.test.mjs   # browser-side workspace JS
 node --test tests/datedivider.test.mjs   # transcript day dividers (both web UIs)
 node --test tests/usage.test.mjs         # token usage ticker, chips, staleness
+node --test tests/rostersort.test.mjs    # roster order (active first, sticky while polling)
 node --test tests/board.test.mjs         # Board (work items kanban) logic
 ```
 

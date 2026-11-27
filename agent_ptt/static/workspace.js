@@ -269,8 +269,12 @@ function applyChannelRemoval(agentId,channelId){
 }
 function channelAgents(){return state.agents.filter(a=>a.active&&state.room&&(a.channel_ids||[]).includes(state.room.id));}
 function renderRecipients(){const selected=$('recipient').value;$('recipient').replaceChildren(new Option('Everyone in this channel',''));for(const agent of channelAgents())$('recipient').add(new Option('@'+agent.name,agent.id));$('recipient').value=selected;if(!$('recipient').value)$('recipient').value='';}
+const rosterMemo={};
 function renderRoster(){
-  const people=[...state.members.map(person=>({...person,kind:'human'})),...channelAgents().map(agent=>({...agent,kind:'agent'}))];
+  const Roster=globalThis.AgentPttRoster;
+  let people=[...state.members.map(person=>({...person,kind:'human'})),...channelAgents().map(agent=>({...agent,kind:'agent'}))];
+  // Who is around first (rostersort.js); sticky while nobody changes group.
+  if(Roster&&state.presenceStatus==='ready')people=Roster.sortRoster(people,{keyOf:p=>p.kind+':'+p.id,groupOf:p=>Roster.workspaceGroup(p,personSessions(p)),recencyOf:p=>Roster.workspaceRecency(p,personSessions(p)),memo:rosterMemo});
   $('roster-count').textContent=people.length;$('roster-list').replaceChildren();
   for(const person of people){const row=el('button',undefined,'roster-person'),meta=el('span',undefined,'person-meta');meta.append(el('strong',person.name),el('small',presenceSummary(person)));if(person.work_context?.project)meta.append(el('small',person.work_context.project));row.append(el('span',person.name.slice(0,2).toUpperCase(),'avatar '+nick(person.name)),meta);row.onclick=()=>openProfile(person);$('roster-list').append(row);}
   $('presence-note').textContent=state.presenceStatus==='unavailable'?'Presence unavailable · membership does not indicate activity.':'Agent online status expires 3 minutes after the last check-in. Activity checks do not imply idle listening.';

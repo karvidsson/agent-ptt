@@ -944,7 +944,13 @@ def install(app):
 
     @app.get("/workspace/assets/{name}", include_in_schema=False)
     def workspace_asset(name: str):
-        if name not in {"workspace.js", "workspace.css", "workspace-speech.js", "datedivider.js"}:
+        if name not in {
+            "workspace.js",
+            "workspace.css",
+            "workspace-speech.js",
+            "datedivider.js",
+            "rostersort.js",
+        }:
             raise HTTPException(404)
         return FileResponse(STATIC / name)
 

@@ -1347,7 +1347,9 @@ project channel and its name claim, and answers **410** `{"error":
   `outdated` is true when `plugin_version` is below the latest for the
   member's harness, and `plugin_latest` is that latest version (else `null`).
   The `members` rows of `GET /projects/{p}/usage` carry `plugin_version`,
-  `plugin_latest` and `outdated` too (the web UI's outdated badge).
+  `plugin_latest` and `outdated` too (the web UI's outdated badge), plus
+  `presence` (`away` for a gone member) and `last_seen`, which the web UI's
+  roster order uses.
   `listening` is true while the member long-polls its inbox, or if it read its
   inbox in the last 90 seconds. `presence` is `listening`, else `active` (seen
   in the last 10 minutes), `idle` (in the last 24 hours) or `away`. `mention`

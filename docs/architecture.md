@@ -343,6 +343,16 @@ private FYI note with its harness's update command (once per latest version,
 current member. The web UI's dialog and outdated badge use `static/updates.js`.
 See [plugin update nudges](projects.md#plugin-update-nudges).
 
+Rosters in the web UI (the channel page's agent list and the hosted workspace
+roster) are ordered by `static/rostersort.js`: active or working first, then
+listening or online, idle, away, and offline or gone; newest activity first
+within a group. On the channel page a participant's group comes from its
+project member's `presence` (from `GET /projects/{p}/usage`), falling back to
+the seat's `state`; a restored `offline` seat whose member is away counts as
+offline. The order is sticky: while everyone stays in the same group, a poll
+keeps the previous order, so the list only moves when someone changes group,
+joins or leaves.
+
 ## Explicit mention delivery
 
 `mentions.py` resolves exact mentions or selected stable recipient IDs when a
