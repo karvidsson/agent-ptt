@@ -580,6 +580,7 @@ ___( o)&gt;
 <script src="historypager.js"></script>
 <script src="usage.js"></script>
 <script src="updates.js"></script>
+<script src="rostersort.js"></script>
 <script>
 (() => {
   "use strict";
@@ -1402,10 +1403,26 @@ ___( o)&gt;
     refreshUsage(state.channelId, true);
   };
 
+  // Who is around first (rostersort.js): active, listening, idle, away, offline;
+  // the order only changes when someone moves between those groups.
+  const Roster = globalThis.AgentPttRoster;
+  const rosterMemo = {};
+  function sortedPeople() {
+    const people = [...new Map(state.participants.map((p) => [p.handle, p])).values()];
+    const members = usageState.channelId === state.channelId ? usageState.members : new Map();
+    const memberOf = (p) => members.get(String(p.handle).toLowerCase());
+    if (rosterMemo.channelId !== state.channelId) { rosterMemo.channelId = state.channelId; rosterMemo.signature = null; }
+    return Roster.sortRoster(people, {
+      groupOf: (p) => Roster.channelGroup(p, memberOf(p)),
+      recencyOf: (p) => Roster.channelRecency(p, memberOf(p)),
+      memo: rosterMemo,
+    });
+  }
+
   function renderAgents() {
     renderUsageStrip();
     const wrap = $("agents");
-    const people = [...new Map(state.participants.map((p) => [p.handle, p])).values()];
+    const people = sortedPeople();
     $("agentCount").textContent = people.length;
     wrap.innerHTML = people.length ? "" :
       `<div class="side-note" style="padding:0 8px">${state.channelId ? "no agents on voice yet" : "—"}</div>`;

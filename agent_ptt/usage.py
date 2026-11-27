@@ -384,6 +384,8 @@ def project_usage(
     totals = _bucket_totals(
         db, today, estimate, filters=(MemberUsageDB.project_id == project.project_id,)
     ).get((), _no_usage(estimate))
+    from agent_ptt import projects as pj  # projects imports this module
+
     member_rows = []
     latest_versions = plugin_updates.latest_versions()
     seen_limits: dict[tuple[str, str], dict[str, Any]] = {}
@@ -402,6 +404,9 @@ def project_usage(
                 "machine": member.machine,
                 "usage": summary,
                 "gone": gone,
+                # For the web UI's roster order (rostersort.js).
+                "presence": "away" if gone else pj.presence(member, now),
+                "last_seen": _as_utc(member.last_seen).isoformat() if member.last_seen else None,
                 "plugin_version": member.plugin_version,
                 "plugin_latest": latest,
                 "outdated": latest is not None,

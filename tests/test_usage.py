@@ -340,3 +340,15 @@ def test_usage_script_is_served_and_loaded(client):
     assert client.get("/ui/usage.js").status_code == 200
     assert 'src="usage.js"' in client.get("/ui/").text
     assert 'src="usage.js"' in client.get("/ui/board.html").text
+
+
+def test_member_rows_carry_presence_and_last_seen_for_the_roster_order(client, day):
+    joined = join(client, "Ada")
+    row = mine(project_usage(client, joined), joined)
+    assert row["presence"] == "active"
+    assert row["last_seen"]
+    with SessionLocal() as db:
+        member = pj.member_by_key(db, joined["member_key"])
+        member.last_seen = datetime.now(UTC) - timedelta(hours=2)
+        db.commit()
+    assert mine(project_usage(client, joined), joined)["presence"] == "idle"
